@@ -6,6 +6,26 @@ import { initializeStateCollections, SqliteStateCollection } from "./sqliteState
 import { publishHotStateAuthority } from "./hotStateAuthority";
 
 type Row = { key: string; value: number };
+test.each(["snapshot", "snapshotForController"] as const)("%s passes only the record to structuredClone and keeps returned rows independent", (method) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "state-snapshot-clone-"));
+  try {
+    const filename = path.join(dir, "state.sqlite");
+    const rows: Row[] = [{ key: "one", value: 1 }, { key: "two", value: 2 }, { key: "inactive", value: -1 }];
+    const options = {
+      collection: "clone-test", schemaVersion: 1, busyMessage: "busy", key: (row: Row) => row.key,
+      decode: (raw: unknown) => raw as Row, clone: structuredClone,
+      controllerActive: (row: Row) => row.value > 0,
+    };
+    initializeStateCollections(filename, [{ ...options, migrationId: "clone-one", loadRecords: () => rows }]);
+    const collection = new SqliteStateCollection<Row>(filename, options);
+    const expected = method === "snapshot" ? rows : rows.slice(0, 2);
+    const snapshot = collection[method]();
+    expect(snapshot).toEqual(expected);
+    snapshot[0]!.value = 99;
+    expect(collection[method]()).toEqual(expected);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("bounded collection pages and conditional patches stay atomic across independent connections", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "seat-accounting-store-"));
   try {

@@ -3393,8 +3393,10 @@ export class AgentRegistry {
     }
   }
 
-  private assertSqliteParity(snapshot: SqliteRegistrySnapshot = this.sqliteStore!.snapshot()): void {
-    const json = readFile(this.filename, this.mcpGrantPolicy);
+  private assertSqliteParity(
+    snapshot: SqliteRegistrySnapshot = this.sqliteStore!.snapshot(),
+    json: RegistryFile = readFile(this.filename, this.mcpGrantPolicy),
+  ): void {
     if (!isDeepStrictEqual(snapshot.file, json)) {
       const fields = [...new Set([...Object.keys(snapshot.file), ...Object.keys(json)])]
         .filter((field) => !isDeepStrictEqual(
@@ -3968,16 +3970,17 @@ export class AgentRegistry {
     const claim = this.acquireLock(lock, captureProcessIdentity(process.pid));
     try {
       const sqlite = this.sqliteMode === "dual-write" ? this.sqliteStore!.snapshot() : null;
+      const original = readFileWithPayload(this.filename, this.mcpGrantPolicy);
       if (sqlite) {
-        const mirrorRevision = sqliteMirrorRevision(this.filename);
+        const mirrorRevision = original.sqliteRevision;
         if (mirrorRevision !== null && mirrorRevision !== sqlite.revision) {
           throw new RegistryParityError(
             `agent registry backend revisions differ: JSON ${mirrorRevision}, SQLite ${sqlite.revision}`,
           );
         }
-        this.assertSqliteParity(sqlite);
+        // Validate the same locked JSON snapshot the mutation will consume.
+        this.assertSqliteParity(sqlite, original.file);
       }
-      const original = readFileWithPayload(this.filename, this.mcpGrantPolicy);
       const rollbackFile = sqlite && original.sqliteRevision !== sqlite.revision
         ? clone(original.file)
         : null;
@@ -3986,7 +3989,7 @@ export class AgentRegistry {
       const currentPayload = serializeRegistry(file, sqlite?.revision);
       const changed = original.payload !== currentPayload;
       if (changed) {
-        const payload = serializeRegistry(file, sqlite ? sqlite.revision + 1 : undefined);
+        const payload = sqlite ? serializeRegistry(file, sqlite.revision + 1) : currentPayload;
         writeAtomicPayload(this.filename, payload);
       }
       if (sqlite && !changed) this.assertSqliteParity();

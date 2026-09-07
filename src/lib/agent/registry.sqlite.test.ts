@@ -1620,6 +1620,106 @@ test("SQLite ordered collection reads use the collection-order index", () => {
   fs.rmSync(directory, { recursive: true, force: true });
 });
 
+test("SQLite replacement writes only changed positions while preserving replacement order", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "llv-registry-replacement-order-"));
+  const seed = new AgentRegistry(path.join(directory, "seed.json"), undefined, undefined, { sqliteMode: "off" });
+  const receipt = beginTestSpawn(seed, "/replacement-order");
+  const initial = seed.snapshot();
+  initial.receipts = Object.fromEntries(Array.from({ length: 650 }, (_, index) => {
+    const launchId = `replacement-${index}`;
+    return [launchId, { ...receipt, launchId }];
+  }));
+  const filename = path.join(directory, "registry.sqlite");
+  const store = new SqliteAgentRegistryStore(filename, { initialSnapshot: initial, normalize: normalizeRegistry });
+  const observer = new Database(filename);
+  observer.exec(`
+    CREATE TABLE position_writes (row_key TEXT);
+    CREATE TRIGGER observe_position_write AFTER UPDATE OF row_order ON registry_rows
+    BEGIN INSERT INTO position_writes VALUES (NEW.row_key); END;
+  `);
+  const next = store.snapshot();
+  next.file.receipts.appended = { ...receipt, launchId: "appended" };
+  expect(store.replace(next.file, next.revision).replaced).toBe(true);
+  expect(observer.query<{ count: number }, []>("SELECT COUNT(*) AS count FROM position_writes").get()!.count).toBe(0);
+  expect(Object.keys(store.snapshot().file.receipts).at(-1)).toBe("appended");
+
+  const reordered = store.snapshot();
+  const rows = Object.entries(reordered.file.receipts);
+  reordered.file.receipts = Object.fromEntries([rows.at(-1)!, ...rows.slice(1, -1)]);
+  expect(store.replace(reordered.file, reordered.revision).replaced).toBe(true);
+  expect(Object.keys(store.snapshot().file.receipts)).toEqual(Object.keys(reordered.file.receipts));
+  expect(observer.query<{ count: number }, []>("SELECT COUNT(*) AS count FROM position_writes").get()!.count).toBe(1);
+  observer.close();
+});
+
+test("SQLite writers acquire a released lock without the long busy-handler sleep", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "llv-registry-writer-wakeup-"));
+  const seed = new AgentRegistry(path.join(directory, "seed.json"), undefined, undefined, { sqliteMode: "off" });
+  const receipt = beginTestSpawn(seed, "/writer-wakeup");
+  const filename = path.join(directory, "registry.sqlite");
+  let acquiredAt = 0;
+  const store = new SqliteAgentRegistryStore(filename, {
+    initialSnapshot: seed.snapshot(), normalize: normalizeRegistry,
+    onWriterWait: () => { acquiredAt = Date.now(); },
+  });
+  const delays: number[] = [];
+  for (let pulse = 0; pulse < 4; pulse++) {
+    const ready = path.join(directory, `ready-${pulse}`);
+    const released = path.join(directory, `released-${pulse}`);
+    const holder = Bun.spawn([process.execPath, "-e", `
+      const fs = require("node:fs");
+      const { Database } = require("bun:sqlite");
+      const [filename, ready, released] = process.argv.slice(1);
+      const db = new Database(filename);
+      db.exec("PRAGMA busy_timeout = 5000; BEGIN IMMEDIATE");
+      fs.writeFileSync(ready, "ready");
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 85);
+      db.exec("COMMIT");
+      fs.writeFileSync(released, String(Date.now()));
+      db.close();
+    `, filename, ready, released], { stdout: "pipe", stderr: "pipe" });
+    const deadline = performance.now() + 2_000;
+    while (!fs.existsSync(ready) && performance.now() < deadline) {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1);
+    }
+    expect(fs.existsSync(ready)).toBe(true);
+    store.mutate((file) => { file.receipts[receipt.launchId]!.error = `pulse-${pulse}`; }, false);
+    expect(await holder.exited).toBe(0);
+    expect(await new Response(holder.stderr).text()).toBe("");
+    delays.push(Math.max(0, acquiredAt - Number(fs.readFileSync(released, "utf8"))));
+  }
+  console.info(`[agent registry writer wakeup] release-to-acquire delays: ${delays.join(", ")}ms`);
+  expect(Math.max(...delays)).toBeLessThan(10);
+});
+
+test("SQLite mutation acquisition retains the five-second deadline and leaves a held writer untouched", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "llv-registry-writer-deadline-"));
+  const seed = new AgentRegistry(path.join(directory, "seed.json"), undefined, undefined, { sqliteMode: "off" });
+  const receipt = beginTestSpawn(seed, "/writer-deadline");
+  const filename = path.join(directory, "registry.sqlite");
+  const store = new SqliteAgentRegistryStore(filename, { initialSnapshot: seed.snapshot(), normalize: normalizeRegistry });
+  const before = store.snapshot();
+  const holder = new Database(filename);
+  holder.exec("BEGIN IMMEDIATE");
+  try {
+    const startedAt = performance.now();
+    expect(() => store.mutate((file) => { file.receipts[receipt.launchId]!.error = "must not land"; }, false))
+      .toThrow("database is locked");
+    const elapsed = performance.now() - startedAt;
+    expect(elapsed).toBeGreaterThanOrEqual(5_000);
+    expect(elapsed).toBeLessThan(5_500);
+    expect(holder.inTransaction).toBe(true);
+  } finally {
+    holder.exec("ROLLBACK");
+    holder.close();
+  }
+  const after = store.snapshot();
+  expect(after.revision).toBe(before.revision);
+  expect(after.file).toEqual(before.file);
+  store.mutate((file) => { file.receipts[receipt.launchId]!.error = "after release"; }, false);
+  expect(store.snapshot().file.receipts[receipt.launchId]!.error).toBe("after release");
+}, 7_000);
+
 test.each(["off", "dual-write", "read", "sqlite"] as const)(
   "%s diagnostics keep cumulative counts and a rolling rate beyond the percentile sample cap",
   (sqliteMode) => {

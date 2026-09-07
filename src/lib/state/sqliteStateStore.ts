@@ -515,11 +515,11 @@ export class SqliteStateCollection<T> {
   }
 
   snapshot(): T[] {
-    return this.loadReadonly().map(this.options.clone);
+    return this.loadReadonly().map((record) => this.options.clone(record));
   }
 
   snapshotForController(): T[] {
-    return this.loadControllerReadonly().map(this.options.clone);
+    return this.loadControllerReadonly().map((record) => this.options.clone(record));
   }
 
   get(rowKey: string): T | null {

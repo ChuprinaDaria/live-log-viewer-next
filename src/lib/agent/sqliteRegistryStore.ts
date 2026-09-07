@@ -547,7 +547,7 @@ export class SqliteAgentRegistryStore {
         throw error;
       }
       const waitStartedAt = performance.now();
-      this.db.exec("BEGIN IMMEDIATE");
+      this.beginMutationWrite();
       let revision: number;
       const changed = changes.rows.size > 0 || changes.meta.size > 0 || changes.order.size > 0;
       try {
@@ -573,6 +573,28 @@ export class SqliteAgentRegistryStore {
         return { result, file: committed.file, revision: committed.revision };
       }
       return { result, file: null, revision };
+    }
+  }
+
+  private beginMutationWrite(): void {
+    const deadline = performance.now() + 5_000;
+    // SQLite's default busy handler grows its sleep to 100 ms. Short registry
+    // commits can repeatedly pass a sleeping lane. Retry acquisition in short
+    // intervals, retaining the same total deadline and measuring the whole wait.
+    this.db.exec("PRAGMA busy_timeout = 5");
+    try {
+      for (;;) {
+        try {
+          this.db.exec("BEGIN IMMEDIATE");
+          return;
+        } catch (error) {
+          if (!(error instanceof Error)
+            || (error as { code?: string }).code !== "SQLITE_BUSY"
+            || performance.now() >= deadline) throw error;
+        }
+      }
+    } finally {
+      this.db.exec("PRAGMA busy_timeout = 5000");
     }
   }
 
@@ -685,8 +707,8 @@ export class SqliteAgentRegistryStore {
         const baseline = new Map<string, string | null>();
         if (!trackMutations || collection === "deliveryOperationOwners") {
           const storedValue = {} as typeof value;
-          const storedRows = this.db.query<StoredRow, [string]>(
-            "SELECT collection, row_key, value_json, row_order FROM registry_rows WHERE collection = ? ORDER BY row_order",
+          const storedRows = this.db.query<Pick<StoredRow, "row_key" | "value_json">, [string]>(
+            "SELECT row_key, value_json FROM registry_rows WHERE collection = ? ORDER BY row_order",
           ).all(collection);
           this.onRowPayloadRead?.(collection, storedRows.length);
           for (const row of storedRows) {
@@ -694,7 +716,7 @@ export class SqliteAgentRegistryStore {
             (storedValue as Record<string, unknown>)[row.row_key] = trackMutations
               ? structuredClone(parsed)
               : parsed;
-            baseline.set(row.row_key, row.value_json);
+            if (trackMutations) baseline.set(row.row_key, row.value_json);
           }
           const input: Record<string, unknown> = { version: 2, entries: {}, receipts: {} };
           input[collection] = storedValue;
@@ -1085,8 +1107,10 @@ export class SqliteAgentRegistryStore {
 
   private persistRowOrder(collection: RowCollection, keys: string[]): void {
     for (const [order, key] of keys.entries()) {
-      this.db.query("UPDATE registry_rows SET row_order = ? WHERE collection = ? AND row_key = ?")
-        .run(order, collection, key);
+      // Replacement usually appends a row. Rewriting unchanged positions also
+      // rewrites the collection and lineage indexes under the writer lock.
+      this.db.query("UPDATE registry_rows SET row_order = ? WHERE collection = ? AND row_key = ? AND row_order != ?")
+        .run(order, collection, key, order);
     }
   }
 
