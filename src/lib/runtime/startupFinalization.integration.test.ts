@@ -211,6 +211,56 @@ test("a failed historical snapshot remains unknown and a later pass retries it",
   } finally { f.journal.close(); }
 });
 
+test("startup exposes the retaining fallback await without releasing admission before it settles", async () => {
+  const f = fixture(1, true);
+  let entered!: () => void;
+  const publicationEntered = new Promise<void>((resolve) => { entered = resolve; });
+  let settle!: () => void;
+  const publicationSettlement = new Promise<void>((resolve) => { settle = resolve; });
+  const host = new RuntimeHost(f.journal);
+  const server = serveRuntimeHost(path.join(isolated, "sockets", "progress.sock"), {
+    handle: async (request, options) => {
+      if (request.method === "append") {
+        entered();
+        await publicationSettlement;
+      }
+      return host.handle(request, options);
+    },
+  });
+  await new Promise<void>((resolve) => server.once("listening", resolve));
+  const client = new UnixRuntimeHostClient(path.join(isolated, "sockets", "progress.sock"));
+  // No transcript/adopter/controller substitution: historical rows are dead;
+  // only the private socket peer withholds a publication response.
+  const startup = runStructuredHostStartup(() => adoptStructuredHostsAtStartup({
+    registry: f.registry, client,
+  }), () => {}, { waitUntilReady: true });
+  const leases = () => {
+    const db = new Database(path.join(process.env.LLV_STATE_DIR!, "state.sqlite"), { readonly: true });
+    try { return db.query("SELECT owner_pid FROM state_leases WHERE collection = 'pipelines'").all(); }
+    finally { db.close(); }
+  };
+  try {
+    await publicationEntered;
+    expect(structuredStartupStatus()).toMatchObject({
+      state: "pending", phase: "publishing historical host fallbacks",
+      pid: process.pid, phaseStartedAt: expect.any(String),
+    });
+    expect(leases()).toEqual([{ owner_pid: process.pid }]);
+    await Bun.sleep(25);
+    expect(leases()).toEqual([{ owner_pid: process.pid }]);
+    settle();
+    await startup;
+    expect(structuredStartupStatus()?.state).toBe("ready");
+    expect(leases()).toEqual([]);
+  } finally {
+    settle();
+    await startup;
+    await bindStructuredDeliveryQueue([], { registry: f.registry, client: null });
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    f.journal.close();
+  }
+}, 60_000);
+
 test("pending launches ignore a historical snapshot supplier", async () => {
   const f = fixture(0);
   const begun = f.registry.beginSpawnRequest({
@@ -266,6 +316,57 @@ test("historical reconciliation recovers late transcript evidence and preserves 
     await recoverPendingStructuredSpawns(f.registry, f.client);
     expect(f.registry.readOnlySnapshot().receipts[begun.receipt.launchId]).toEqual(receipt);
   } finally { f.journal.close(); }
+});
+
+test.each([["codex", false], ["codex", true], ["claude", false], ["claude", true]] as const)("late unkeyed %s resume preserves its writer (account mismatch=%s)", async (engine, accountMismatch) => {
+  const f = fixture(0);
+  const sessionId = crypto.randomUUID();
+  const artifactPath = path.join(f.directory, `${sessionId}.jsonl`);
+  const key = { engine, sessionId };
+  const profile = emptyLaunchProfile({ cwd: f.directory, title: "Unkeyed resume recovery" });
+  const conversation = f.registry.ensureConversation(engine, artifactPath, null);
+  f.registry.upsert({ key, artifactPath, cwd: f.directory, accountId: null, launchProfile: profile,
+    status: "unhosted", host: null, claimEpoch: 0, claimOwner: null, pendingAction: null,
+    structuredHost: { kind: engine === "codex" ? "codex-app-server" : "claude-broker", endpoint: "stdio:released",
+      process: null, eventCursor: 0, protocolVersion: null, writerClaimEpoch: 0,
+      activeTurnRef: null, pendingAttention: [], activeFlags: [] },
+  });
+  const begun = f.registry.beginSpawnRequest({ engine, cwd: f.directory, transport: "structured", accountId: null,
+    conversationId: conversation.id, purpose: "resume-successor", expectedArtifactPath: artifactPath, launchProfile: profile,
+  });
+  expect(begun.receipt.key).toBeNull();
+  f.registry.failStructuredSpawn(begun.receipt.launchId, "resume lost admission to startup adoption");
+  const currentEntry = f.registry.readOnlySnapshot().entries[`${engine}:${sessionId}`]!;
+  if (accountMismatch) f.registry.upsert({ ...currentEntry, accountId: "current-writer-account" });
+  const externalWriter = Bun.spawn([process.execPath, "-e", "for await (const chunk of process.stdin) { void chunk; }"], {
+    env: { ...process.env }, stdin: "pipe", stdout: "ignore", stderr: "ignore",
+  });
+  const owner = captureProcessIdentity(externalWriter.pid);
+  const claimed = f.registry.claimStructuredHost(key, owner, { allowUnhosted: true })!;
+  f.registry.setStructuredHostClaimed(key, { ...claimed.structuredHost!, endpoint: "fixture:current-writer",
+    process: owner,
+  }, "idle", claimed.claimOwner!, claimed.claimEpoch);
+  const before = f.registry.readOnlySnapshot().entries[`${engine}:${sessionId}`]!;
+  fs.writeFileSync(artifactPath, JSON.stringify(engine === "codex"
+    ? { type: "event_msg", payload: { type: "user_message", message: "Synthetic prior turn" } }
+    : { type: "user", message: { role: "user", content: "Synthetic prior turn" } }) + "\n");
+  f.journal.append({ scope: { type: "session", id: conversation.id }, kind: "session-status",
+    payload: { conversationId: conversation.id, sessionKey: key, hostKind: before.structuredHost!.kind,
+      host: "hosted", turn: "idle", cwd: f.directory, artifactPath },
+  });
+  try {
+    await recoverPendingStructuredSpawns(f.registry, f.client);
+    const after = f.registry.readOnlySnapshot().entries[`${engine}:${sessionId}`]!;
+    expect(after.accountId).toBe(before.accountId);
+    expect(after.claimOwner).toBe(before.claimOwner);
+    expect(after.claimEpoch).toBe(before.claimEpoch);
+    expect(after.structuredHost).toEqual(before.structuredHost);
+    expect(f.registry.readOnlySnapshot().receipts[begun.receipt.launchId]!.state).toBe(accountMismatch ? "failed" : "completed");
+  } finally {
+    externalWriter.stdin.end();
+    await externalWriter.exited;
+    f.journal.close();
+  }
 });
 
 

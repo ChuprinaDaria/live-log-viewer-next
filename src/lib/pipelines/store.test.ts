@@ -9,6 +9,55 @@ import type { Pipeline, PipelineStage } from "./types";
 
 const ARCHIVE_CHILD = path.join(import.meta.dir, "archive.sqliteChild.ts");
 
+test.each([false, true])("archive enabled=%s lets the same event loop settle startup admission before moving rows", async (enabled) => {
+  const previous = process.env.LLV_STATE_DIR;
+  const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), "llv-startup-archive-"));
+  process.env.LLV_STATE_DIR = sandbox;
+  const timeline: string[] = [];
+  let entered!: () => void;
+  const admissionEntered = new Promise<void>((resolve) => { entered = resolve; });
+  const pipeline = buildPipeline({ id: "aaaa0001", task: "Archive settled history", project: "viewer", repoDir: sandbox,
+    stages: [{ id: "build", kind: "run", prompt: "build", next: null,
+      effectiveRole: { roleId: null, engine: "codex", model: "gpt-6-astra", effort: "high", access: "read-write", promptScaffold: null } }],
+    srcPath: null, srcConversationId: null, now: "2026-07-01T00:00:00.000Z" });
+  pipeline.state = "closed";
+  pipeline.closedAt = "2026-07-02T00:00:00.000Z";
+  pipeline.cursor = null;
+  try {
+    savePipelines([pipeline]);
+    const start = performance.now();
+    const startup = withPipelineStartupAdmission(async (available) => {
+      expect(available).toBe(true);
+      timeline.push("admission-entered");
+      entered();
+      await Bun.sleep(100);
+      timeline.push("callback-settled");
+      expect(loadPipelines().map((row) => row.id)).toEqual([pipeline.id]);
+      expect(loadArchivedPipelines()).toEqual([]);
+    });
+    await admissionEntered;
+    // This is the real hourly sweep invoked by FlowPipelineController, on
+    // the same event loop as the timer/RPC continuation startup is awaiting.
+    const archive = enabled ? archiveSettledPipelines(Date.parse("2026-08-05T12:00:00.000Z"), {
+      beforeCommit: () => { timeline.push("archive-commit"); },
+    }).then((moved) => ({ moved, error: null }), (error) => ({ moved: null, error: String(error) })) : Promise.resolve({ moved: 0, error: null });
+    await startup;
+    const result = await archive;
+    const elapsedMs = performance.now() - start;
+    console.log(JSON.stringify({ archiveContention: { enabled, elapsedMs, timerDelayMs: Math.max(0, elapsedMs - 100), timeline, result } }));
+    expect(elapsedMs).toBeLessThan(2_000);
+    expect(result).toEqual({ moved: enabled ? 1 : 0, error: null });
+    expect(timeline).toEqual(enabled ? ["admission-entered", "callback-settled", "archive-commit"] : ["admission-entered", "callback-settled"]);
+    const db = new Database(path.join(sandbox, "state.sqlite"), { readonly: true });
+    try { expect(db.query("SELECT count(*) AS n FROM state_leases").get()).toEqual({ n: 0 }); }
+    finally { db.close(); }
+  } finally {
+    if (previous === undefined) delete process.env.LLV_STATE_DIR;
+    else process.env.LLV_STATE_DIR = previous;
+    fs.rmSync(sandbox, { recursive: true, force: true });
+  }
+}, 45_000);
+
 async function waitForFile(filename: string): Promise<void> {
   const deadline = Date.now() + 10_000;
   while (!fs.existsSync(filename)) {

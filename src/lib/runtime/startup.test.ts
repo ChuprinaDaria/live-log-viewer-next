@@ -1459,7 +1459,7 @@ test("startup publishes per-host progress across the serial provider adoption lo
       }),
     ]);
     expect(structuredStartupStatus({ LLV_STRUCTURED_HOSTS: "1" })).toMatchObject({
-      phase: "finalizing structured delivery",
+      phase: "recovering pending spawns",
       completedHosts: 2,
       totalHosts: 2,
     });
