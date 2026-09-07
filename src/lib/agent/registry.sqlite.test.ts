@@ -1874,7 +1874,8 @@ test("seat child discovery uses its parent index and bounded payload reads acros
    is followed at its current order rather than skipped past. */
 test("a child spawned after a completed sweep is the next page, and a renumbered collection does not lose it", () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "registry-seat-anchor-"));
-  const registry = new AgentRegistry(path.join(directory, "registry.json"), undefined, undefined, { sqliteMode: "sqlite" });
+  const filename = path.join(directory, "registry.sqlite");
+  const registry = new AgentRegistry(path.join(directory, "registry.json"), undefined, undefined, { sqliteMode: "sqlite", sqliteFilename: filename });
   const parent = registry.ensureConversation("codex", "/sessions/anchor-seat.jsonl", null);
   const spawn = (title: string) => registry.beginSpawnRequest({ engine: "codex", cwd: "/seat-project",
     launchProfile: { title }, parentConversationId: parent.id, parentSource: "explicit" }).receipt.conversationId;
@@ -1894,7 +1895,7 @@ test("a child spawned after a completed sweep is the next page, and a renumbered
   /* The whole collection renumbered underneath the anchor — every order
      shifted down — and the anchor is followed by key to its current order,
      so the child spawned after it is still the next page. */
-  const db = new Database(path.join(directory, "agent-registry.sqlite"));
+  const db = new Database(filename, { readwrite: true, create: false });
   db.query("UPDATE registry_rows SET row_order = row_order - 1000 WHERE collection='lineageEdges'").run();
   db.close();
   const renumbered = spawn("after renumbering");
