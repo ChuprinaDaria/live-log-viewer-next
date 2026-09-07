@@ -102,6 +102,10 @@ jobs:
                   command += ["--test-name-pattern", "legacy Claude is Main|managed homes are distinct|credential symlinks|new account creation refuses"]
               if test.endswith("/spawnHealth.test.ts"):
                   command += ["--test-name-pattern", "^(?!Claude provider checks waiting behind deletion)"]
+              # The full CLI suite also invokes a locally installed Codex.
+              # This provider job exercises Claude account storage boundaries.
+              if test.endswith("/cli.test.ts"):
+                  command += ["--test-name-pattern", "^(managed Claude fresh and resume commands pin|Claude child environment keeps|legacy Claude fresh and resumed commands pin)"]
               if subprocess.run(command, env=env).returncode:
                   failures.append(test)
           if failures:
