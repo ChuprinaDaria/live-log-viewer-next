@@ -106,6 +106,7 @@ jobs:
             scripts/verify-viewer-runtime.test.ts
             src/runtime-host/hostRehearsal.test.ts
             src/runtime-host/hostRehearsalRun.test.ts
+            src/runtime-host/deploymentProxy.test.ts
           )
           # `bun test` exits 0 for a path that is not there, so a file deleted
           # out from under this step would shrink what it holds and leave the

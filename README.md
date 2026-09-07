@@ -467,6 +467,11 @@ inside the tailnet via `tailscale serve` and guarded by the token gate in
 `src/proxy.ts`. Non-loopback binds also force token mode. Treat any URL
 containing `?k=` as a credential.
 
+A Docker-deployed runtime host on a personal workstation can keep `LLV_TOKEN`
+for the tailnet while serving plain `http://127.0.0.1:8898/` token-free, by
+splitting its stable listener into a local entry and an authenticated remote
+entry; see [docs/docker.md](docs/docker.md#personal-workstation-token-free-localhost-authenticated-tailnet).
+
 ## Environment variables
 
 All optional. Transcription variables are documented in full in
