@@ -1443,3 +1443,23 @@ test("forgetting one account's cached limits sends the next read back to the pro
   expect(reads).toBe(2);
   resetLimitsCache();
 });
+
+
+test("Claude limits uses the shared account store and contains unknown-store errors", async () => {
+  const store = await import("./accounts/claudeCredentials");
+  const read = spyOn(store, "readClaudeCredentials");
+  const request = spyOn(globalThis, "fetch").mockImplementation((async (_url: string | URL | Request, init?: RequestInit) => {
+    expect(new Headers(init?.headers).get("authorization")).toBe("Bearer fixture");
+    return Response.json({ five_hour: { utilization: 23 } });
+  }) as typeof fetch);
+  try {
+    read.mockReturnValue({ state: "present", source: "keychain", document: { claudeAiOauth: { accessToken: "fixture", subscriptionType: "max" } } });
+    const file = path.join(SANDBOX, "keychain-account", ".credentials.json");
+    expect(await fetchClaudeLimits(file)).toMatchObject({ source: "live", data: { plan: "max", session: { usedPercent: 23 } } });
+    expect(read).toHaveBeenCalledWith(path.dirname(file));
+    read.mockReturnValue({ state: "unknown" });
+    expect(await fetchClaudeLimits(file)).toEqual({ source: "unavailable", data: null, reason: "credential store unavailable" });
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(fs.existsSync(file)).toBe(false);
+  } finally { read.mockRestore(); request.mockRestore(); }
+});

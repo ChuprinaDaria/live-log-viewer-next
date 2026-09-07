@@ -24,6 +24,7 @@ export async function handleLimitsRefresh(engine: MigrationEngine, req: NextRequ
   }
   const now = deps.now ?? Date.now();
   return NextResponse.json({
-    account: { id: result.account.id, ...accountProjection(result.observation, result.account.authPresent, now) },
+    account: { id: result.account.id, ...accountProjection(result.observation, result.account.authPresent
+      || ("credentialState" in result.account && result.account.credentialState === "unknown"), now) },
   });
 }
