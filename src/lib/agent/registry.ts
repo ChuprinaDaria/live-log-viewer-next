@@ -5073,6 +5073,12 @@ export class AgentRegistry {
         void updatedAt;
         storedEvidence = entry;
       }
+      if (storedEvidence && (storedEvidence.structuredHost?.process || storedEvidence.claimOwner)
+        && receipt.accountId !== storedEvidence.accountId) {
+        // Settlement attributes an entry to the receipt's birth account. A
+        // stale or unknown account cannot rebind an already-owned writer.
+        return { kind: "conflict", receipt: clone(receipt), code: "spawn_identity_conflict" };
+      }
       /* Runtime snapshots prove delivery and session identity, while the
          registry remains authoritative for an active writer claim. Merge the
          live claim inside this mutation so synthesized evidence cannot clear

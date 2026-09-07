@@ -318,7 +318,7 @@ test("historical reconciliation recovers late transcript evidence and preserves 
   } finally { f.journal.close(); }
 });
 
-test.each(["codex", "claude"] as const)("late unkeyed %s resume recovery preserves the adopted writer", async (engine) => {
+test.each([["codex", false], ["codex", true], ["claude", false], ["claude", true]] as const)("late unkeyed %s resume preserves its writer (account mismatch=%s)", async (engine, accountMismatch) => {
   const f = fixture(0);
   const sessionId = crypto.randomUUID();
   const artifactPath = path.join(f.directory, `${sessionId}.jsonl`);
@@ -336,6 +336,8 @@ test.each(["codex", "claude"] as const)("late unkeyed %s resume recovery preserv
   });
   expect(begun.receipt.key).toBeNull();
   f.registry.failStructuredSpawn(begun.receipt.launchId, "resume lost admission to startup adoption");
+  const currentEntry = f.registry.readOnlySnapshot().entries[`${engine}:${sessionId}`]!;
+  if (accountMismatch) f.registry.upsert({ ...currentEntry, accountId: "current-writer-account" });
   const externalWriter = Bun.spawn([process.execPath, "-e", "for await (const chunk of process.stdin) { void chunk; }"], {
     env: { ...process.env }, stdin: "pipe", stdout: "ignore", stderr: "ignore",
   });
@@ -355,10 +357,11 @@ test.each(["codex", "claude"] as const)("late unkeyed %s resume recovery preserv
   try {
     await recoverPendingStructuredSpawns(f.registry, f.client);
     const after = f.registry.readOnlySnapshot().entries[`${engine}:${sessionId}`]!;
+    expect(after.accountId).toBe(before.accountId);
     expect(after.claimOwner).toBe(before.claimOwner);
     expect(after.claimEpoch).toBe(before.claimEpoch);
     expect(after.structuredHost).toEqual(before.structuredHost);
-    expect(f.registry.readOnlySnapshot().receipts[begun.receipt.launchId]!.state).toBe("completed");
+    expect(f.registry.readOnlySnapshot().receipts[begun.receipt.launchId]!.state).toBe(accountMismatch ? "failed" : "completed");
   } finally {
     externalWriter.stdin.end();
     await externalWriter.exited;

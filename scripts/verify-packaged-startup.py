@@ -151,6 +151,7 @@ try:
                 contender = subprocess.run([str(bun), "src/lib/runtime/fixtures/startupPipelineContender.ts", str(root / "state")], cwd=repo, env=env, capture_output=True, text=True)
                 with sqlite3.connect(f"file:{root / 'state/runtime-events.sqlite'}?mode=ro", uri=True) as db:
                     sends = db.execute("SELECT json_extract(receipt_json,'$.status'),count(*) FROM operations WHERE idempotency_key LIKE 'queued-startup-%' GROUP BY 1").fetchall()
+                (root / "ownership.json").write_text(json.dumps({"before": before_claims, "after": current_claims}, indent=2))
                 result.update({"ready": True, "elapsedMs": elapsed, "hosted": hosted, "queuedSends": dict(sends), "ownershipPreserved": before_claims is not None and current_claims == before_claims, "creation": json.loads(contender.stdout), "creationExit": contender.returncode})
                 break
             time.sleep(.25)
