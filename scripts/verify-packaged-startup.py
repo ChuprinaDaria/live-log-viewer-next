@@ -24,8 +24,11 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--viewer", type=Path, required=True, help="immutable standalone package")
 parser.add_argument("--runtime-source", type=Path, required=True, help="exact incumbent runtime-host source tree")
 parser.add_argument("--bun", type=Path, required=True)
-parser.add_argument("--mixed-engines", action="store_true", help="include three Claude protocol fixtures; requires all six hosts to remain owned")
+parser.add_argument("--codex-only", action="store_true", help="narrower contention control; does not qualify mixed-provider preservation")
+parser.add_argument("--snapshot-delay-ms", type=int, default=0)
+parser.add_argument("--rpc-delay-ms", type=int, default=0)
 args = parser.parse_args()
+assert 0 <= args.snapshot_delay_ms <= 3000 and 0 <= args.rpc_delay_ms <= 5
 repo = Path(__file__).resolve().parents[1]
 viewer, runtime_source, bun = args.viewer.resolve(), args.runtime_source.resolve(), args.bun.resolve()
 assert subprocess.check_output([str(bun), "--version"], text=True).strip() == "1.4.0"
@@ -42,7 +45,7 @@ for key, directory in {"HOME": "home", "XDG_CONFIG_HOME": "config", "XDG_CACHE_H
 (root / "sockets").mkdir(mode=0o700)
 provider = str(root / "bin/provider")
 shutil.copy2(repo / "src/lib/runtime/fixtures/packagedProvider.py", provider)
-env.update({"LLV_CODEX_BINARY": provider, "LLV_CLAUDE_BINARY": provider, "LLV_PACKAGED_MIXED_ENGINES": "1" if args.mixed_engines else "0"})
+env.update({"LLV_CODEX_BINARY": provider, "LLV_CLAUDE_BINARY": provider, "LLV_PACKAGED_MIXED_ENGINES": "0" if args.codex_only else "1"})
 with open(root / "seed.log", "w") as log:
     subprocess.run([str(bun), "src/lib/runtime/fixtures/packagedStartupSeed.ts"], cwd=repo, env=env, stdout=log, stderr=subprocess.STDOUT, check=True)
 
@@ -64,6 +67,7 @@ def forward(peer):
         request = peer.makefile("rb").readline()
         method = json.loads(request)["method"]
         started = time.monotonic()
+        time.sleep((args.snapshot_delay_ms if method == "snapshot" else args.rpc_delay_ms) / 1000)
         with socket.socket(socket.AF_UNIX) as upstream:
             upstream.connect(real_socket)
             upstream.sendall(request)
@@ -107,7 +111,14 @@ for _ in range(100):
 env["LLV_RUNTIME_HOST_SOCKET"] = relay_socket
 app = subprocess.Popen([str(bun), str(viewer / "server.js")], cwd=viewer, env=env, stdout=logs[1], stderr=subprocess.STDOUT)
 started = time.monotonic()
-result = {"ready": False, "deadlineMs": 120000}
+result = {"ready": False, "deadlineMs": 120000, "snapshotDelayMs": args.snapshot_delay_ms, "rpcDelayMs": args.rpc_delay_ms}
+expected_keys = [("claude" if not args.codex_only and i >= 3 else "codex") + ":00000000-0000-4000-8000-" + str(i).zfill(12) for i in range(6)]
+before_claims = None
+
+def claims():
+    filename = root / "state/agent-registry.sqlite"
+    with sqlite3.connect(f"file:{filename}?mode=ro", uri=True) as db:
+        return db.execute("SELECT row_key,json_extract(value_json,'$.accountId'),json_extract(value_json,'$.claimOwner'),json_extract(value_json,'$.claimEpoch'),json_extract(value_json,'$.structuredHost.process.pid'),json_extract(value_json,'$.structuredHost.process.startIdentity'),json_extract(value_json,'$.artifactPath') FROM registry_rows WHERE collection='entries' AND row_key IN (?,?,?,?,?,?) ORDER BY row_key", expected_keys).fetchall()
 print(root, flush=True)
 try:
     with open(root / "timeline.jsonl", "w") as timeline:
@@ -128,6 +139,9 @@ try:
             if database.exists():
                 with sqlite3.connect(f"file:{database}?mode=ro", uri=True) as db:
                     leases = db.execute("SELECT collection,owner_pid,owner_start_identity,acquired_at FROM state_leases").fetchall()
+            current_claims = claims()
+            if before_claims is None and len(current_claims) == 6 and all(row[2] and row[4] and row[5] for row in current_claims):
+                before_claims = current_claims
             elapsed = round((time.monotonic() - started) * 1000)
             timeline.write(json.dumps({"elapsedMs": elapsed, "probeMs": round((time.monotonic() - before) * 1000), "status": status, "leases": leases}) + "\n")
             timeline.flush()
@@ -135,7 +149,9 @@ try:
                 with sqlite3.connect(f"file:{root / 'state/agent-registry.sqlite'}?mode=ro", uri=True) as db:
                     hosted = db.execute("SELECT count(*) FROM registry_rows WHERE collection='entries' AND json_extract(value_json,'$.structuredHost.process') IS NOT NULL").fetchone()[0]
                 contender = subprocess.run([str(bun), "src/lib/runtime/fixtures/startupPipelineContender.ts", str(root / "state")], cwd=repo, env=env, capture_output=True, text=True)
-                result.update({"ready": True, "elapsedMs": elapsed, "hosted": hosted, "creation": json.loads(contender.stdout), "creationExit": contender.returncode})
+                with sqlite3.connect(f"file:{root / 'state/runtime-events.sqlite'}?mode=ro", uri=True) as db:
+                    sends = db.execute("SELECT json_extract(receipt_json,'$.status'),count(*) FROM operations WHERE idempotency_key LIKE 'queued-startup-%' GROUP BY 1").fetchall()
+                result.update({"ready": True, "elapsedMs": elapsed, "hosted": hosted, "queuedSends": dict(sends), "ownershipPreserved": before_claims is not None and current_claims == before_claims, "creation": json.loads(contender.stdout), "creationExit": contender.returncode})
                 break
             time.sleep(.25)
 finally:
@@ -154,4 +170,4 @@ finally:
         result["relayErrors"] = dict(collections.Counter(relay_errors))
     (root / "result.json").write_text(json.dumps(result, indent=2))
     print(json.dumps(result), flush=True)
-raise SystemExit(0 if result.get("ready") and result["elapsedMs"] < result["deadlineMs"] and result.get("hosted") == 6 and result.get("creation", {}).get("created") else 1)
+raise SystemExit(0 if result.get("ready") and result["elapsedMs"] < result["deadlineMs"] and result.get("hosted") == 6 and result.get("ownershipPreserved") is True and result.get("creation", {}).get("created") else 1)

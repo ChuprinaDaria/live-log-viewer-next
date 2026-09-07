@@ -5062,7 +5062,11 @@ export class AgentRegistry {
       if (receipt.state === "conflicted" || receipt.retryClaim) {
         return { kind: "conflict", receipt: clone(receipt), code: "spawn_identity_conflict" };
       }
-      const stored = receipt.key ? file.entries[sessionKeyId(receipt.key)] : null;
+      // An unstaged resume can lose admission to startup adoption before it
+      // records a key. Its recovery evidence identifies the existing entry;
+      // that entry's writer fence still governs late receipt settlement.
+      const storedKey = receipt.key ?? evidence?.key;
+      const stored = storedKey ? file.entries[sessionKeyId(storedKey)] : null;
       let storedEvidence: Omit<AgentRegistryEntry, "updatedAt"> | null = null;
       if (stored) {
         const { updatedAt, ...entry } = stored;
