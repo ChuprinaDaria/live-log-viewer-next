@@ -43,9 +43,13 @@ function readCredentialDocument(account: ClaudeAccount): CredentialDocument | nu
   return read.state === "present" ? read.document : null;
 }
 
-export function claudeOauthMetadata(account: ClaudeAccount): { expiresAt: number; refreshable: boolean } | null {
+/** Unknown store access must survive both catalog discovery and this re-read. */
+export function claudeOauthMetadata(account: ClaudeAccount): { expiresAt: number; refreshable: boolean } | "unknown" | null {
+  if (account.credentialState === "unknown") return "unknown";
   if (!account.authPresent) return null;
-  const oauth = readCredentialDocument(account)?.claudeAiOauth;
+  const read = readClaudeCredentials(account.home);
+  if (read.state === "unknown") return "unknown";
+  const oauth = read.state === "present" ? read.document.claudeAiOauth : null;
   return typeof oauth?.accessToken === "string" && oauth.accessToken.length > 0
     && typeof oauth.expiresAt === "number" && Number.isFinite(oauth.expiresAt)
     ? { expiresAt: oauth.expiresAt, refreshable: typeof oauth.refreshToken === "string" && oauth.refreshToken.length > 0 }
@@ -68,7 +72,7 @@ function concurrentRotationIsCurrent(account: ClaudeAccount, originalAccessToken
   const current = readCredentialDocument(account)?.claudeAiOauth;
   if (!current || current.accessToken === originalAccessToken) return false;
   const metadata = claudeOauthMetadata(account);
-  return metadata !== null && metadata.expiresAt > now;
+  return metadata !== null && metadata !== "unknown" && metadata.expiresAt > now;
 }
 
 async function acquireDirectoryLock(lock: string, startedAt: number, waitMs: number): Promise<(() => void) | null> {

@@ -185,8 +185,10 @@ export async function selectHealthyClaudeAccount(
 ): Promise<ClaudeSpawnAccountSelection> {
   const now = dependencies.now();
   const classified = accounts.map((account) => {
-    const oauth = claudeOauthMetadata(account);
-    return { account, oauth };
+    const metadata = claudeOauthMetadata(account);
+    const unknown = metadata === "unknown";
+    if (unknown && pinPreferred && account.id === preferredId) throw new ClaudeCredentialUnavailableError();
+    return { account, oauth: unknown ? null : metadata, unknown };
   });
   type Evaluated = { account: ClaudeAccount; admission: SpawnAccountAdmission };
   const rank = (admission: SpawnAccountAdmission) => admission.kind === "admissible"
@@ -233,5 +235,6 @@ export async function selectHealthyClaudeAccount(
   const all = [...current, ...(requested ? [requested] : []), ...refreshed];
   const refreshedSelection = select(all);
   if (refreshedSelection) return result(refreshedSelection, requested);
+  if (classified.some((candidate) => candidate.unknown)) throw new ClaudeCredentialUnavailableError();
   throw new NoHealthyClaudeAccountError(accounts.map((candidate) => candidate.id));
 }

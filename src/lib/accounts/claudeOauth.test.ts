@@ -82,7 +82,7 @@ test("an OAuth redirect cannot forward refresh credentials to another origin", a
 
     expect(result).toBe("unknown");
     expect(redirectedRequests).toBe(0);
-    expect(claudeOauthMetadata(candidate)?.expiresAt).toBe(NOW - 1);
+    expect(claudeOauthMetadata(candidate)).toMatchObject({ expiresAt: NOW - 1 });
   } finally {
     await upstream.stop(true);
     await destination.stop(true);
@@ -122,8 +122,8 @@ test("only positive invalid_grant evidence is fenced while other failures remain
     fetch: async () => Response.json({ error: "invalid_scope" }, { status: 400 }),
   })).resolves.toBe("unknown");
 
-  expect(claudeOauthMetadata(unclassified401)?.expiresAt).toBe(NOW - 1);
-  expect(claudeOauthMetadata(transient)?.expiresAt).toBe(NOW - 1);
+  expect(claudeOauthMetadata(unclassified401)).toMatchObject({ expiresAt: NOW - 1 });
+  expect(claudeOauthMetadata(transient)).toMatchObject({ expiresAt: NOW - 1 });
 });
 
 test("HTTP 401 invalid_client remains a transient compatibility failure", async () => {
@@ -135,7 +135,7 @@ test("HTTP 401 invalid_client remains a transient compatibility failure", async 
   });
 
   expect(result).toBe("unknown");
-  expect(claudeOauthMetadata(candidate)?.expiresAt).toBe(NOW - 1);
+  expect(claudeOauthMetadata(candidate)).toMatchObject({ expiresAt: NOW - 1 });
 });
 
 test("a first-party invalid_scope response retries with the stored inference scopes", async () => {
@@ -180,7 +180,7 @@ test("a late refresh rejection observes a concurrent native credential rotation"
   });
 
   expect(result).toBe("refreshed");
-  expect(claudeOauthMetadata(candidate)?.expiresAt).toBe(NOW + 60_000);
+  expect(claudeOauthMetadata(candidate)).toMatchObject({ expiresAt: NOW + 60_000 });
 });
 
 test("a native refresh lock bounds Viewer admission without starting duplicate refresh work", async () => {
@@ -333,13 +333,13 @@ test("Keychain metadata and refresh use the same backend without a credentials f
   const read = spyOn(store, "readClaudeCredentials").mockImplementation((home) => originalRead(home, ports));
   const write = spyOn(store, "replaceClaudeCredentials").mockImplementation((home, previous, document) => originalReplace(home, previous, document, ports));
   try {
-    expect(claudeOauthMetadata(candidate)?.refreshable).toBe(true);
+    expect(claudeOauthMetadata(candidate)).toMatchObject({ refreshable: true });
     expect(await refreshClaudeOauth(candidate, { now: () => NOW, fetch: async () => Response.json({ access_token: "fixture", expires_in: 3600 }) })).toBe("refreshed");
-    expect(claudeOauthMetadata(candidate)?.expiresAt).toBe(NOW + 3600_000);
+    expect(claudeOauthMetadata(candidate)).toMatchObject({ expiresAt: NOW + 3600_000 });
     expect(write).toHaveBeenCalledTimes(1);
     expect(fs.existsSync(file)).toBe(false);
     read.mockReturnValue({ state: "unknown" });
-    expect(claudeOauthMetadata(candidate)).toBeNull();
+    expect(claudeOauthMetadata(candidate)).toBe("unknown");
     expect(await refreshClaudeOauth(candidate, { now: () => NOW, fetch: async () => { throw new Error("must not refresh an unknown store"); } })).toBe("unknown");
   } finally { read.mockRestore(); write.mockRestore(); }
 });

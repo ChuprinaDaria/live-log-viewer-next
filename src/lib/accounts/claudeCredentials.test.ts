@@ -154,7 +154,7 @@ test.skipIf(process.env.LLV_REQUIRE_NATIVE_CREDENTIALS !== "1")("native disposab
         expect(supervisor.get(operation.operationId)?.phase).toBe("authenticated");
         const candidate = accounts.listClaudeAccounts().find((account) => account.id === id)!;
         expect(candidate.authPresent).toBe(true);
-        expect(claudeOauthMetadata(candidate)?.refreshable).toBe(true);
+        expect(claudeOauthMetadata(candidate)).toMatchObject({ refreshable: true });
       }
     } finally { readPort.mockRestore(); }
     if (read.state !== "present") throw new Error("missing native fixture");

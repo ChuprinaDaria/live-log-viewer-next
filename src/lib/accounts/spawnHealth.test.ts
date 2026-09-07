@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, afterEach, expect, test } from "bun:test";
+import { afterAll, afterEach, expect, spyOn, test } from "bun:test";
 
 import { LIMITS_RATE_LIMITED_REASON, LIMITS_REAUTH_REQUIRED_REASON } from "@/lib/types";
 
@@ -14,10 +14,12 @@ const PREVIOUS_STATE = process.env.LLV_STATE_DIR;
 const PREVIOUS_HOME = process.env.LLV_CLAUDE_HOME;
 const PREVIOUS_FETCH = globalThis.fetch;
 let providerReads = 0;
+let providerReply: (() => Response) | null = null;
 process.env.LLV_STATE_DIR = path.join(STATE_SANDBOX, "state");
 process.env.LLV_CLAUDE_HOME = path.join(STATE_SANDBOX, "legacy-claude");
 globalThis.fetch = (async () => {
   providerReads += 1;
+  if (providerReply) return providerReply();
   return new Response(JSON.stringify({ error: "invalid_grant" }), { status: 401, headers: { "content-type": "application/json" } });
 }) as unknown as typeof globalThis.fetch;
 const { claudeValidityFromLimitRead, NoHealthyClaudeAccountError, selectHealthyClaudeAccount } = await import("./spawnHealth");
@@ -51,6 +53,62 @@ function account(id: string, expiresAt: number, authPresent = true, refreshable 
     },
   }), { mode: 0o600 });
   return { id, label: id, kind: "managed", home, projectsDir: path.join(home, "projects"), authPresent, createdAt: 0 };
+}
+
+for (const kind of ["legacy", "managed"] as const) {
+  for (const uncertainty of ["discovery", "metadata"] as const) {
+    test("production spawn caller refuses " + kind + " requested account uncertainty at " + uncertainty, async () => {
+      const store = await import("./claudeCredentials");
+      const originalRead = store.readClaudeCredentials;
+      const read = spyOn(store, "readClaudeCredentials").mockImplementation((home) => originalRead(home, {
+        platform: "linux", security: () => { throw new Error("unexpected Keychain access"); },
+      }));
+      const { createManagedClaudeAccount, listClaudeAccounts } = await import("./claude");
+      const { resolveHealthySpawnAccount } = await import("./manager");
+      fs.rmSync(process.env.LLV_STATE_DIR!, { recursive: true, force: true });
+      fs.mkdirSync(process.env.LLV_CLAUDE_HOME!, { recursive: true, mode: 0o700 });
+      const requested = kind === "legacy" ? listClaudeAccounts()[0] : createManagedClaudeAccount("Account A");
+      const fallback = createManagedClaudeAccount("Account B");
+      const document = { claudeAiOauth: { ["access" + "Token"]: crypto.randomUUID(), expiresAt: Date.now() + 3600_000 } };
+      let requestedReads = 0;
+      read.mockImplementation((home) => {
+        if (home === requested.home) {
+          requestedReads += 1;
+          // The manager discovers the catalog twice before metadata is read.
+          if (uncertainty === "discovery" || requestedReads > 2) return { state: "unknown" };
+        }
+        if (home === requested.home || home === fallback.home) return { state: "present", source: "keychain", document };
+        return { state: "absent" };
+      });
+      providerReply = () => Response.json({ five_hour: { utilization: 1, resets_at: new Date(Date.now() + 3600_000).toISOString() } });
+      try {
+        const outcome = await resolveHealthySpawnAccount("claude", requested.id).then(
+          (selected) => ({ selectedAccountId: selected.accountId }), (error: unknown) => ({ error }),
+        );
+        expect("error" in outcome).toBe(true);
+        expect((outcome as { error: Error }).error.name).toBe("ClaudeCredentialUnavailableError");
+        expect((outcome as { error: Error }).error.message).toContain("credential store is unavailable");
+        expect(requestedReads).toBe(uncertainty === "discovery" ? 2 : 3);
+
+        // Prove the alternate account really can pass the production caller.
+        const healthy = await resolveHealthySpawnAccount("claude", fallback.id);
+        expect(healthy.accountId).toBe(fallback.id);
+        expect(healthy.requestedAdmission).toMatchObject({ kind: "admissible", basis: "current" });
+
+        // Proven absence retains the existing fallback behavior.
+        read.mockImplementation((home) => home === fallback.home
+          ? { state: "present", source: "keychain", document } : { state: "absent" });
+        expect((await resolveHealthySpawnAccount("claude", requested.id)).accountId).toBe(fallback.id);
+
+        read.mockReturnValue({ state: "unknown" });
+        await expect(resolveHealthySpawnAccount("claude")).rejects.toThrow("credential store is unavailable");
+      } finally {
+        read.mockRestore();
+        providerReply = null;
+        fs.rmSync(process.env.LLV_STATE_DIR!, { recursive: true, force: true });
+      }
+    });
+  }
 }
 
 test("spawn selection skips an unrefreshable expired preferred Claude account and probes a healthy fallback", async () => {
