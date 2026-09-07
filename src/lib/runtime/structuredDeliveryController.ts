@@ -23,6 +23,7 @@ import { STRUCTURED_IMAGE_CAPABILITY } from "./structuredContent";
 import {
   markStructuredDeliveryControllerReady,
   markStructuredDeliveryControllerUnavailable,
+  type StructuredHostStartupPhase,
 } from "./startupStatus";
 
 type ObservableEngineHost = EngineHost & { onStateChange(listener: (state: HostState) => void): () => void };
@@ -75,7 +76,7 @@ interface ControllerState {
   republishActiveHost: ((key: SessionKey) => Promise<boolean>) | null;
   releaseActiveHost: ((key: SessionKey) => Promise<boolean>) | null;
   terminateActiveHost: ((key: SessionKey, expected?: Readonly<ProcessIdentity>) => Promise<boolean>) | null;
-  completeActive: ((adopted: readonly StructuredDeliveryHost[]) => Promise<void>) | null;
+  completeActive: ((adopted: readonly StructuredDeliveryHost[], progress?: (phase: StructuredHostStartupPhase) => void) => Promise<void>) | null;
   stopActive: () => void;
   lastDrainError?: string | null;
   /* Distinguishes "this process hosts the controller and is between
@@ -1060,7 +1061,7 @@ export async function bindStructuredDeliveryQueue(
     }
   };
   let completion = Promise.resolve();
-  const complete = (items: readonly StructuredDeliveryHost[]) => {
+  const complete = (items: readonly StructuredDeliveryHost[], progress?: (phase: StructuredHostStartupPhase) => void) => {
     completion = completion.catch(() => {}).then(async () => {
       /* A generation that has been swapped out cannot register anything, but it
          must not answer "done" either: its caller would clear its retry set and
@@ -1070,9 +1071,10 @@ export async function bindStructuredDeliveryQueue(
       if (stopped || state.activeQueue !== queue) {
         const successor = state.completeActive;
         if (!successor || successor === complete) throw new StructuredDeliveryControllerUnavailableError();
-        await successor(items);
+        await successor(items, progress);
         return;
       }
+      progress?.("registering structured delivery hosts");
       for (const item of items) await register(item);
       const startupSnapshot = registry.readOnlySnapshot();
       /* Read only to skip republishing a projection that already says what
@@ -1080,12 +1082,14 @@ export async function bindStructuredDeliveryQueue(
          below is read off the registry, never off this snapshot, so a read
          that failed costs one redundant publish and authorises nothing
          (#1131). */
+      progress?.("reading fallback runtime snapshot");
       const runtimeSnapshot = typeof client.snapshot === "function"
         ? await client.snapshot().catch(() => null)
         : null;
       const runtimeSessions = new Map(
         (runtimeSnapshot?.sessions ?? []).map((session) => [session.conversationId, session]),
       );
+      progress?.("publishing historical host fallbacks");
       for (const conversation of Object.values(startupSnapshot.conversations)) {
         const generation = conversation.generations.at(-1);
         if (!generation) continue;
@@ -1095,7 +1099,9 @@ export async function bindStructuredDeliveryQueue(
         if (!entry?.structuredHost && entry?.host?.kind !== "tmux") continue;
         await publishCurrentFallback(conversation.id, runtimeSessions.get(conversation.id));
       }
+      progress?.("reconciling terminal delivery receipts");
       await reconcileTerminalDeliveries(registry, client, () => !stopped && state.activeQueue === queue);
+      progress?.("draining startup delivery queue");
       await queue.drain();
     });
     return completion;
@@ -1149,9 +1155,10 @@ export async function publishStructuredDeliveryHost(
 
 export async function completeStructuredDeliveryQueueStartup(
   adopted: readonly StructuredDeliveryHost[],
+  progress?: (phase: StructuredHostStartupPhase) => void,
 ): Promise<void> {
   if (!state.completeActive) throw new StructuredDeliveryControllerUnavailableError();
-  await state.completeActive(adopted);
+  await state.completeActive(adopted, progress);
 }
 
 export async function republishStructuredDeliveryHost(key: SessionKey): Promise<boolean> {

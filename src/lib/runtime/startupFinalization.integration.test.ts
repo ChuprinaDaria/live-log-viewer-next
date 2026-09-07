@@ -211,6 +211,56 @@ test("a failed historical snapshot remains unknown and a later pass retries it",
   } finally { f.journal.close(); }
 });
 
+test("startup exposes the retaining fallback await without releasing admission before it settles", async () => {
+  const f = fixture(1, true);
+  let entered!: () => void;
+  const publicationEntered = new Promise<void>((resolve) => { entered = resolve; });
+  let settle!: () => void;
+  const publicationSettlement = new Promise<void>((resolve) => { settle = resolve; });
+  const host = new RuntimeHost(f.journal);
+  const server = serveRuntimeHost(path.join(isolated, "sockets", "progress.sock"), {
+    handle: async (request, options) => {
+      if (request.method === "append") {
+        entered();
+        await publicationSettlement;
+      }
+      return host.handle(request, options);
+    },
+  });
+  await new Promise<void>((resolve) => server.once("listening", resolve));
+  const client = new UnixRuntimeHostClient(path.join(isolated, "sockets", "progress.sock"));
+  // No transcript/adopter/controller substitution: historical rows are dead;
+  // only the private socket peer withholds a publication response.
+  const startup = runStructuredHostStartup(() => adoptStructuredHostsAtStartup({
+    registry: f.registry, client,
+  }), () => {}, { waitUntilReady: true });
+  const leases = () => {
+    const db = new Database(path.join(process.env.LLV_STATE_DIR!, "state.sqlite"), { readonly: true });
+    try { return db.query("SELECT owner_pid FROM state_leases WHERE collection = 'pipelines'").all(); }
+    finally { db.close(); }
+  };
+  try {
+    await publicationEntered;
+    expect(structuredStartupStatus()).toMatchObject({
+      state: "pending", phase: "publishing historical host fallbacks",
+      pid: process.pid, phaseStartedAt: expect.any(String),
+    });
+    expect(leases()).toEqual([{ owner_pid: process.pid }]);
+    await Bun.sleep(25);
+    expect(leases()).toEqual([{ owner_pid: process.pid }]);
+    settle();
+    await startup;
+    expect(structuredStartupStatus()?.state).toBe("ready");
+    expect(leases()).toEqual([]);
+  } finally {
+    settle();
+    await startup;
+    await bindStructuredDeliveryQueue([], { registry: f.registry, client: null });
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    f.journal.close();
+  }
+}, 60_000);
+
 test("pending launches ignore a historical snapshot supplier", async () => {
   const f = fixture(0);
   const begun = f.registry.beginSpawnRequest({

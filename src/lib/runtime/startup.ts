@@ -1088,9 +1088,10 @@ export async function adoptStructuredHostsAtStartup(
        retire a publication this pass has no client to replace — and every spawn
        in the process would fail until some later pass rebound it (#1191). */
     if (controllerBoundEarly) {
-      await completeStructuredDeliveryQueueStartup(nextAdoptedHosts);
+      await completeStructuredDeliveryQueueStartup(nextAdoptedHosts, reportProgress);
       assertAdoptedHostsAreClaimed(nextAdoptedHosts, dependencies.hostClaimed);
     }
+    reportProgress("recovering orchestrator deliveries");
     await enqueueOrchestratorRestartRecoveries(
       registry,
       client,
@@ -1099,6 +1100,7 @@ export async function adoptStructuredHostsAtStartup(
       orchestratorSeats,
     );
     if (client) {
+      reportProgress("recovering interrupted deliveries");
       await enqueueInterruptedCodexContinuations(
         registry,
         client,
@@ -1107,6 +1109,7 @@ export async function adoptStructuredHostsAtStartup(
         existingCodexContinuations,
         signals.pendingCodexContinuationConversationIds,
       );
+      reportProgress("kicking recovered deliveries");
       await kickStructuredDeliveryQueue();
     }
     /* A pending launch receipt reserved for a fenced pipeline conversation is
@@ -1117,7 +1120,10 @@ export async function adoptStructuredHostsAtStartup(
        unrelated lane's queued or superseded launch is reconciled by this boot
        whatever another pipeline's survivor is doing. */
     const fencedReceipts = fencedPendingSpawnReceipts(registry, pipelineEvidence.deferred);
-    if (client && fencedReceipts.length === 0) await recoverPendingStructuredSpawns(registry, client);
+    if (client && fencedReceipts.length === 0) {
+      reportProgress("recovering pending spawns");
+      await recoverPendingStructuredSpawns(registry, client);
+    }
     adoptedHosts = nextAdoptedHosts;
     if (deferredHostKeys.size > 0 || fencedReceipts.length > 0) {
       /* The rows are retained exactly as a retry would retain them: the next

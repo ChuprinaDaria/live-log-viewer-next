@@ -684,12 +684,14 @@ export class SqliteStateCollection<T> {
     }
   }
 
-  /** Move selected rows to another collection in one SQLite commit. */
-  moveMatchingTo(
+  /** Move selected rows to another collection in one SQLite commit. Lease
+      contention must yield: startup can hold the source lease while awaiting
+      an RPC on this same event loop. A synchronous wait starves its release. */
+  async moveMatchingTo(
     target: SqliteStateCollection<T>,
     predicate: (record: T) => boolean,
     options: { beforeCommit?: () => void } = {},
-  ): number {
+  ): Promise<number> {
     if (target === this || target.filename !== this.filename) {
       throw new Error("atomic state moves require two collections in one database");
     }
@@ -697,7 +699,7 @@ export class SqliteStateCollection<T> {
     const ordered = [this, target].sort((left, right) => left.options.collection.localeCompare(right.options.collection));
     const leases = new Map<SqliteStateCollection<T>, string>();
     try {
-      for (const collection of ordered) leases.set(collection, collection.acquireLeaseSync());
+      for (const collection of ordered) leases.set(collection, await collection.acquireLease());
       const db = connectDatabase(this.filename);
       try {
         const moved = withImmediateTransaction(db, this.options.busyMessage, () => {
@@ -778,7 +780,7 @@ export class SqliteStateCollection<T> {
     } finally {
       for (const collection of [...ordered].reverse()) {
         const lease = leases.get(collection);
-        if (lease) collection.releaseLeaseSync(lease);
+        if (lease) await collection.releaseLease(lease);
       }
     }
   }

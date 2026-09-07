@@ -97,3 +97,23 @@ test("structured startup status retains host adoption progress through failure a
     else store.__llvStructuredHostStartupProgress = previousProgress;
   }
 });
+
+test("substep timing survives host progress and failure without logging payloads", async () => {
+  const status = await import("./startupStatus");
+  const original = console.error;
+  const lines: unknown[][] = [];
+  console.error = (...args) => { lines.push(args); };
+  try {
+    status.markStructuredHostStartupProgress({ phase: "registering structured delivery hosts", completedHosts: 0, totalHosts: 2 });
+    const started = status.structuredStartupStatus()!.phaseStartedAt;
+    status.markStructuredHostStartupProgress({ phase: "registering structured delivery hosts", completedHosts: 1, totalHosts: 2 });
+    expect(status.structuredStartupStatus()!.phaseStartedAt).toBe(started);
+    expect(lines).toHaveLength(1);
+    status.markStructuredHostStartupFailed();
+    expect(status.structuredStartupStatus()).toMatchObject({ state: "failed", phase: "registering structured delivery hosts", pid: process.pid });
+    const detail = lines.at(-1)![1] as Record<string, unknown>;
+    expect(Object.keys(detail).sort()).toEqual(["phase", "pid", "previousPhase", "previousPhaseMs", "state"]);
+    expect(detail.previousPhaseMs).toBeNumber();
+    status.markStructuredHostStartupReady();
+  } finally { console.error = original; }
+});
