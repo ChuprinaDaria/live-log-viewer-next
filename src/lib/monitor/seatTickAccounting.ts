@@ -488,6 +488,19 @@ export class SeatTickAccounting {
       tx.put(child);
     });
   }
+  /** Unchanged cold ledgers need only advance their FIFO tickets. Rotate the
+      bounded visit batch in one transaction, preserving all evidence rows. */
+  rotateCold(children: readonly AccountingChild[]): void {
+    if (!children.length) return;
+    this.mutate((tx, row) => {
+      for (const child of children) {
+        const current = tx.get(child.key);
+        if (current?.kind !== "child" || !child.pollKey || current.pollKey !== child.pollKey || !tx.get(child.pollKey)) continue;
+        tx.delete(child.pollKey);
+        tx.put({ ...current, pollKey: this.ticket(tx, row, "poll", child.key) });
+      }
+    });
+  }
   /** Remove a ticket its target no longer claims, so a stale one cannot be
       re-queued for ever beside the ticket the row does claim. */
   drop(ticket: AccountingRow): void {

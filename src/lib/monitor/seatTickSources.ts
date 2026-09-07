@@ -1024,6 +1024,7 @@ async function childWork(
     return page;
   };
   let bytesLeft = TICK_LEDGER_BYTES;
+  const coldVisits: AccountingChild[] = [];
 
   /** One owner's next discovery page. */
   const discover = (owner: AccountingOwner): boolean => {
@@ -1062,6 +1063,8 @@ async function childWork(
       ticket re-queued. A settled child whose read the budget cut is an
       outcome owed and not yet known, and the check says so. */
   const poll = (child: AccountingChild, page: SeatChildrenPage, projected: ProjectedChild | null): void => {
+    const previousInput = child.input;
+    const previousGeneration = child.generationIndex;
     const edge = page.file.lineageEdges[child.rowKey];
     if (!projected || !edge || edge.parentConversationId !== child.owner || edge.evidence.launchId !== child.launchId) {
       accounting.ingest({ ...child, input: { ...child.input, status: "unknown", outcome: null } }, null, []);
@@ -1079,6 +1082,7 @@ async function childWork(
     const failure = receipt?.state === "failed" && receipt.key === null && receipt.artifactPath === null && generations.length === 0;
     if (!generation) { accounting.ingest(child, null, [], failure); return; }
     const source = accounting.source(child, conversation!.engine, generation.id);
+    const previousCursor = source.cursor;
     const budget = Math.min(bytesLeft, CHILD_LEDGER_BYTES);
     const read = readChildLedger(path.join(statePath("structured-host-events"), `${encodeURIComponent(generation.id)}.jsonl`), source.cursor, budget);
     source.cursor = read.cursor;
@@ -1091,7 +1095,10 @@ async function childWork(
     child.generationIndex = (child.generationIndex + 1) % generations.length;
     /* A read the budget stopped short of the end resumes first next check. */
     const cut = !read.cursor.atEnd && (read.bytes >= budget || read.outcomes.length >= OUTCOME_LIMIT);
-    accounting.ingest(child, source, read.outcomes, false, cut ? "head" : "tail");
+    if (child.input.status === "terminal" && read.bytes === 0 && read.outcomes.length === 0 && read.cursor.atEnd
+      && child.generationIndex === previousGeneration && JSON.stringify(previousCursor) === JSON.stringify(read.cursor)
+      && JSON.stringify(previousInput) === JSON.stringify(child.input)) coldVisits.push(child);
+    else accounting.ingest(child, source, read.outcomes, false, cut ? "head" : "tail");
     if (cut && projected.turn !== "busy") gaps.add("ledger-pending");
   };
 
@@ -1162,6 +1169,7 @@ async function childWork(
         observedRunning.add(child.key);
       }
     }
+    accounting.rotateCold(coldVisits);
     for (const outcome of accounting.ready(20)) {
       const child = accounting.get(outcome.child);
       if (!child || child.kind !== "child") throw new Error("missing ready child");
