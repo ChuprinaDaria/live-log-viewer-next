@@ -172,7 +172,7 @@ export interface FreshSpecOptions {
   deferClaudeSpawnPolicy?: boolean;
 }
 
-const CLAUDE_SHADOWED_ENV = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_BASE_URL", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "GOOGLE_APPLICATION_CREDENTIALS", "VERTEXAI_PROJECT", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "LLV_TOKEN"];
+const CLAUDE_SHADOWED_ENV = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_SECURESTORAGE_CONFIG_DIR", "ANTHROPIC_BASE_URL", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "GOOGLE_APPLICATION_CREDENTIALS", "VERTEXAI_PROJECT", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "LLV_TOKEN"];
 
 function telegramTokenAssignment(mcpServers: readonly string[]): string {
   if (!mcpServers.includes("telegram")) return "";
@@ -330,7 +330,7 @@ export function freshSpecFor(engine: AgentEngine, cwd: string, options: FreshSpe
     else args.push("--strict-mcp-config");
     const command = args.map(shellQuote).join(" ");
     return {
-      command: telegramScopedCommand(managed ? `${claudeEnvPrefix(options.claudeConfigDir!, mcpServers)} ${command}` : command, mcpServers),
+      command: telegramScopedCommand(`${claudeEnvPrefix(options.claudeConfigDir ?? legacyClaudeHome(), mcpServers)} ${command}`, mcpServers),
       cwd,
       windowName: "claude-new",
       engine: "claude",
@@ -489,7 +489,7 @@ export function resumeSpecForSession(
     args.push("--resume", sessionId);
     const command = args.map(shellQuote).join(" ");
     return {
-      command: telegramScopedCommand(managed ? `${claudeEnvPrefix(home, mcpServers)} ${command}` : command, mcpServers),
+      command: telegramScopedCommand(`${claudeEnvPrefix(home, mcpServers)} ${command}`, mcpServers),
       cwd,
       windowName: "claude-resume",
       engine: "claude",

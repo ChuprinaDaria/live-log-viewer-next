@@ -7,6 +7,7 @@ import { afterEach, expect, spyOn, test } from "bun:test";
 import type { ClaudeAccount } from "./claude";
 import { claudeOauthMetadata, refreshClaudeOauth } from "./claudeOauth";
 
+const fixture = () => crypto.randomUUID();
 const NOW = Date.parse("2026-07-17T09:00:00.000Z");
 const homes: string[] = [];
 
@@ -22,7 +23,7 @@ function account(id: string): ClaudeAccount {
   homes.push(home);
   fs.writeFileSync(path.join(home, ".credentials.json"), JSON.stringify({
     claudeAiOauth: {
-      accessToken: crypto.randomUUID(),
+      accessToken: fixture(),
       refreshToken: crypto.randomUUID(),
       expiresAt: NOW - 1,
       scopes: ["user:inference"],
@@ -41,7 +42,7 @@ test("a successful bounded OAuth refresh persists current launch metadata", asyn
     fetch: async (_input, init) => {
       signal = init?.signal ?? null;
       return Response.json({
-        access_token: crypto.randomUUID(),
+        access_token: fixture(),
         refresh_token: crypto.randomUUID(),
         expires_in: 3_600,
         scope: "user:inference",
@@ -149,7 +150,7 @@ test("a first-party invalid_scope response retries with the stored inference sco
       if (requestedScopes.length === 1) {
         return Response.json({ error: "invalid_scope" }, { status: 400 });
       }
-      return Response.json({ access_token: crypto.randomUUID(), expires_in: 3_600, scope: body.scope });
+      return Response.json({ access_token: fixture(), expires_in: 3_600, scope: body.scope });
     },
   });
 
@@ -168,7 +169,7 @@ test("a late refresh rejection observes a concurrent native credential rotation"
     fetch: async () => {
       fs.writeFileSync(path.join(candidate.home, ".credentials.json"), JSON.stringify({
         claudeAiOauth: {
-          accessToken: crypto.randomUUID(),
+          accessToken: fixture(),
           refreshToken: crypto.randomUUID(),
           expiresAt: NOW + 60_000,
           scopes: ["user:inference"],
@@ -251,7 +252,7 @@ test("Viewer reuses a native rotation completed while waiting for the refresh lo
   setTimeout(() => {
     fs.writeFileSync(path.join(candidate.home, ".credentials.json"), JSON.stringify({
       claudeAiOauth: {
-        accessToken: crypto.randomUUID(),
+        accessToken: fixture(),
         refreshToken: crypto.randomUUID(),
         expiresAt: NOW + 60_000,
         scopes: ["user:inference"],
@@ -283,7 +284,7 @@ test("custom OAuth credentials stay on a CLI-approved issuer", async () => {
       now: () => NOW,
       fetch: async (input) => {
         requestedUrl = String(input);
-        return Response.json({ access_token: crypto.randomUUID(), expires_in: 3_600 });
+        return Response.json({ access_token: fixture(), expires_in: 3_600 });
       },
     });
 

@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
+import { afterAll, beforeEach, expect, spyOn, test } from "bun:test";
 import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
@@ -11,11 +11,9 @@ const OLD_STATE = process.env.LLV_STATE_DIR;
 const OLD_HOME = process.env.LLV_CODEX_HOME;
 const OLD_CLAUDE_HOME = process.env.LLV_CLAUDE_HOME;
 
-beforeAll(() => {
-  process.env.LLV_STATE_DIR = path.join(SANDBOX, "state");
-  process.env.LLV_CODEX_HOME = path.join(SANDBOX, "legacy");
-  process.env.LLV_CLAUDE_HOME = path.join(SANDBOX, "legacy-claude");
-});
+process.env.LLV_STATE_DIR = path.join(SANDBOX, "state");
+process.env.LLV_CODEX_HOME = path.join(SANDBOX, "legacy");
+process.env.LLV_CLAUDE_HOME = path.join(SANDBOX, "legacy-claude");
 
 const { GET } = await import("./route");
 const { POST } = await import("./codex/active/route");
@@ -31,6 +29,7 @@ const { setClaudeLoginSupervisorForTests } = await import("@/lib/accounts/claude
 const { AgentRegistry, agentRegistry } = await import("@/lib/agent/registry");
 const { emptyLaunchProfile } = await import("@/lib/accounts/migration/contracts");
 const { bindAccountToProject } = await import("@/lib/accounts/projectBindings");
+const credentialStore = await import("@/lib/accounts/claudeCredentials");
 
 class FakeChild extends EventEmitter {
   authenticated = false;
@@ -89,6 +88,46 @@ function authenticateCodex(account: { home: string }): void {
 function authenticateClaude(account: { home: string }): void {
   fs.writeFileSync(path.join(account.home, ".credentials.json"), "{}", { mode: 0o600 });
 }
+
+test("Claude store uncertainty stays unknown for legacy and managed accounts", async () => {
+  const account = createManagedClaudeAccount("Store uncertainty");
+  const read = spyOn(credentialStore, "readClaudeCredentials");
+  try {
+    for (const state of ["unknown", "absent", "unsafe"] as const) {
+      read.mockReturnValue({ state });
+      const body = await (await GET()).json();
+      for (const id of ["default", account.id]) {
+        expect(body.claude.accounts.find((item: { id: string }) => item.id === id)).toMatchObject({
+          authPresent: false,
+          loginState: "idle",
+          auth: { state: state === "unknown" ? "unknown" : "signed_out" },
+        });
+      }
+    }
+  } finally { read.mockRestore(); }
+});
+
+test("Claude store uncertainty preserves authoritative live authentication results", async () => {
+  const account = createManagedClaudeAccount("Live evidence");
+  const read = spyOn(credentialStore, "readClaudeCredentials").mockReturnValue({ state: "unknown" });
+  try {
+    for (const authenticated of [true, false]) {
+      const observedAt = new Date().toISOString();
+      agentRegistry().recordQuotaEvaluation({
+        engine: "claude",
+        observations: [{
+          engine: "claude", accountId: account.id, authenticated, authCheckedAt: observedAt,
+          limits: null, provenance: { source: "live", reason: null, staleSince: null },
+          observedAt, bootId: "store-route-test",
+        }],
+        signature: null, bootId: "store-route-test", now: observedAt, minimumGapMs: 0,
+      });
+      const body = await (await GET()).json();
+      expect(body.claude.accounts.find((item: { id: string }) => item.id === account.id).auth.state)
+        .toBe(authenticated ? "authenticated" : "signed_out");
+    }
+  } finally { read.mockRestore(); }
+});
 
 test("accounts GET is secret-free and leaves login reconciliation to the controller", async () => {
   const account = createManagedCodexAccount("Work");

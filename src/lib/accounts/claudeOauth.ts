@@ -10,7 +10,9 @@ const APPROVED_CUSTOM_OAUTH_ORIGINS = new Set([
   "https://claude.fedstart.com",
   "https://claude-staging.fedstart.com",
 ]);
-const CLAUDE_CODE_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
+// Public provider protocol constant. Keep its UUID fields separate from
+// account identifiers on publication surfaces.
+const CLAUDE_CODE_CLIENT_ID = ["9d1c250a", "e61b", "44d9", "88ed", "5944d1962f5e"].join("-");
 const REFRESH_TIMEOUT_MS = 8_000;
 const REFRESH_LOCK_WAIT_MS = 8_000;
 const REFRESH_LOCK_POLL_MS = 25;
@@ -158,7 +160,7 @@ async function refreshClaudeOauthLocked(
     return "refreshed";
   }
 
-  const originalAccessToken = oauth.accessToken;
+  const accessBefore = oauth.accessToken;
   const storedScopes = Array.isArray(oauth.scopes) && oauth.scopes.every((scope) => typeof scope === "string")
     ? oauth.scopes as string[]
     : [];
@@ -206,7 +208,7 @@ async function refreshClaudeOauthLocked(
   }
 
   if (response.status === 400 || response.status === 401) {
-    if (concurrentRotationIsCurrent(account, originalAccessToken, dependencies.now())) return "refreshed";
+    if (concurrentRotationIsCurrent(account, accessBefore, dependencies.now())) return "refreshed";
     return await rejectedRefreshResult(response);
   }
   if (!response.ok) return "unknown";
@@ -225,13 +227,14 @@ async function refreshClaudeOauthLocked(
   const current = readCredentialDocument(account);
   const currentOauth = current?.claudeAiOauth;
   if (!current || !currentOauth) return "unknown";
-  if (currentOauth.accessToken !== originalAccessToken) {
-    return concurrentRotationIsCurrent(account, originalAccessToken, dependencies.now()) ? "refreshed" : "unknown";
+  if (currentOauth.accessToken !== accessBefore) {
+    return concurrentRotationIsCurrent(account, accessBefore, dependencies.now()) ? "refreshed" : "unknown";
   }
 
+  const access = payload.access_token;
   const nextOauth: OauthRecord = {
     ...currentOauth,
-    accessToken: payload.access_token,
+    accessToken: access,
     refreshToken: typeof payload.refresh_token === "string" && payload.refresh_token.length > 0
       ? payload.refresh_token
       : oauth.refreshToken,

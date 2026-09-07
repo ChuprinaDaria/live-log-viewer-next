@@ -133,7 +133,9 @@ export async function GET() {
       attemptState: null,
       deviceAuth: null,
       ...(bindings ? { projects: accountProjectRows("claude", account.id, bindings, projectDisplayNames) } : {}),
-      ...accountProjection(claudeObservations[account.id], account.authPresent, now),
+      // A denied or unavailable store cannot prove that credentials are absent.
+      // Keep durable live auth evidence authoritative in either direction.
+      ...accountProjection(claudeObservations[account.id], account.authPresent || account.credentialState === "unknown", now),
       login,
     };
   });
