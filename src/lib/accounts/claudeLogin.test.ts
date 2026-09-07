@@ -559,3 +559,26 @@ test("a canceled Keychain verification cannot settle the next login", async () =
     expect(supervisor.get(next.operationId)?.phase).toBe("awaiting_browser");
   } finally { read.mockRestore(); }
 });
+
+
+test("restart recovery rechecks Keychain evidence after provider status", async () => {
+  const candidate = createManagedClaudeAccount("Keychain recovery");
+  for (const becomesUnknown of [false, true]) {
+    const read = spyOn(credentialStore, "readClaudeCredentials").mockReturnValue({ state: "present", source: "keychain", document: {} });
+    try {
+      const supervisor = new ClaudeLoginSupervisor({
+        ...ports(), pidStartToken: () => null,
+        status: async () => {
+          if (becomesUnknown) read.mockReturnValue({ state: "unknown" });
+          return { loggedIn: true, method: "oauth", email: null, plan: null };
+        },
+      }, {
+        load: () => [{ operationId: "fixture-recovery", accountId: candidate.id, phase: "verifying", pid: 4242, startToken: "old-start", generation: 1, startedAt: new Date(0).toISOString(), deadlineAt: new Date(1).toISOString() }],
+        save: () => undefined,
+      });
+      await supervisor.whenRecovered();
+      expect(supervisor.get("fixture-recovery")?.phase).toBe(becomesUnknown ? "interrupted" : "authenticated");
+      expect(signals).toEqual([]);
+    } finally { read.mockRestore(); }
+  }
+});
