@@ -120,6 +120,20 @@ test("the bound and the unlanded wake survive the rotation, because neither is t
    read back on the five-minute retry it had outgrown. */
 test("the run of failures of an evidence source survives the rotation", () => {
   expect(seatTickStateForEpoch(row, 8).pullRequestGap).toEqual(row.pullRequestGap);
+  const children = { gap: "ledger-gap" as const, since: "2026-08-28T09:00:00.000Z", lastAttemptAt: "2026-08-28T11:55:00.000Z", attempts: 4, reported: false };
+  expect(seatTickStateForEpoch({ ...row, childrenGap: children }, 8).childrenGap).toEqual(children);
+});
+
+/* The instant an attempt was prepared is part of the row (#1465): the bound on
+   an attempt nobody can account for is measured from it. */
+test("an outstanding wake keeps the instant it was prepared, and drops one that is not an instant", () => {
+  const file = path.join(SANDBOX, "prepared-at.json");
+  fs.writeFileSync(file, JSON.stringify({ version: 2, projects: {
+    viewer: { ...row, outstandingWake: { ...row.outstandingWake, preparedAt: "2026-08-28T11:30:00.000Z" } },
+    other: { ...row, outstandingWake: { ...row.outstandingWake, preparedAt: "whenever" } },
+  } }));
+  expect(readSeatTickState("viewer", file).outstandingWake?.preparedAt).toBe("2026-08-28T11:30:00.000Z");
+  expect(readSeatTickState("other", file).outstandingWake).not.toHaveProperty("preparedAt");
 });
 
 /* Half a run is worse than none: the two instants are what the report
@@ -268,14 +282,15 @@ test("a row from before the harvest existed reads an empty cursor, and a plan wi
   expect(persisted.outstandingWake!.commit.children).toEqual([]);
 });
 
-test("migration retains every valid legacy acknowledgment without an eviction window", () => {
+/* The legacy file is a bounded document the tick wrote atomically, so it is
+   read whole and imported on the first read (#1465): no cursor, no window of
+   checks during which the row is pending and every wake is refused. */
+test("migration retains every valid legacy acknowledgment without an eviction window, on the first read", () => {
   const file = path.join(SANDBOX, "harvest-bounds.json");
   const crowd = Array.from({ length: 250 }, (_, index) => ["conversation", String(index)].join("_"));
   const original = JSON.stringify({ version: 2, projects: { viewer: { ...row, harvestedChildren: crowd } } });
   fs.writeFileSync(file, original);
-  let persisted = readSeatTickState("viewer", file);
-  expect(persisted.accounting?.gap).toBe("legacy-migration-pending");
-  for (let tick = 0; tick < 5 && persisted.accounting?.gap; tick++) persisted = readSeatTickState("viewer", file);
+  const persisted = readSeatTickState("viewer", file);
   expect(persisted.accounting?.gap).toBeNull();
   const accounting = new SeatTickAccounting(persisted.accounting!.filename, "viewer");
   expect(accounting.collection.snapshot().filter((entry) => entry.kind === "legacy")).toHaveLength(250);

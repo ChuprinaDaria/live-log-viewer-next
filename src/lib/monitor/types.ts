@@ -293,7 +293,7 @@ export interface SeatTickEvidenceGap {
  */
 export interface SeatTickSourceGap {
   /** The class of the newest failure in the run. */
-  gap: SeatTickPullRequestGap;
+  gap: SeatTickPullRequestGap | SeatTickChildrenGap;
   /** The first failure in it — what "how long has this been broken" reads. */
   since: string;
   /** The newest attempt, which is what the retry window is measured from. */
@@ -441,13 +441,53 @@ export type SeatTickPullRequestGap =
   | "lanes-unreadable";
 
 /**
- * Why a check could not read the seat's spawned children (#1465). One token:
- * the registry snapshot the projection is read from could not be taken at all.
- * There is no card and no standing-run row for it — the registry is the
- * Viewer's own store, and a Viewer that cannot read it has larger problems the
- * board already shows.
+ * Why a check could not fully account for the seat's spawned children (#1465).
+ *
+ * One token per condition, because they call for different hands. Each is a
+ * standing run like the pull-request source's: the gather keeps
+ * {@link SeatTickProjectState.childrenGap} for it, and a run that outlives the
+ * wake interval is put on the board once.
+ *
+ * - `registry-unreadable`: the registry read itself failed.
+ * - `children-unindexed`: the registry backend has no indexed lineage
+ *   projection (a JSON-mode registry), so children cannot be paged at all.
+ * - `migration-pending` / `migration-blocked`: the SQLite accounting has not
+ *   finished importing the legacy JSON row, or cannot — a blocked migration
+ *   refuses every prepare, so nothing is woken until the legacy file is fixed.
+ * - `discovery-incomplete`: an owner's lineage page or the seat file's
+ *   revocations could not be read to the end this check.
+ * - `ledger-gap`: a child's event ledger was replaced, torn, malformed or
+ *   skipped a sequence; the outcomes read around it stand.
+ * - `ledger-pending`: a child the running projection saw leave its running
+ *   state whose ledger the poll queue has not reached yet, so its outcome is
+ *   owed but not yet known.
+ * - `child-departed`: a child the accounting tracks no longer projects under
+ *   this seat and project.
+ * - `child-unplaced`: a child the registry cannot place — no conversation
+ *   record, or a turn it never observed with no host behind it.
  */
-export type SeatTickChildrenGap = "registry-unreadable";
+export type SeatTickChildrenGap =
+  | "registry-unreadable"
+  | "children-unindexed"
+  | "migration-pending"
+  | "migration-blocked"
+  | "discovery-incomplete"
+  | "ledger-gap"
+  | "ledger-pending"
+  | "child-departed"
+  | "child-unplaced";
+
+export const SEAT_TICK_CHILDREN_GAPS: readonly SeatTickChildrenGap[] = [
+  "registry-unreadable",
+  "children-unindexed",
+  "migration-blocked",
+  "migration-pending",
+  "discovery-incomplete",
+  "ledger-gap",
+  "child-departed",
+  "child-unplaced",
+  "ledger-pending",
+];
 
 /**
  * One standalone child the seat spawned (#1465), projected from the durable
@@ -562,6 +602,11 @@ export interface SeatTickOutstandingWake {
   commit: SeatTickWakeCommit;
   /** Exact prepared payload, persisted before transport. */
   text?: string;
+  /** When the attempt was prepared, or first observed outstanding by a check
+      that found no instant on it (#1465). The attention bound is measured from
+      here: an attempt still unresolved one wake interval later is put on the
+      board. It ends nothing — an unresolved attempt keeps its identity. */
+  preparedAt?: string;
 }
 
 /** Project tick state; SQLite accounting owns persistence and legacy migration. */
@@ -618,6 +663,10 @@ export interface SeatTickProjectState {
   /** The pull-request source's unbroken run of failures (#1298), or null while
       it is answering. Cleared by an answer and by nothing else. */
   pullRequestGap: SeatTickSourceGap | null;
+  /** The children source's unbroken run of failures (#1465), kept exactly as
+      {@link SeatTickProjectState.pullRequestGap} is: cleared by a check that
+      accounted for every child, and by nothing else. */
+  childrenGap: SeatTickSourceGap | null;
   /** Legacy conversation-only acknowledgment evidence. The v3 store imports
       it into separate rows and keeps this transient compatibility field empty. */
   harvestedChildren: string[];
@@ -659,10 +708,11 @@ export interface SeatTickCheckInput {
       nothing, and empty when the registry could not be read — the field below
       says which. */
   children: readonly SeatTickChildInput[];
-  /** Set when the children could not be projected at all. Read exactly like
+  /** Set when the children could not be fully accounted for. Read exactly like
       {@link SeatTickCheckInput.pullRequestsUnavailable}: the reasons resting on
       it are withheld, every other reason still wakes, and with nothing else
-      owed the check ends `error` rather than quiet. */
+      owed the check ends `error` rather than quiet. The token names which
+      condition stands (#1465); when several do, the most severe is carried. */
   childrenUnavailable: SeatTickChildrenGap | null;
   /**
    * Digest of everything a wake could change, in two parts separated by a dot:
@@ -690,7 +740,7 @@ export interface SeatTickCheckInput {
     second check re-finds it instead of minting a twin. */
 export interface SeatTickCard {
   ref: string;
-  kind: "no-seat" | "retry-guard" | "tick-settings" | "source-unreadable";
+  kind: "no-seat" | "retry-guard" | "tick-settings" | "source-unreadable" | "wake-unresolved";
   detail: string;
   /**
    * Whether the condition still holds.
@@ -748,6 +798,9 @@ export interface SeatTickDecision {
    * the next check raises the same card again.
    */
   reportedSourceGap?: SeatTickSourceGap | null;
+  /** The same row for the children source (#1465), written by the controller
+      once its card is on the board. */
+  reportedChildrenGap?: SeatTickSourceGap | null;
 }
 
 /** What one check recorded. Five kinds are journal-only: `refused` is a sweep
@@ -756,8 +809,9 @@ export interface SeatTickDecision {
     already been replaced (`revoked`), the layer holding it delivered it after
     all (`landed`), that layer settled it having PROVED it never delivered it
     (`dropped`), or it ended the send without proving arrival either way
-    (`uncertain`, #1465): bounded without credit, so the interval starts and
-    nothing the wake carried is acknowledged. */
+    (`uncertain`, #1465): the attempt is kept under its original key, nothing
+    it carried is acknowledged, no wake replaces it, and the board carries the
+    wait. */
 export type SeatTickVerdictKind =
   | SeatTickVerdict["kind"]
   /** A check that threw outright, which the decision never gets to see. The
@@ -806,6 +860,7 @@ export function emptySeatTickState(): SeatTickProjectState {
     eventsThrough: null,
     outstandingWake: null,
     pullRequestGap: null,
+    childrenGap: null,
     harvestedChildren: [],
   };
 }

@@ -1884,3 +1884,24 @@ test("a cyclic child alias leaves other children in the same indexed page readab
   expect(page.file.lineageEdges[good.conversationId]?.parentConversationId).toBe(parent.id);
   expect(page.file.receipts[good.launchId]?.conversationId).toBe(good.conversationId);
 });
+
+
+/* The monitor's seat read under a JSON-mode registry (#1465): the seat's turn
+   is answered from the ordinary snapshot, and the children projection a JSON
+   backend cannot bound says so with null rather than failing the read. */
+test("a JSON-mode registry answers the seat tick's conversation read and declines to page children", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "registry-seat-json-"));
+  const registry = new AgentRegistry(path.join(directory, "registry.json"), undefined, undefined, { sqliteMode: "off" });
+  const seat = registry.ensureConversation("codex", "/sessions/json-seat.jsonl", null);
+  registry.reconcileConversations([{
+    engine: "codex",
+    path: "/sessions/json-seat.jsonl",
+    accountId: null,
+    launchProfile: emptyLaunchProfile({ cwd: "/seat-project", title: "seat" }),
+    turn: { state: "busy", source: "assistant", terminalAt: null },
+    observedAt: "2026-09-05T12:00:00.000Z",
+  }]);
+  expect(registry.seatTickConversation(seat.id)).toMatchObject({ id: seat.id, turn: { state: "busy" } });
+  expect(registry.seatTickConversation(["conversation", "0000000000000000"].join("_"))).toBeNull();
+  expect(registry.pageSeatChildren(seat.id, "", null, 20)).toBeNull();
+});

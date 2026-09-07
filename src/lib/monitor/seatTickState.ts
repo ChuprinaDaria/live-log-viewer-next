@@ -102,6 +102,7 @@ function normalizeOutstandingWake(value: unknown): SeatTickOutstandingWake | nul
     operationId: typeof raw.operationId === "string" && raw.operationId ? raw.operationId : null,
     commit,
     ...(typeof raw.text === "string" ? { text: raw.text } : {}),
+    ...(isoOrNull(raw.preparedAt) ? { preparedAt: raw.preparedAt as string } : {}),
   };
 }
 
@@ -156,6 +157,9 @@ function normalizeRow(value: unknown, legacy: boolean): SeatTickProjectState {
     eventsThrough: eventsThrough(raw, legacy),
     outstandingWake: normalizeOutstandingWake(raw.outstandingWake),
     pullRequestGap: normalizeSourceGap(raw.pullRequestGap),
+    /* No legacy row ever carried a children run: the source and its row are
+       both #1465, and the SQLite store is the only place they have lived. */
+    childrenGap: null,
     /* Absent on every row from before #1465, and absent reads as empty: a
        project's children are all owed until a delivered wake names them. */
     harvestedChildren: conversationIds(raw.harvestedChildren),
@@ -203,7 +207,9 @@ function readFile(filePath: string): SeatTickStateFile {
  * - The run of failures of an evidence source (#1298), which is a fact about
  *   `gh` and the machine it runs on. A rotation does not fix a missing
  *   credential, so clearing it here would re-report the same outage to the
- *   board and put the read back on the five-minute retry it had outgrown.
+ *   board and put the read back on the five-minute retry it had outgrown. The
+ *   children source's run (#1465) is the same kind of fact about the registry
+ *   and the ledgers, and survives for the same reason.
  * - The harvest cursor (#1465), for the same reason as the event cursor: it
  *   records which finished children the PROJECT was already told about, and
  *   re-announcing every one of them to a successor would bury the child that
@@ -219,6 +225,7 @@ export function seatTickStateForEpoch(row: SeatTickProjectState, seatEpoch: numb
     lastProposalAt: row.lastProposalAt,
     outstandingWake: row.outstandingWake,
     pullRequestGap: row.pullRequestGap,
+    childrenGap: row.childrenGap,
     harvestedChildren: row.harvestedChildren,
     accounting: row.accounting,
   };

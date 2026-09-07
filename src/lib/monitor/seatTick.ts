@@ -7,6 +7,7 @@ import {
   type SeatTickCard,
   type SeatTickCheckInput,
   type SeatTickChildInput,
+  type SeatTickChildrenGap,
   type SeatTickDecision,
   type SeatTickEventInput,
   type SeatTickEvidenceGap,
@@ -416,7 +417,7 @@ export function seatTickSourceRetryDue(gap: SeatTickSourceGap | null, now: numbe
     later failure inside it — only an answer clears the row. */
 export function seatTickSourceGapAfterFailure(
   gap: SeatTickSourceGap | null,
-  kind: SeatTickPullRequestGap,
+  kind: SeatTickPullRequestGap | SeatTickChildrenGap,
   at: string,
 ): SeatTickSourceGap {
   if (!gap) return { gap: kind, since: at, lastAttemptAt: at, attempts: 1, reported: false };
@@ -530,17 +531,37 @@ function evidenceGaps(input: SeatTickCheckInput): SeatTickEvidenceGap[] {
     });
   }
   /* The second source that can fail without failing the whole check (#1465).
-     Unreadable children are unknown children: not open work, not harvested,
-     not quiet. */
+     Children the check could not account for are unknown children: not open
+     work, not harvested, not quiet. The token says which condition stands. */
   if (input.childrenUnavailable) {
     gaps.push({
       source: "children",
       gap: input.childrenUnavailable,
-      detail: `the seat's spawned children could not be read (${input.childrenUnavailable}), `
-        + "so a running or finished worker cannot be named in this wake",
+      detail: `the seat's spawned children could not be read (${input.childrenUnavailable}): `
+        + `${seatTickChildrenGapClause(input.childrenUnavailable)}, so a running or finished worker cannot be named in this wake`,
     });
   }
   return gaps;
+}
+
+/**
+ * What each children-source condition means, in one clause a seat or an
+ * operator can act on (#1465). Shared by the wake's gap line, the error
+ * verdict and the standing card, so the three cannot describe one token three
+ * ways.
+ */
+export function seatTickChildrenGapClause(gap: SeatTickChildrenGap): string {
+  switch (gap) {
+    case "registry-unreadable": return "the registry read failed";
+    case "children-unindexed": return "the registry backend has no indexed lineage projection, so children cannot be paged";
+    case "migration-pending": return "the SQLite accounting has not finished importing the legacy tick state";
+    case "migration-blocked": return "the legacy tick state at state/seat-tick.json cannot be imported and blocks every wake until it is fixed or removed";
+    case "discovery-incomplete": return "an owner's lineage page or the seat file's revocations could not be read to the end";
+    case "ledger-gap": return "a child's event ledger was replaced, torn, malformed or skipped a sequence";
+    case "ledger-pending": return "a child left its running state and its ledger has not been read yet";
+    case "child-departed": return "a tracked child no longer projects under this seat and project";
+    case "child-unplaced": return "a child has no conversation record or an unobserved turn with no host behind it";
+  }
 }
 
 /**
@@ -572,17 +593,26 @@ function evidenceGaps(input: SeatTickCheckInput): SeatTickEvidenceGap[] {
  */
 function sourceGapReport(
   input: SeatTickCheckInput,
+  source: "pull-requests" | "children",
 ): { card: SeatTickCard; gap: SeatTickSourceGap } | null {
-  const gap = input.state.pullRequestGap;
-  if (!input.pullRequestsUnavailable || !gap || gap.reported) return null;
+  const gap = source === "pull-requests" ? input.state.pullRequestGap : input.state.childrenGap;
+  const unavailable = source === "pull-requests" ? input.pullRequestsUnavailable : input.childrenUnavailable;
+  if (!unavailable || !gap || gap.reported) return null;
   if (!seatTickSourceGapStanding(gap, input.now, input.settings.wakeIntervalMs)) return null;
+  const since = `${gap.since.slice(0, 16).replace("T", " ")} UTC (${gap.gap}, ${gap.attempts} attempt(s))`;
   return {
     card: {
-      ref: seatTickSourceGapRef("pull-requests"),
+      ref: seatTickSourceGapRef(source),
       kind: "source-unreadable",
       instance: gap.since,
-      detail: `The open pull requests of this project's finished lanes have not been readable since `
-        + `${gap.since.slice(0, 16).replace("T", " ")} UTC (${gap.gap}, ${gap.attempts} attempt(s))`,
+      detail: source === "pull-requests"
+        ? `The open pull requests of this project's finished lanes have not been readable since ${since}`
+        /* The children card names the condition AND what it means (#1465):
+           these tokens call for different hands — a blocked migration wants
+           the legacy file looked at, a torn ledger wants nothing, a departed
+           child wants the seat's spawn records checked. */
+        : `The seat's spawned children have not been fully accountable since ${since}: `
+          + seatTickChildrenGapClause(gap.gap as SeatTickChildrenGap),
     },
     gap: { ...gap, reported: true },
   };
@@ -766,8 +796,10 @@ function decide(input: SeatTickCheckInput): SeatTickDecision {
      twenty-three journal lines nobody was reading is what the operator got
      instead of being told. */
   const gaps = evidenceGaps(input);
-  const gapReport = sourceGapReport(input);
+  const gapReport = sourceGapReport(input, "pull-requests");
   if (gapReport) cards.push(gapReport.card);
+  const childrenReport = sourceGapReport(input, "children");
+  if (childrenReport) cards.push(childrenReport.card);
   /* The row this check writes says the outage is UNREPORTED, and it says so
      even while the card for it is being raised. Marking it reported here is a
      claim about a board write that has not happened yet and that the controller
@@ -777,6 +809,7 @@ function decide(input: SeatTickCheckInput): SeatTickDecision {
      controller writes it once the card is confirmed on the board. */
   const state = observed;
   const reportedSourceGap = gapReport?.gap ?? null;
+  const reportedChildrenGap = childrenReport?.gap ?? null;
 
   /* The wake goes FIRST, and it goes out while a source is unreadable (#1298).
      Every reason it carries was decided from evidence this check did read, and
@@ -801,6 +834,7 @@ function decide(input: SeatTickCheckInput): SeatTickDecision {
       state,
       cards,
       reportedSourceGap,
+      reportedChildrenGap,
     };
   }
 
@@ -815,14 +849,16 @@ function decide(input: SeatTickCheckInput): SeatTickDecision {
     const subject = first.source === "children"
       ? "the seat's spawned children"
       : "the open pull requests of this project's finished lanes";
+    const clause = first.source === "children" ? `: ${seatTickChildrenGapClause(first.gap as SeatTickChildrenGap)}` : "";
     return {
       verdict: {
         kind: "error",
-        detail: `${subject} could not be read (${first.gap}), so nothing owed is not established`,
+        detail: `${subject} could not be read (${first.gap})${clause}, so nothing owed is not established`,
       },
       state,
       cards,
       reportedSourceGap,
+      reportedChildrenGap,
     };
   }
 

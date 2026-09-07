@@ -1401,7 +1401,8 @@ test("a record the journal could not be read for is unknown, whatever the durabl
 test("absence under the key asks the runtime when there is an operation to ask about, and is unknown otherwise (#1465)", async () => {
   expect(await classify({ kind: "absent" }, { runtime: "retained" })).toEqual({ state: "retained", calls: ["lookup", "runtime"] });
   expect(await classify({ kind: "absent" }, { runtime: "dropped" })).toEqual({ state: "dropped", calls: ["lookup", "runtime"] });
-  expect(await classify({ kind: "absent" }, { wake: { ...WAKE, operationId: null } })).toEqual({ state: "unknown", calls: ["lookup"] });
+  /* No record and no operation: the layer affirms it never held it (#1465). */
+  expect(await classify({ kind: "absent" }, { wake: { ...WAKE, operationId: null } })).toEqual({ state: "absent", calls: ["lookup"] });
 });
 
 test("ambiguity, an unresolved target, an unreadable record and a contradictory one are all unknown (#1465)", async () => {
@@ -1515,7 +1516,10 @@ test("each kind of child is classified from the snapshot alone (#1465)", async (
   expect(byId.get(failed.id)).toMatchObject({ status: "terminal", outcome: "failed", title: "failed launch" });
   expect(byId.get(reserved.id)).toMatchObject({ status: "unknown", outcome: null });
   expect(byId.get(unknownTurn.id)).toMatchObject({ status: "unknown" });
-  expect(input.childrenUnavailable).toBe("registry-unreadable");
+  /* The two children the registry cannot place are the one condition standing:
+     a fresh child with no ledger yet is no gap (#1465). */
+  expect(input.childrenUnavailable).toBe("child-unplaced");
+  expect(input.state.childrenGap).toMatchObject({ gap: "child-unplaced", attempts: 1, reported: false });
   /* Liveness is asked by id, for the hosted open turns only: the stall the
      registry can see itself and the settled turns cost no read. */
   expect(livenessCalls).toEqual([{ conversationId: running.id, stallAfterMs: DEFAULT_SEAT_TICK_POLICY.stallAfterMs }]);
@@ -1562,6 +1566,42 @@ test("paged discovery eventually reaches every child without a newest window (#1
   }
   const accounting = new SeatTickAccounting(input.state.accounting!.filename, fixture.project);
   expect(accounting.collection.snapshot().filter((row) => row.kind === "outcome")).toHaveLength(63);
+});
+
+/* A registry with no indexed lineage projection (a JSON-mode registry) still
+   answers the seat's own turn; the children beside it are a gap of their own
+   rather than a failed check (#1465). */
+test("a registry that cannot page children reports the children as unindexed, and reads the seat (#1465)", async () => {
+  const fixture = childRegistry("unindexed");
+  fixture.spawn({ title: "worker", turn: "terminal", terminalAt: new Date(fixture.now - 20 * MINUTE_MS).toISOString() });
+  const registry = fixture.registry;
+  const unindexed = {
+    seatTickConversation: registry.seatTickConversation.bind(registry),
+    pageSeatChildren: () => null,
+    conversation: (id: string) => registry.conversation(id as never),
+    conversationForPath: (artifactPath: string) => registry.conversationForPath(artifactPath),
+    readOnlySnapshot: () => registry.readOnlySnapshot(),
+  } as never;
+  const input = await childGather(fixture, { registry: unindexed, seatTurn: "busy" });
+  expect(input.children).toEqual([]);
+  expect(input.childrenUnavailable).toBe("children-unindexed");
+  expect(input.seat).toMatchObject({ conversationId: fixture.seatId });
+});
+
+/* The run of failures is the gather's to keep (#1465): a check that could not
+   account for every child advances it, and one that could clears it. */
+test("the children gap run advances across failing checks and clears when every child is accounted for (#1465)", async () => {
+  const fixture = childRegistry("children-run");
+  fixture.spawn({ title: "reservation nothing settled", unobserved: true });
+  const first = await childGather(fixture);
+  expect(first.state.childrenGap).toMatchObject({ gap: "child-unplaced", attempts: 1 });
+  const second = await childGather(fixture, { now: fixture.now + 5 * MINUTE_MS }, first.state);
+  expect(second.state.childrenGap).toMatchObject({ gap: "child-unplaced", attempts: 2, since: first.state.childrenGap!.since });
+  const healthy = childRegistry("children-clear");
+  healthy.spawn({ title: "finished", turn: "terminal", terminalAt: new Date(healthy.now - 20 * MINUTE_MS).toISOString() });
+  const cleared = await childGather(healthy, {}, { ...emptySeatTickState(), childrenGap: second.state.childrenGap });
+  expect(cleared.childrenUnavailable).toBeNull();
+  expect(cleared.state.childrenGap).toBeNull();
 });
 
 test("a snapshot that cannot be taken is a gap, and the children read as none (#1465)", async () => {

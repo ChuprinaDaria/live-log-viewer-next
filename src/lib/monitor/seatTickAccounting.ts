@@ -3,26 +3,51 @@ import fs from "node:fs";
 import { initializeStateCollections, SqliteStateCollection } from "@/lib/state/sqliteStateStore";
 import { seatTickWakeCommit } from "./seatTick";
 import { emptySeatTickState, type SeatTickChildInput, type SeatTickProjectState, type SeatTickOutstandingWake } from "./types";
-import { consumeMonitorJsonByte, emptyLedgerCursor, type LedgerCursor, type LedgerOutcome } from "./seatTickChildLedger";
+import { emptyLedgerCursor, type LedgerCursor, type LedgerOutcome } from "./seatTickChildLedger";
 
 type Base = { key: string; schemaVersion: 1; project: string };
-type OwnerScan = { offset: number; identity: string | null; parser: LedgerCursor["parser"]; partial: Record<string, unknown>; version: number | null };
-export type AccountingProject = Base & { kind: "project"; revision: number; sequence: number; ownerScan?: OwnerScan; state: SeatTickProjectState; migration: "ready" | "pending" | "unknown"; gap: string | null; legacy?: { offset: number; identity: string | null; parser: LedgerCursor["parser"]; raw: Record<string, unknown>; version: number | null } };
+/** What the seat file looked like when its revocations were last read: a
+    file that has not changed is not read again, and one that could not be read
+    keeps saying so until it changes. */
+type OwnerScan = { identity: string; gap: boolean };
+export type AccountingProject = Base & { kind: "project"; revision: number; sequence: number; ownerScan?: OwnerScan; state: SeatTickProjectState; migration: "ready" | "pending" | "unknown"; gap: string | null };
 export type AccountingOwner = Base & { kind: "owner"; conversationId: string; epoch: number; after: string; through: string | null };
-export type AccountingChild = Base & { kind: "child"; identity: string; rowKey: string; owner: string; launchId: string; input: SeatTickChildInput; generationIndex: number };
+export type AccountingChild = Base & { kind: "child"; identity: string; rowKey: string; owner: string; launchId: string; input: SeatTickChildInput; generationIndex: number; runningKey: string | null };
 export type AccountingSource = Base & { kind: "source"; identity: string; child: string; engine: string; generation: string; legacyBoundary?: { identity: string; bytes: number }; cursor: LedgerCursor };
 export type AccountingOutcome = Base & { kind: "outcome"; identity: string; child: string; tuple: string[]; input: SeatTickChildInput; status: "owed" | "acknowledged"; landingKey: string | null; readyKey: string; gap: string | null };
 type Ticket = Base & { kind: "poll" | "ready" | "owner-poll" | "running"; target: string };
-type OwnerCandidate = Base & { kind: "owner-candidate"; conversationId: string; epoch: number; evidenceIdentity: string };
 type Legacy = Base & { kind: "legacy"; conversationId: string; reconciled: boolean };
-export type AccountingRow = AccountingProject | AccountingOwner | AccountingChild | AccountingSource | AccountingOutcome | Ticket | Legacy | OwnerCandidate;
+export type AccountingRow = AccountingProject | AccountingOwner | AccountingChild | AccountingSource | AccountingOutcome | Ticket | Legacy;
 type Transaction = Parameters<Parameters<SqliteStateCollection<AccountingRow>["boundedPatch"]>[1]>[0];
+/** How a prepared attempt ends (#1465). `landed` acknowledges what it named
+    and stamps the wake; `unsent` is proven non-delivery and releases it with
+    no stamp, so the next check may raise it again. Nothing else ends one. */
+export type WakeDisposition = "landed" | "unsent";
 const collectionName = "seat-tick-v3";
 const collections = new Map<string, { identity: string; collection: SqliteStateCollection<AccountingRow> }>();
 const databaseIdentity = (filename: string) => { const stat = fs.statSync(filename); return `${stat.dev}:${stat.ino}`; };
 export const outcomeIdentity = (tuple: readonly string[]): string => crypto.createHash("sha256").update(JSON.stringify(tuple)).digest("hex");
 const segment = (value: string) => encodeURIComponent(value);
 const key = (kind: string, project: string, id = "") => `${kind}/${segment(project)}/${segment(id)}`;
+/** The legacy tick-state JSON and the seat file are bounded, atomically written
+    documents; either is read whole under a size ceiling. The real ones are
+    kilobytes; the ceilings only refuse a file that is not what it claims. */
+export const LEGACY_STATE_LIMIT = 4 * 1024 * 1024;
+export const SEAT_FILE_LIMIT = 16 * 1024 * 1024;
+/** Rows one transaction may touch importing legacy acknowledgments, so a
+    crowd of them is imported in several bounded transactions rather than one
+    unbounded one; each put is keyed, so a crash between two is replayed. */
+const LEGACY_IMPORT_BATCH = 1000;
+/** Predecessor owners one read of the seat file records. */
+const OWNER_LIMIT = 200;
+/** Running children one check observes, and how many of them move to the back
+    of the queue afterwards. Observing eight and rotating four means every
+    running child is seen on two CONSECUTIVE checks once per cycle, which is
+    what the stall rule needs: a stall is reported once it survived a second
+    check. A fixed identity-ordered eight would have watched the same eight for
+    ever and never seen a stall among the rest (#1465). */
+export const RUNNING_PAGE = 8;
+export const RUNNING_ROTATE = 4;
 
 function decodeAccountingRow(raw: unknown): AccountingRow | null {
   if (!raw || typeof raw !== "object") return null;
@@ -54,15 +79,18 @@ function decodeAccountingRow(raw: unknown): AccountingRow | null {
         || !integer(wake.seatEpoch) || !nullableString(wake.operationId) || !wake.commit
         || typeof wake.commit.proposal !== "boolean" || !string(wake.commit.fingerprint)
         || !integer(wake.commit.eventsThrough) || !Array.isArray(wake.commit.reasons)
-        || !Array.isArray(wake.commit.children) || !wake.commit.children.every(string))) return null;
+        || !Array.isArray(wake.commit.children) || !wake.commit.children.every(string)
+        || (wake.preparedAt !== undefined && !string(wake.preparedAt)))) return null;
+      if (row.ownerScan !== undefined && (!row.ownerScan || !string(row.ownerScan.identity) || typeof row.ownerScan.gap !== "boolean")) return null;
       return row;
     }
     case "owner": return string(row.conversationId) && integer(row.epoch) && typeof row.after === "string" && nullableString(row.through) ? row : null;
-    case "owner-candidate": return string(row.conversationId) && integer(row.epoch) && string(row.evidenceIdentity) ? row : null;
-    case "child": return string(row.identity) && string(row.rowKey) && string(row.owner) && string(row.launchId) && childInput(row.input) && integer(row.generationIndex) ? row : null;
+    case "child": return string(row.identity) && string(row.rowKey) && string(row.owner) && string(row.launchId) && childInput(row.input)
+      && integer(row.generationIndex) && nullableString(row.runningKey) ? row : null;
     case "source": return string(row.identity) && string(row.child) && string(row.engine) && string(row.generation)
-      && row.cursor && integer(row.cursor.offset) && integer(row.cursor.seq) && row.cursor.parser
-      && Array.isArray(row.cursor.parser.stack) && row.cursor.parser.stack.length <= 64 ? row : null;
+      && row.cursor && integer(row.cursor.offset) && integer(row.cursor.seq) && integer(row.cursor.settledThrough)
+      && integer(row.cursor.initialSize) && nullableString(row.cursor.identity) && nullableString(row.cursor.activeTurn)
+      && nullableString(row.cursor.gap) && typeof row.cursor.atEnd === "boolean" ? row : null;
     case "outcome": return Array.isArray(row.tuple) && [2, 3].includes(row.tuple.length) && row.tuple.every(string)
       && row.identity === outcomeIdentity(row.tuple) && row.key === key("outcome", row.project, row.identity)
       && childInput(row.input) && row.input.outcomeId === row.identity && row.input.status === "terminal"
@@ -71,6 +99,29 @@ function decodeAccountingRow(raw: unknown): AccountingRow | null {
     case "legacy": return string(row.conversationId) && typeof row.reconciled === "boolean" ? row : null;
     default: return null;
   }
+}
+
+/** A bounded, atomically written JSON document read whole, or the reason it
+    could not be. `absent` is a file that does not exist. */
+function readJsonDocument(file: string, limit: number): { kind: "parsed"; value: unknown } | { kind: "absent" } | { kind: "gap"; gap: string } {
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile()) return { kind: "gap", gap: "not-a-file" };
+    if (stat.size > limit) return { kind: "gap", gap: "oversized" };
+    const buffer = Buffer.allocUnsafe(stat.size);
+    let read = 0;
+    while (read < stat.size) {
+      const length = fs.readSync(fd, buffer, read, stat.size - read, read);
+      if (!length) break;
+      read += length;
+    }
+    try { return { kind: "parsed", value: JSON.parse(buffer.subarray(0, read).toString("utf8")) }; }
+    catch { return { kind: "gap", gap: "malformed" }; }
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ENOENT" ? { kind: "absent" } : { kind: "gap", gap: "unreadable" };
+  } finally { if (fd !== undefined) fs.closeSync(fd); }
 }
 
 /** Non-evicting accounting rows and FIFO tickets in the existing state DB.
@@ -102,9 +153,23 @@ export class SeatTickAccounting {
     const prefix = key(kind, this.project);
     return this.collection.keyRange(prefix, `${prefix}~`, limit);
   }
-  private ticket(tx: Transaction, row: AccountingProject, kind: Ticket["kind"], target: string) {
+  /** A FIFO ticket at the tail of its queue; the key is returned so a row can
+      remember which ticket is its own. */
+  private ticket(tx: Transaction, row: AccountingProject, kind: Ticket["kind"], target: string): string {
     if (!Number.isSafeInteger(++row.sequence)) throw new Error("accounting sequence exhausted");
-    tx.put({ ...this.base(kind, String(row.sequence).padStart(16, "0")), kind, target });
+    const ticket = { ...this.base(kind, String(row.sequence).padStart(16, "0")), kind, target };
+    tx.put(ticket);
+    return ticket.key;
+  }
+  /** Keep the child's running ticket in step with its status: a running child
+      holds exactly one, and a child that stopped running holds none. */
+  private trackRunning(tx: Transaction, row: AccountingProject, child: AccountingChild): void {
+    if (child.input.status === "running") {
+      if (!child.runningKey) child.runningKey = this.ticket(tx, row, "running", child.key);
+    } else if (child.runningKey) {
+      tx.delete(child.runningKey);
+      child.runningKey = null;
+    }
   }
   private mutate<R>(operation: (tx: Transaction, project: AccountingProject) => R): R {
     return this.collection.boundedPatch(4096, (tx) => {
@@ -125,82 +190,69 @@ export class SeatTickAccounting {
         state: { ...state, harvestedChildren: [] }, migration: gap ? "unknown" : "ready", gap });
     });
   }
-  /** Legacy JSON is scanned positionally. At most 64 KiB and 200 selected
-   * scalars are imported per call; acknowledgments become separate rows. */
+  /**
+   * Import the project's row from the legacy JSON state file, once.
+   *
+   * The file is a bounded document the tick wrote atomically, so it is read
+   * whole under {@link LEGACY_STATE_LIMIT} and parsed in one step; there is no
+   * resumable cursor and nothing to resume. A file that cannot be read whole,
+   * parsed, or trusted leaves the row `unknown` with the reason on it, and
+   * every check reports that reason until the file is fixed or removed — a
+   * blocked migration refuses every prepare, so it must never be silent.
+   * Acknowledgments become separate rows, imported in bounded batches.
+   */
   migrateLegacy(file: string, normalize: (raw: Record<string, unknown>, version: number | null) => SeatTickProjectState): void {
     if (this.row()?.migration === "ready") return;
     if (!this.row()) this.collection.boundedPatch(2, (tx) => {
       if (!tx.get(key("project", this.project))) tx.put({ ...this.base("project"), kind: "project", revision: 0, sequence: 0,
-        state: emptySeatTickState(), migration: "pending", gap: null,
-        legacy: { offset: 0, identity: null, parser: { ...emptyLedgerCursor().parser, select: ["projects", this.project] }, raw: {}, version: null } });
+        state: emptySeatTickState(), migration: "pending", gap: null });
     });
     const opening = this.row()!;
-    if (!opening.legacy) return;
-    const legacy = structuredClone(opening.legacy);
-    let gap: string | null = opening.gap;
-    let complete = false;
-    let absent = false;
-    let fd: number | undefined;
+    const document = readJsonDocument(file, LEGACY_STATE_LIMIT);
+    let gap: string | null = null;
+    let state = emptySeatTickState();
     const imported: string[] = [];
-    try {
-      fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-      const stat = fs.fstatSync(fd);
-      if (!stat.isFile()) throw new Error("legacy state is not a file");
-      const identity = `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}`;
-      if (legacy.identity !== null && legacy.identity !== identity) {
-        gap = "legacy-file-changed";
-      } else {
-        legacy.identity = identity;
-        if (gap === "legacy-state-unreadable") gap = null;
-        const buffer = Buffer.alloc(65536);
-        const count = fs.readSync(fd, buffer, 0, buffer.length, legacy.offset);
-        for (let index = 0; index < count; index++) {
-          consumeMonitorJsonByte(legacy.parser, String.fromCharCode(buffer[index]!));
-          legacy.offset++;
-          if ((legacy.parser.captures?.length ?? 0) >= 200 || legacy.parser.bad) break;
-        }
-        for (const capture of legacy.parser.captures ?? []) {
-          if (capture.path.length === 1) { legacy.version = typeof capture.value === "number" ? capture.value : null; continue; }
-          const parts = capture.path.slice(2);
-          if (parts[0] === "harvestedChildren") {
-            if (parts.length !== 2 || typeof capture.value !== "string" || !capture.value) gap = "legacy-acknowledgments-unreadable";
-            else imported.push(capture.value);
-            continue;
+    if (document.kind === "gap") gap = document.gap === "malformed" ? "legacy-json-malformed" : document.gap === "oversized" ? "legacy-state-oversized" : "legacy-state-unreadable";
+    else if (document.kind === "parsed") {
+      const parsed = document.value;
+      const projects = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>).projects : undefined;
+      if (!projects || typeof projects !== "object" || Array.isArray(projects)) gap = "legacy-projects-unreadable";
+      else {
+        const version = typeof (parsed as Record<string, unknown>).version === "number" ? (parsed as Record<string, unknown>).version as number : null;
+        const raw = (projects as Record<string, unknown>)[this.project];
+        if (raw !== undefined) {
+          const row = raw && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : {};
+          state = normalize(row, version);
+          const acknowledgments = row.harvestedChildren;
+          if (acknowledgments !== undefined) {
+            if (!Array.isArray(acknowledgments)) gap = "legacy-acknowledgments-unreadable";
+            else for (const id of acknowledgments) {
+              if (typeof id !== "string" || !id || id.length > 200) { gap = "legacy-acknowledgments-unreadable"; break; }
+              imported.push(id);
+            }
           }
-          if (parts.some((part) => ["__proto__", "constructor", "prototype"].includes(part))) { gap = "legacy-state-unreadable"; continue; }
-          if (parts.length > 4) { gap = "legacy-state-unreadable"; continue; }
-          let target = legacy.raw;
-          for (let i = 0; i < parts.length - 1; i++) {
-            const part = parts[i]!;
-            const next = parts[i + 1]!;
-            if (/^\d+$/.test(next) && Number(next) >= 200) { gap = "legacy-plan-unreadable"; break; }
-            if (target[part] === null || typeof target[part] !== "object") target[part] = /^\d+$/.test(next) ? [] : {};
-            target = target[part] as Record<string, unknown>;
-          }
-          target[parts.at(-1)!] = capture.value;
+          if (Object.hasOwn(row, "outstandingWake") && row.outstandingWake !== null && !state.outstandingWake) gap = "legacy-outstanding-unreadable";
         }
-        legacy.parser.captures = [];
-        if (legacy.parser.bad) gap = "legacy-json-malformed";
-        complete = legacy.offset === stat.size && legacy.parser.rootDone && !legacy.parser.bad;
-        if (legacy.offset === stat.size && !legacy.parser.rootDone) gap = "legacy-json-incomplete";
       }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT" && legacy.offset === 0) { absent = true; complete = true; }
-      else gap = "legacy-state-unreadable";
-    } finally { if (fd !== undefined) fs.closeSync(fd); }
-    let state = opening.state;
-    if (complete && !absent && legacy.parser.fields.projects !== true) gap = "legacy-projects-unreadable";
-    if (complete && !gap) {
-      state = absent ? emptySeatTickState() : normalize(legacy.raw, legacy.version);
-      if (Object.hasOwn(legacy.raw, "outstandingWake") && legacy.raw.outstandingWake !== null && !state.outstandingWake) gap = "legacy-outstanding-unreadable";
     }
-    this.collection.boundedPatch(2048, (tx) => {
+    const legacyRows = gap ? [] : [...new Set(imported)];
+    for (let start = 0; start < legacyRows.length; start += LEGACY_IMPORT_BATCH) {
+      const batch = legacyRows.slice(start, start + LEGACY_IMPORT_BATCH);
+      this.collection.boundedPatch(LEGACY_IMPORT_BATCH + 2, (tx) => {
+        const current = tx.get(opening.key);
+        if (!current || current.kind !== "project" || current.revision !== opening.revision) return;
+        for (const id of batch) tx.put({ ...this.base("legacy", id), kind: "legacy", conversationId: id, reconciled: false });
+      });
+    }
+    this.collection.boundedPatch(2, (tx) => {
       const current = tx.get(opening.key);
       if (!current || current.kind !== "project" || current.revision !== opening.revision) return;
-      for (const id of imported) tx.put({ ...this.base("legacy", id), kind: "legacy", conversationId: id, reconciled: false });
-      tx.put({ ...current, revision: current.revision + 1, state,
-        migration: complete && !gap ? "ready" : gap ? "unknown" : "pending", gap,
-        legacy: complete && !gap ? undefined : legacy });
+      const migration = gap ? "unknown" : "ready";
+      /* A blocked import re-read on every check must not move the revision
+         while nothing about it changed, or a check's own conditional write —
+         made on the revision it read — is refused as stale. */
+      if (current.migration === migration && current.gap === gap && gap) return;
+      tx.put({ ...current, revision: current.revision + 1, state: gap ? current.state : { ...state, harvestedChildren: [] }, migration, gap });
     });
   }
   readState(): SeatTickProjectState {
@@ -208,10 +260,15 @@ export class SeatTickAccounting {
     if (!row) throw new Error("missing project accounting");
     return { ...row.state, accounting: { filename: this.filename, revision: row.revision, gap: row.migration === "ready" ? row.gap : row.gap ?? "legacy-migration-pending" } };
   }
+  /** Conditional project write. A row whose legacy import is blocked is written
+      too (#1465): the check's own memory — the run of failures that puts the
+      blocked import on the board, the stall memory, the sealed cursor — has to
+      persist for the condition to be reported at all, and the import, once the
+      file is fixed, replaces the row wholesale anyway. */
   writeState(state: SeatTickProjectState): void {
     this.mutate((tx, row) => {
       if (state.accounting?.revision !== row.revision) throw new Error("stale seat tick state");
-      if (row.migration === "ready") row.state = { ...state, accounting: undefined, harvestedChildren: [] };
+      row.state = { ...state, accounting: undefined, harvestedChildren: [] };
     });
   }
   owner(conversationId: string, epoch: number): void {
@@ -228,79 +285,67 @@ export class SeatTickAccounting {
       this.ticket(tx, row, "owner-poll", id);
     });
   }
-  /** Read only committed revocations; abandoned pending-seat history grants
-   * no ownership. The JSON reader resumes within the fixed byte/field budget. */
+  /**
+   * Record the project's predecessor seats from the seat file's committed
+   * revocations, so their children are discovered too. Abandoned pending-seat
+   * history grants no ownership.
+   *
+   * The seat file is written atomically and is kilobytes long, so it is read
+   * whole under {@link SEAT_FILE_LIMIT} and parsed once; the identity of the
+   * file last read is remembered on the project row, and an unchanged file is
+   * not read again. Returns whether this check's owner discovery is incomplete.
+   */
   discoverRevokedOwners(filename: string, matches: (project: string) => boolean): boolean {
     const opening = this.row()!;
-    let scan: OwnerScan = structuredClone(opening.ownerScan ?? { offset: 0, identity: null,
-      parser: { ...emptyLedgerCursor().parser, select: ["revocations"] }, partial: {}, version: null });
-    const owners: { conversationId: string; epoch: number }[] = [];
-    let fd: number | undefined;
-    let gap = false;
+    let identity: string;
     try {
-      fd = fs.openSync(filename, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-      const stat = fs.fstatSync(fd);
-      if (!stat.isFile()) throw new Error("seat evidence is not a file");
-      const identity = `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}`;
-      if (scan.identity !== identity) scan = { offset: 0, identity,
-        parser: { ...emptyLedgerCursor().parser, select: ["revocations"] }, partial: {}, version: null };
-      const buffer = Buffer.alloc(32768);
-      const count = fs.readSync(fd, buffer, 0, buffer.length, scan.offset);
-      for (let i = 0; i < count; i++) {
-        consumeMonitorJsonByte(scan.parser, String.fromCharCode(buffer[i]!));
-        scan.offset++;
-        if ((scan.parser.captures?.length ?? 0) >= 200 || scan.parser.bad) break;
+      const stat = fs.statSync(filename);
+      identity = `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}`;
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code !== "ENOENT";
+    }
+    if (opening.ownerScan?.identity === identity) return opening.ownerScan.gap;
+    const document = readJsonDocument(filename, SEAT_FILE_LIMIT);
+    if (document.kind === "absent") return false;
+    let gap = document.kind === "gap";
+    const owners: { conversationId: string; epoch: number }[] = [];
+    if (document.kind === "parsed") {
+      const file = document.value as Record<string, unknown> | null;
+      const revocations = file && typeof file === "object" && !Array.isArray(file) && file.schemaVersion === 1 && Array.isArray(file.revocations)
+        ? file.revocations : null;
+      if (!revocations) gap = true;
+      else for (const candidate of revocations) {
+        const row = (candidate ?? {}) as Record<string, unknown>;
+        if (typeof row.project === "string" && matches(row.project)
+          && typeof row.conversationId === "string" && row.conversationId.startsWith("conversation_")
+          && Number.isSafeInteger(row.seatEpoch) && Number(row.seatEpoch) >= 1
+          && typeof row.revokedAt === "string" && Number.isFinite(Date.parse(row.revokedAt))) {
+          owners.push({ conversationId: row.conversationId, epoch: Number(row.seatEpoch) });
+        }
       }
-      for (const capture of scan.parser.captures ?? []) {
-        if (capture.path.length === 1) { scan.version = typeof capture.value === "number" ? capture.value : null; continue; }
-        const field = capture.path[2]!;
-        if (field === "$end") {
-          const row = scan.partial;
-          if (typeof row.project === "string" && matches(row.project)
-            && typeof row.conversationId === "string" && row.conversationId.startsWith("conversation_")
-            && Number.isSafeInteger(row.seatEpoch) && Number(row.seatEpoch) >= 1
-            && typeof row.revokedAt === "string" && Number.isFinite(Date.parse(row.revokedAt))) {
-            owners.push({ conversationId: row.conversationId, epoch: Number(row.seatEpoch) });
-          }
-          scan.partial = {};
-        } else scan.partial[field] = capture.value;
-      }
-      scan.parser.captures = [];
-      gap = scan.parser.bad || scan.offset < stat.size || !scan.parser.rootDone || scan.version !== 1;
-    } catch (error) { gap = (error as NodeJS.ErrnoException).code !== "ENOENT"; }
-    finally { if (fd !== undefined) fs.closeSync(fd); }
+    }
+    const recorded = owners.slice(0, OWNER_LIMIT);
+    const capped = owners.length > recorded.length;
+    let raced = false;
     this.mutate((tx, row) => {
-      // Another scanner may have progressed while the file was read.
-      if (row.revision !== opening.revision) return;
-      row.ownerScan = scan;
-      for (const owner of owners) {
+      // Another controller may have progressed while the file was read.
+      if (row.revision !== opening.revision) { raced = true; return; }
+      for (const owner of recorded) {
         const id = key("owner", this.project, String(owner.epoch));
         const existing = tx.get(id);
         if (existing) {
           if (existing.kind !== "owner" || existing.conversationId !== owner.conversationId) throw new Error("contradictory predecessor ownership");
           continue;
         }
-        tx.put({ ...this.base("owner-candidate", String(owner.epoch)), kind: "owner-candidate", ...owner, evidenceIdentity: scan.identity! });
+        tx.put({ ...this.base("owner", String(owner.epoch)), kind: "owner", conversationId: owner.conversationId, epoch: owner.epoch, after: "", through: null });
+        this.ticket(tx, row, "owner-poll", id);
       }
+      /* A capped read is not remembered as this file: the next check reads it
+         again and records the owners past the cap, which already exist by then
+         and are skipped. */
+      if (!capped) row.ownerScan = { identity, gap };
     });
-    if (!gap && scan.identity) {
-      const candidates = this.page("owner-candidate", 20);
-      this.mutate((tx, row) => {
-        for (const candidate of candidates) {
-          if (candidate.kind !== "owner-candidate") continue;
-          if (candidate.evidenceIdentity === scan.identity) {
-            const id = key("owner", this.project, String(candidate.epoch));
-            if (!tx.get(id)) {
-              tx.put({ ...this.base("owner", String(candidate.epoch)), kind: "owner", conversationId: candidate.conversationId, epoch: candidate.epoch, after: "", through: null });
-              this.ticket(tx, row, "owner-poll", id);
-            }
-          }
-          tx.delete(candidate.key);
-        }
-      });
-      gap ||= candidates.length === 20;
-    }
-    return gap;
+    return gap || capped || raced;
   }
   discovery(ticket: Ticket, owner: AccountingOwner, children: AccountingChild[]): void {
     this.mutate((tx, row) => {
@@ -309,8 +354,8 @@ export class SeatTickAccounting {
       for (const child of children) {
         const prior = tx.get(child.key);
         if (!prior) {
+          this.trackRunning(tx, row, child);
           tx.put(child);
-          if (child.input.status === "running") tx.put({ ...this.base("running", child.identity), kind: "running", target: child.key });
           this.ticket(tx, row, "poll", child.key);
         }
       }
@@ -321,7 +366,7 @@ export class SeatTickAccounting {
   }
   child(rowKey: string, owner: string, launchId: string, input: SeatTickChildInput): AccountingChild {
     const identity = outcomeIdentity([owner, rowKey, launchId]);
-    return { ...this.base("child", identity), kind: "child", identity, rowKey, owner, launchId, input, generationIndex: 0 };
+    return { ...this.base("child", identity), kind: "child", identity, rowKey, owner, launchId, input, generationIndex: 0, runningKey: null };
   }
   source(child: AccountingChild, engine: string, generation: string): AccountingSource {
     const identity = outcomeIdentity([engine, generation]);
@@ -357,11 +402,26 @@ export class SeatTickAccounting {
           gap: legacy && (failure || !source?.legacyBoundary || outcomes[index]!.endOffset <= source.legacyBoundary.bytes) ? "legacy-delivery-ambiguous" : null });
       });
       if (source) tx.put(source);
+      this.trackRunning(tx, row, child);
       tx.put(child);
-      if (child.input.status === "running") tx.put({ ...this.base("running", child.identity), kind: "running", target: child.key });
-      else tx.delete(key("running", this.project, child.identity));
       tx.delete(ticket.key);
       this.ticket(tx, row, "poll", child.key);
+    });
+  }
+  /** Move observed running tickets to the tail of their queue, so the next
+      check observes the children behind them. A ticket its child no longer
+      claims is stale and is dropped. */
+  rotateRunning(tickets: readonly AccountingRow[]): void {
+    if (tickets.length === 0) return;
+    this.mutate((tx, row) => {
+      for (const ticket of tickets) {
+        if (ticket.kind !== "running" || !tx.get(ticket.key)) continue;
+        tx.delete(ticket.key);
+        const child = tx.get(ticket.target);
+        if (!child || child.kind !== "child" || child.runningKey !== ticket.key) continue;
+        child.runningKey = child.input.status === "running" ? this.ticket(tx, row, "running", child.key) : null;
+        tx.put(child);
+      }
     });
   }
   ready(limit: number): AccountingOutcome[] {
@@ -383,22 +443,32 @@ export class SeatTickAccounting {
       tx.put(held);
     });
   }
+  /** Freeze the attempt on the row, or refuse without touching it: a refusal
+      moves no revision, so the check that was refused for want of a finished
+      import or behind an outstanding attempt can still write its own state. */
   prepare(state: SeatTickProjectState, wake: SeatTickOutstandingWake): boolean {
-    return this.mutate((tx, row) => {
+    return this.collection.boundedPatch(4096, (tx) => {
+      const row = tx.get(key("project", this.project));
+      if (!row || row.kind !== "project") throw new Error("accounting migration has not completed");
       if (row.revision !== state.accounting?.revision || row.state.outstandingWake || row.migration !== "ready") return false;
       for (const id of wake.commit.children) {
         const outcome = tx.get(key("outcome", this.project, id));
         if (!outcome || outcome.kind !== "outcome" || outcome.status !== "owed" || outcome.gap) return false;
       }
       row.state = { ...state, accounting: undefined, harvestedChildren: [], outstandingWake: wake };
+      row.revision++;
+      tx.put(row);
       return true;
     });
   }
-  settle(expectedKey: string, state: SeatTickProjectState, landed: boolean): boolean {
+  /** End the prepared attempt under `expectedKey` (#1465). See
+      {@link WakeDisposition} for what each ending stamps. `state` carries the
+      instant a landing is stamped at, on `lastWakeAt`. */
+  settle(expectedKey: string, state: SeatTickProjectState, disposition: WakeDisposition): boolean {
     return this.mutate((tx, row) => {
       const wake = row.state.outstandingWake;
       if (!wake || wake.clientMessageId !== expectedKey) return false;
-      if (landed) for (const id of wake.commit.children) {
+      if (disposition === "landed") for (const id of wake.commit.children) {
         const outcome = tx.get(key("outcome", this.project, id));
         if (!outcome) {
           // A legacy prepared wake names conversations. Landing preserves that
@@ -411,8 +481,7 @@ export class SeatTickAccounting {
         tx.put({ ...outcome, status: "acknowledged", landingKey: expectedKey });
         tx.delete(outcome.readyKey);
       }
-      const current = landed ? seatTickWakeCommit(row.state, wake.commit, Date.parse(state.lastWakeAt!))
-        : { ...row.state, outstandingWake: null };
+      const current = disposition === "landed" ? seatTickWakeCommit(row.state, wake.commit, Date.parse(state.lastWakeAt!)) : row.state;
       row.state = { ...current, accounting: undefined, harvestedChildren: [], outstandingWake: null };
       return true;
     });

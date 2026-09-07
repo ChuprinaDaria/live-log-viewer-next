@@ -1307,7 +1307,7 @@ test("unreadable children are a gap the wake names, and an error when nothing el
   const blind = seatTickDecision(input({ childrenUnavailable: "registry-unreadable", state: stateWith(OVERDUE_STATE) }));
   expect(blind.verdict).toEqual({
     kind: "error",
-    detail: "the seat's spawned children could not be read (registry-unreadable), so nothing owed is not established",
+    detail: "the seat's spawned children could not be read (registry-unreadable): the registry read failed, so nothing owed is not established",
   });
   expect(blind.state.lastWakeAt).toBe(OVERDUE_STATE.lastWakeAt);
   expect(blind.cards).toEqual([]);
@@ -1317,10 +1317,60 @@ test("unreadable children are a gap the wake names, and an error when nothing el
     reasons: [{ kind: "interval" }],
     gaps: [{ source: "children", gap: "registry-unreadable" }],
   });
-  /* No card and no standing-run row for this source: the registry is the
-     Viewer's own store, and the journal line says what happened. */
+  /* A run that has only just started raises no card, exactly like a fresh
+     pull-request failure. */
   expect(woken.cards).toEqual([]);
   expect(woken.state.pullRequestGap).toBeNull();
+});
+
+/* Each condition the children source can be in has its own token and its own
+   clause (#1465), so the wake, the error line and the card say which hand it
+   calls for rather than one word for everything. */
+test("each children gap names its condition in the wake and in the error line (#1465)", () => {
+  const blocked = seatTickDecision(input({ childrenUnavailable: "migration-blocked", state: stateWith(OVERDUE_STATE) }));
+  expect(blocked.verdict).toMatchObject({ kind: "error" });
+  expect((blocked.verdict as { detail: string }).detail).toContain("(migration-blocked): the legacy tick state at state/seat-tick.json cannot be imported");
+  const pending = seatTickDecision(input({ childrenUnavailable: "ledger-pending", pipelines: [lane()], state: stateWith(OVERDUE_STATE) }));
+  const wake = pending.verdict as Extract<SeatTickVerdict, { kind: "wake" }>;
+  expect(wake.gaps).toEqual([{ source: "children", gap: "ledger-pending", detail: expect.stringContaining("a child left its running state and its ledger has not been read yet") }]);
+  for (const gap of ["children-unindexed", "migration-pending", "discovery-incomplete", "ledger-gap", "child-departed", "child-unplaced"] as const) {
+    const decision = seatTickDecision(input({ childrenUnavailable: gap, state: stateWith(OVERDUE_STATE) }));
+    expect((decision.verdict as { detail: string }).detail).toContain(`(${gap}): `);
+  }
+});
+
+/* The children source is carded exactly like the pull-request source (#1465):
+   a run that outlived the wake interval goes on the board once, the row that
+   remembers the telling travels apart from the decision's state, and the
+   card names the condition and what it means. */
+test("a children source failing for longer than the wake interval is put on the board once, naming its condition (#1465)", () => {
+  const run = { gap: "migration-blocked" as const, since: new Date(NOW - 70 * MINUTE).toISOString(), lastAttemptAt: new Date(NOW).toISOString(), attempts: 14, reported: false };
+  const state = stateWith({ lastWakeAt: new Date(NOW - 61 * MINUTE).toISOString(), childrenGap: run });
+  const decision = seatTickDecision(input({ childrenUnavailable: "migration-blocked", state }));
+  const raised = decision.cards.find((entry) => entry.kind === "source-unreadable");
+  expect(raised?.ref).toBe("seat-tick-source-children");
+  expect(raised?.instance).toBe(run.since);
+  expect(raised?.detail).toContain("migration-blocked, 14 attempt(s)");
+  expect(raised?.detail).toContain("the legacy tick state at state/seat-tick.json cannot be imported and blocks every wake until it is fixed or removed");
+  expect(decision.reportedChildrenGap).toEqual({ ...run, reported: true });
+  expect(decision.reportedSourceGap).toBeNull();
+  expect(decision.state.childrenGap?.reported).toBe(false);
+  /* Once the controller wrote the reported row, the card is not raised again. */
+  const after = seatTickDecision(input({ childrenUnavailable: "migration-blocked", state: { ...state, childrenGap: { ...run, reported: true } } }));
+  expect(after.cards.filter((entry) => entry.kind === "source-unreadable")).toEqual([]);
+  expect(after.reportedChildrenGap).toBeNull();
+  /* A young run is weather, and a run whose source answered again is over. */
+  const young = seatTickDecision(input({ childrenUnavailable: "ledger-gap", state: stateWith({ lastWakeAt: new Date(NOW - 61 * MINUTE).toISOString(), childrenGap: { ...run, gap: "ledger-gap", since: new Date(NOW - 5 * MINUTE).toISOString(), attempts: 1 } }) }));
+  expect(young.cards).toEqual([]);
+  const answered = seatTickDecision(input({ childrenUnavailable: null, state }));
+  expect(answered.cards.filter((entry) => entry.kind === "source-unreadable")).toEqual([]);
+  /* Both sources standing at once are two cards. */
+  const both = seatTickDecision(input({
+    childrenUnavailable: "migration-blocked",
+    pullRequestsUnavailable: "command-failed",
+    state: { ...state, pullRequestGap: { gap: "command-failed", since: run.since, lastAttemptAt: run.lastAttemptAt, attempts: 3, reported: false } },
+  }));
+  expect(both.cards.filter((entry) => entry.kind === "source-unreadable").map((entry) => entry.ref).sort()).toEqual(["seat-tick-source-children", "seat-tick-source-pull-requests"]);
 });
 
 test("a child-terminal reason that stops producing change is held by the retry guard like any other (#1465)", () => {

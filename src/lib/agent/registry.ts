@@ -4042,12 +4042,17 @@ export class AgentRegistry {
     return this.sqliteStore?.pageSeatChildren(parentId, afterKey, throughKey, limit, keys) ?? null;
   }
 
-  /** The monitor's own seat read must not materialize the registry either. */
+  /** The monitor's own seat read. Under the authoritative SQLite registry it is
+      a keyed read that never materializes the file; a JSON-mode registry
+      answers from its ordinary snapshot instead (#1465), so the seat's turn is
+      always readable — the children projection beside it is what a JSON
+      backend cannot bound, and {@link pageSeatChildren} says so with null. */
   seatTickConversation(id: string): Pick<RegistryConversation, "id" | "turn"> | null {
-    if (!this.sqliteStore || (this.sqliteMode !== "sqlite" && this.sqliteMode !== "read")) {
-      throw new Error("bounded seat projection requires the authoritative SQLite registry");
+    if (this.sqliteStore && (this.sqliteMode === "sqlite" || this.sqliteMode === "read")) {
+      return this.sqliteStore.seatTickConversation(id);
     }
-    return this.sqliteStore.seatTickConversation(id);
+    const conversation = this.conversation(id as ViewerConversationId);
+    return conversation ? { id: conversation.id, turn: conversation.turn } : null;
   }
 
   /** Resolves only conversation ids already present in the bounded custom-title
