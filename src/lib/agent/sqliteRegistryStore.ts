@@ -6,7 +6,7 @@ import type { Database as BunDatabase } from "bun:sqlite";
 
 import { reboundAssembledMcpGrants, rowClaimsBeyondBaselineGrant, type McpGrantPolicy } from "./mcpAllowlist";
 import { identityMaterializationFence } from "./identityMaterialization";
-import type { RegistryFile, SnapshotSpawnProjection, SnapshotTitleConversationProjection } from "./registry";
+import type { RegistryFile, SeatChildrenAnchor, SeatChildrenPage, SnapshotSpawnProjection, SnapshotTitleConversationProjection } from "./registry";
 import { sessionKeyId } from "./sessionKey";
 
 /** The collections the MCP grant decision reads and writes. Touching any one of
@@ -222,6 +222,9 @@ export class SqliteAgentRegistryStore {
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS registry_rows_collection_order
       ON registry_rows(collection, row_order);
+      CREATE INDEX IF NOT EXISTS registry_seat_children_order
+      ON registry_rows(json_extract(value_json, '$.parentConversationId'), row_order)
+      WHERE collection = 'lineageEdges' AND json_extract(value_json, '$.source') = 'viewer-spawn';
     `);
     this.secureFiles();
     this.importFirstBoot(options.initialSnapshot);
@@ -340,6 +343,131 @@ export class SqliteAgentRegistryStore {
     }
   }
 
+  /**
+   * One page of a seat's spawned children (#1465), in the order their lineage
+   * edges were inserted, past `after`.
+   *
+   * Insertion order is what makes discovery keep pace with a seat that has
+   * hundreds of children: the store assigns `row_order` monotonically, so a
+   * child spawned after a sweep completed is exactly the next page, and no
+   * sweep ever restarts from the beginning. The anchor is re-resolved by key
+   * every time: an edge that was renumbered is followed at its current order,
+   * and one that is gone restarts the sweep, which is idempotent for the
+   * caller. `keys` reads the named edges instead, for a re-projection.
+   */
+  pageSeatChildren(parentId: string, after: SeatChildrenAnchor | null, limit: number, keys?: readonly string[]): SeatChildrenPage {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 60) throw new Error("invalid child page limit");
+    if (keys && keys.length > limit) throw new Error("child key budget exceeded");
+    this.db.exec("BEGIN");
+    try {
+      const file = this.normalize({ version: 2, entries: {}, receipts: {} });
+      let evidenceGap = false;
+      const read = (collection: RowCollection, key: string) => {
+        const row = this.db.query<{ value_json: string }, [string, string]>(
+          "SELECT value_json FROM registry_rows WHERE collection=? AND row_key=?",
+        ).get(collection, key);
+        this.onRowPayloadRead?.(collection, row ? 1 : 0);
+        if (row) (file[collection] as Record<string, unknown>)[key] = this.parseRow(collection, key, row.value_json, true);
+      };
+      let anchor: SeatChildrenAnchor | null = null;
+      if (after && !keys) {
+        const current = this.db.query<{ row_order: number }, [string]>(
+          "SELECT row_order FROM registry_rows WHERE collection='lineageEdges' AND row_key=?",
+        ).get(after.key);
+        anchor = current ? { key: after.key, order: current.row_order } : null;
+      }
+      const latest = keys ? null : this.db.query<{ row_key: string; row_order: number }, [string]>(`
+        SELECT row_key,row_order FROM registry_rows WHERE collection='lineageEdges'
+        AND json_extract(value_json,'$.source')='viewer-spawn'
+        AND json_extract(value_json,'$.parentConversationId')=? ORDER BY row_order DESC LIMIT 1
+      `).get(parentId);
+      const rows = keys ? keys.flatMap((key) => {
+        const row = this.db.query<{ row_key: string; value_json: string; row_order: number }, [string]>(
+          "SELECT row_key,value_json,row_order FROM registry_rows WHERE collection='lineageEdges' AND row_key=?",
+        ).get(key);
+        return row ? [row] : [];
+      }) : this.db.query<{ row_key: string; value_json: string; row_order: number }, [string, number, number]>(`
+        SELECT row_key,value_json,row_order FROM registry_rows WHERE collection='lineageEdges'
+        AND json_extract(value_json,'$.source')='viewer-spawn'
+        AND json_extract(value_json,'$.parentConversationId')=? AND row_order>?
+        ORDER BY row_order LIMIT ?
+      `).all(parentId, anchor?.order ?? Number.MIN_SAFE_INTEGER, limit);
+      this.onRowPayloadRead?.("lineageEdges", rows.length);
+      for (const row of rows) {
+        const edge = this.parseRow("lineageEdges", row.row_key, row.value_json, true) as RegistryFile["lineageEdges"][string];
+        file.lineageEdges[row.row_key] = edge;
+        if (edge.evidence.launchId) read("receipts", edge.evidence.launchId);
+        let id: string = edge.childConversationId;
+        let invalidAlias = false;
+        const seen = new Set<string>();
+        for (let depth = 0; depth < 64; depth++) {
+          if (seen.has(id)) { evidenceGap = true; invalidAlias = true; break; }
+          seen.add(id);
+          read("conversationAliases", id);
+          const alias = file.conversationAliases[id];
+          if (!alias) break;
+          id = alias;
+          if (depth === 63) { evidenceGap = true; invalidAlias = true; }
+        }
+        if (invalidAlias) { delete file.lineageEdges[row.row_key]; continue; }
+        read("conversations", id);
+        read("memberships", id);
+        const conversation = file.conversations[id];
+        const receipt = edge.evidence.launchId ? file.receipts[edge.evidence.launchId] : null;
+        const generation = conversation?.generations.at(-1);
+        for (const key of [edge.childSessionKey, receipt?.key, generation ? { engine: conversation!.engine, sessionId: generation.id } : null]) {
+          if (key) read("entries", sessionKeyId(key));
+        }
+      }
+      this.db.exec("COMMIT");
+      const last = rows.at(-1);
+      return {
+        file,
+        keys: rows.map((row) => row.row_key),
+        after: keys ? after : last ? { key: last.row_key, order: last.row_order } : anchor,
+        latest: latest ? { key: latest.row_key, order: latest.row_order } : null,
+        complete: rows.length < limit,
+        evidenceGap,
+      };
+    } catch (error) {
+      try { this.db.exec("ROLLBACK"); } catch { /* No open transaction. */ }
+      throw error;
+    }
+  }
+
+  seatTickConversation(id: string): Pick<RegistryFile["conversations"][string], "id" | "turn"> | null {
+    this.db.exec("BEGIN");
+    try {
+      const read = (collection: "conversationAliases" | "conversations", key: string) => {
+        const row = this.db.query<{ value_json: string }, [string, string]>(
+          "SELECT value_json FROM registry_rows WHERE collection=? AND row_key=?",
+        ).get(collection, key);
+        this.onRowPayloadRead?.(collection, row ? 1 : 0);
+        return row ? this.parseRow(collection, key, row.value_json, true) : undefined;
+      };
+      const seen = new Set<string>();
+      let current = id;
+      for (let depth = 0; depth < 64; depth++) {
+        if (seen.has(current)) throw new Error("seat alias cycle");
+        seen.add(current);
+        const alias = read("conversationAliases", current);
+        if (alias === undefined) {
+          const raw = read("conversations", current);
+          const conversation = raw === undefined ? null : this.normalize({ version: 2, entries: {}, receipts: {}, conversations: { [current]: raw } }).conversations[current];
+          if (raw !== undefined && !conversation) throw new Error("invalid seat conversation");
+          this.db.exec("COMMIT");
+          return conversation ? { id: conversation.id, turn: conversation.turn } : null;
+        }
+        if (typeof alias !== "string" || !alias.startsWith("conversation_")) throw new Error("invalid seat alias");
+        current = alias;
+      }
+      throw new Error("seat alias traversal budget exhausted");
+    } catch (error) {
+      try { this.db.exec("ROLLBACK"); } catch { /* No open transaction. */ }
+      throw error;
+    }
+  }
+
   /** Keyed title lookup for the bounded custom-title store. A request reads at
       most one alias chain and one conversation row per title record; it never
       enumerates a registry collection. */
@@ -419,7 +547,7 @@ export class SqliteAgentRegistryStore {
         throw error;
       }
       const waitStartedAt = performance.now();
-      this.db.exec("BEGIN IMMEDIATE");
+      this.beginMutationWrite();
       let revision: number;
       const changed = changes.rows.size > 0 || changes.meta.size > 0 || changes.order.size > 0;
       try {
@@ -445,6 +573,28 @@ export class SqliteAgentRegistryStore {
         return { result, file: committed.file, revision: committed.revision };
       }
       return { result, file: null, revision };
+    }
+  }
+
+  private beginMutationWrite(): void {
+    const deadline = performance.now() + 5_000;
+    // SQLite's default busy handler grows its sleep to 100 ms. Short registry
+    // commits can repeatedly pass a sleeping lane. Retry acquisition in short
+    // intervals, retaining the same total deadline and measuring the whole wait.
+    this.db.exec("PRAGMA busy_timeout = 5");
+    try {
+      for (;;) {
+        try {
+          this.db.exec("BEGIN IMMEDIATE");
+          return;
+        } catch (error) {
+          if (!(error instanceof Error)
+            || (error as { code?: string }).code !== "SQLITE_BUSY"
+            || performance.now() >= deadline) throw error;
+        }
+      }
+    } finally {
+      this.db.exec("PRAGMA busy_timeout = 5000");
     }
   }
 
@@ -557,8 +707,8 @@ export class SqliteAgentRegistryStore {
         const baseline = new Map<string, string | null>();
         if (!trackMutations || collection === "deliveryOperationOwners") {
           const storedValue = {} as typeof value;
-          const storedRows = this.db.query<StoredRow, [string]>(
-            "SELECT collection, row_key, value_json, row_order FROM registry_rows WHERE collection = ? ORDER BY row_order",
+          const storedRows = this.db.query<Pick<StoredRow, "row_key" | "value_json">, [string]>(
+            "SELECT row_key, value_json FROM registry_rows WHERE collection = ? ORDER BY row_order",
           ).all(collection);
           this.onRowPayloadRead?.(collection, storedRows.length);
           for (const row of storedRows) {
@@ -566,7 +716,7 @@ export class SqliteAgentRegistryStore {
             (storedValue as Record<string, unknown>)[row.row_key] = trackMutations
               ? structuredClone(parsed)
               : parsed;
-            baseline.set(row.row_key, row.value_json);
+            if (trackMutations) baseline.set(row.row_key, row.value_json);
           }
           const input: Record<string, unknown> = { version: 2, entries: {}, receipts: {} };
           input[collection] = storedValue;
@@ -957,8 +1107,10 @@ export class SqliteAgentRegistryStore {
 
   private persistRowOrder(collection: RowCollection, keys: string[]): void {
     for (const [order, key] of keys.entries()) {
-      this.db.query("UPDATE registry_rows SET row_order = ? WHERE collection = ? AND row_key = ?")
-        .run(order, collection, key);
+      // Replacement usually appends a row. Rewriting unchanged positions also
+      // rewrites the collection and lineage indexes under the writer lock.
+      this.db.query("UPDATE registry_rows SET row_order = ? WHERE collection = ? AND row_key = ? AND row_order != ?")
+        .run(order, collection, key, order);
     }
   }
 

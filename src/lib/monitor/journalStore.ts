@@ -214,6 +214,7 @@ const SEAT_TICK_VERDICTS: SeatTickVerdictKind[] = [
   "revoked",
   "landed",
   "dropped",
+  "uncertain",
 ];
 
 export function seatTickJournalPath(): string {
