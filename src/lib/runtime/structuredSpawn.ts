@@ -32,7 +32,7 @@ import { isRuntimeHostTransportFailure, type RuntimeHostClient } from "./client"
 import { supervisedRuntimeHostUnavailableReason } from "./flags";
 import { StructuredHostAdoptionCleanupError, StructuredSessionMaterializationError, type EngineHost, type HostState, type SessionMaterializationEvidence } from "./engineHost";
 import { messageOriginRole, type MessageOrigin } from "./messageOrigin";
-import { runtimeSettingsCapability, type RuntimeOperationResult, type RuntimeSession } from "./contracts";
+import { runtimeSettingsCapability, type RuntimeOperationResult, type RuntimeSession, type RuntimeSnapshot } from "./contracts";
 import { bindClaudeHostPersistence, bindCodexHostPersistence } from "./registry";
 import { publishStructuredDeliveryHost, releaseStructuredDeliveryHost, structuredDeliveryLastError } from "./structuredDeliveryController";
 import { enqueueStructuredMessage } from "./structuredMessageDelivery";
@@ -429,6 +429,10 @@ export async function reconcileStructuredSpawnReplay(
     releaseHost?: (key: SessionKey) => Promise<boolean>;
     terminateHostProcess?: (expected: ProcessIdentity) => Promise<boolean>;
     drainError?: (conversationId: string) => string | null;
+    /** One startup pass may share historical identity evidence across failed
+        receipts. Pending launches always read fresh state below. Live writer
+        claims are still merged atomically by recoverStructuredSpawnFromEvidence. */
+    failedReceiptSnapshot?: () => Promise<RuntimeSnapshot>;
   } = {},
 ): Promise<SpawnReceipt & { initialMessage: "pending" | "queued" | "delivered" | "failed" }> {
   const current = registry.readOnlySnapshot().receipts[launchId];
@@ -442,7 +446,9 @@ export async function reconcileStructuredSpawnReplay(
   const [initialOperation, spawnOperation, runtime] = await Promise.all([
     client.operationStatus(`spawn_message_${launchId}`, { currentRetryLeaf: true }).catch(() => null),
     client.operationStatus(launchId, { currentRetryLeaf: true }).catch(() => null),
-    client.snapshot().catch(() => null),
+    (current.state === "failed" && options.failedReceiptSnapshot
+      ? options.failedReceiptSnapshot()
+      : client.snapshot()).catch(() => null),
   ]);
   let operation = initialOperation;
   let effectHistoryUnavailable = false;
@@ -1131,6 +1137,14 @@ export async function recoverPendingStructuredSpawns(
     afterEventSeq = next;
   }
 
+  // Historical failures need one identity snapshot for this pass. Fetching the
+  // entire runtime once per failed receipt multiplies startup admission work
+  // by both retained histories (#1552). Each receipt still
+  // reads its current operations and crosses the registry's atomic settlement.
+  // A failed snapshot stays unknown for this pass; it is never an empty snapshot.
+  let failedReceiptRuntime: Promise<RuntimeSnapshot> | undefined;
+  const failedReceiptSnapshot = () => failedReceiptRuntime ??= client.snapshot();
+
   let registeringConversationIds: Set<string> | null = null;
   const registeringSessions = async (): Promise<Set<string>> => {
     if (!registeringConversationIds) {
@@ -1168,7 +1182,7 @@ export async function recoverPendingStructuredSpawns(
       continue;
     }
     if (receipt.state === "failed" && receipt.transport !== "tmux") {
-      const reconciled = await reconcileStructuredSpawnReplay(receipt.launchId, registry, client);
+      const reconciled = await reconcileStructuredSpawnReplay(receipt.launchId, registry, client, { failedReceiptSnapshot });
       if (reconciled.state === "completed") continue;
       /* The durable launch receipt failed, but its runtime spawn operation can
          survive as queued when the terminal transition itself timed out. The
