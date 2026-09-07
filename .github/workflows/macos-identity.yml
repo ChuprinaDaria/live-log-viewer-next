@@ -98,7 +98,7 @@ jobs:
               # refuses macOS. Keep this job on credential recognition; the
               # native Keychain test also exercises real catalog discovery.
               if test.endswith("/claude.test.ts"):
-                  command += ["--test-name-pattern", "legacy Claude is Main|managed homes are distinct|credential symlinks"]
+                  command += ["--test-name-pattern", "legacy Claude is Main|managed homes are distinct|credential symlinks|new account creation refuses"]
               if test.endswith("/spawnHealth.test.ts"):
                   command += ["--test-name-pattern", "^(?!Claude provider checks waiting behind deletion)"]
               if subprocess.run(command, env=env).returncode:

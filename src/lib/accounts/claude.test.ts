@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, expect, test } from "bun:test";
+import { afterAll, beforeEach, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -719,4 +719,20 @@ test("a native projects path maps to its shared-store mirror only when that file
   expect(mod.mirroredClaudeTranscriptPath(mirrored)).toBeNull();
   expect(mod.mirroredClaudeTranscriptPath(path.join(home, "elsewhere", "session.jsonl"))).toBeNull();
   expect(mod.mirroredClaudeTranscriptPath("/codex/sessions/session.jsonl")).toBeNull();
+});
+
+
+test("new account creation refuses a pre-existing or unknown platform store", async () => {
+  const store = await import("./claudeCredentials");
+  const target = path.join(mod.claudeAccountsRoot(), "reused");
+  const read = spyOn(store, "readClaudeCredentials");
+  try {
+    for (const state of ["present", "unknown"] as const) {
+      read.mockImplementation((home) => home !== target ? { state: "absent" }
+        : state === "present" ? { state, source: "keychain", document: {} } : { state });
+      expect(() => mod.createManagedClaudeAccount("Reused")).toThrow(mod.UnsafeClaudeHomeError);
+      expect(fs.existsSync(target)).toBe(false);
+      expect(mod.listClaudeAccounts().some((account) => account.id === "reused")).toBe(false);
+    }
+  } finally { read.mockRestore(); }
 });

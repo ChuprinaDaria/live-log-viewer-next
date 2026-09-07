@@ -300,6 +300,9 @@ export function createManagedClaudeAccount(label: string): ClaudeAccount {
   const clean = label.trim(); if (!clean || clean.length > 80 || /[\u0000-\u001f\u007f]/.test(clean)) throw new InvalidClaudeAccountLabelError();
   return withRegistryLock(() => {
     cached = null; const registry = mutable(); const id = nextId(clean, new Set([...listClaudeAccounts().map((item) => item.id), ...registry.retired.map((item) => item.id)])); const home = managedHome(id); let made = false;
+    // A removed directory does not prove its platform credential is gone.
+    // Refuse adoption of a previous account's store under a reused label.
+    if (readClaudeCredentials(home).state !== "absent") throw new UnsafeClaudeHomeError();
     try {
       fs.mkdirSync(path.dirname(home), { recursive: true, mode: 0o700 }); fs.chmodSync(path.dirname(home), 0o700); fs.mkdirSync(home, { mode: 0o700 }); fs.chmodSync(home, 0o700); made = true;
       const shared = syncClaudeCapabilitySnapshot();
