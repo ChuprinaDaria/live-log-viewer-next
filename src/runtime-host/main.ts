@@ -15,7 +15,13 @@ const { createLegacyRuntimeScheduler } = await import("./legacyScheduler");
 const { serveRuntimeHost } = await import("./socket");
 const { ViewerDeploymentCoordinator } = await import("./deployment");
 const { HostCommandViewerDeploymentAdapter } = await import("./deploymentAdapter");
-const { serveViewerDeploymentProxy } = await import("./deploymentProxy");
+const {
+  readViewerGatewayConfig,
+  serveViewerDeploymentProxy,
+  serveViewerLocalEntry,
+  VIEWER_GATEWAY_FILE,
+  viewerReleaseCredentialResolver,
+} = await import("./deploymentProxy");
 const { ReceiptSweepReporter, receiptSweepDebugEnabled } = await import("./receiptSweep");
 const { registryConversationRetentionStates } = await import("./journalRetention");
 const {
@@ -204,12 +210,39 @@ const host = new RuntimeHost(
   mcpHealthProbeAdmissions,
   () => startup.readyEvidence(),
 );
-const deploymentProxy = deployments
-  ? serveViewerDeploymentProxy(
-    process.env.LLV_VIEWER_DEPLOY_TARGET || statePath("viewer-release.json"),
-    Number(process.env.LLV_VIEWER_PORT || 8898),
-  )
+const viewerReleaseTarget = process.env.LLV_VIEWER_DEPLOY_TARGET || statePath("viewer-release.json");
+const viewerFrontPort = Number(process.env.LLV_VIEWER_PORT || 8898);
+/* #1547: a gateway file in the state directory makes the stable port the
+   local entry and binds the authenticated remote entry beside it. Which kind
+   of listener the stable port is gets decided here, once; whether the local
+   entry vouches is the file's `localEntry`, read per request. No file, or a
+   file that is not a configuration, is the raw pipe as before. */
+const viewerGatewayFile = statePath(VIEWER_GATEWAY_FILE);
+const viewerGateway = deployments ? readViewerGatewayConfig(viewerGatewayFile, viewerFrontPort) : null;
+if (viewerGateway?.problem) {
+  console.error(`[runtime host] viewer gateway ${viewerGatewayFile} ignored, stable listener stays the plain pipe: ${viewerGateway.problem}`);
+}
+const viewerGatewayConfig = viewerGateway?.present && viewerGateway.problem === null ? viewerGateway.config : null;
+const deploymentProxy = !deployments
+  ? null
+  : viewerGatewayConfig
+    ? serveViewerLocalEntry(viewerReleaseTarget, viewerFrontPort, "127.0.0.1", {
+      gatewayFile: viewerGatewayFile,
+      releaseCredential: viewerReleaseCredentialResolver(stateDir(), process.env),
+      report: (line) => console.error(line),
+    })
+    : serveViewerDeploymentProxy(viewerReleaseTarget, viewerFrontPort);
+const remoteEntryProxy = viewerGatewayConfig?.remoteEntryPort
+  ? serveViewerDeploymentProxy(viewerReleaseTarget, viewerGatewayConfig.remoteEntryPort)
   : null;
+/* The remote entry failing to bind must not take down the host that owns the
+   stable port and every agent behind it: the tailnet fails closed instead. */
+remoteEntryProxy?.on("error", (error) => {
+  console.error(`[runtime host] viewer gateway remote entry 127.0.0.1:${viewerGatewayConfig?.remoteEntryPort} is unavailable, tailnet access fails closed: ${error.message}`);
+});
+if (viewerGatewayConfig) {
+  console.error(`[runtime host] viewer gateway: local entry 127.0.0.1:${viewerFrontPort} is ${viewerGatewayConfig.localEntry} at boot (re-read per request); remote entry ${viewerGatewayConfig.remoteEntryPort ? `127.0.0.1:${viewerGatewayConfig.remoteEntryPort}` : "none"}`);
+}
 if (journal.isWritable()) await host.recoverConsumers();
 startup.record("consumers-recovered");
 const server = serveRuntimeHost(socketPath, host);
@@ -280,6 +313,7 @@ function stop(): void {
   if (receiptSweepTimer) clearInterval(receiptSweepTimer);
   if (journalMaintenanceTimer) clearInterval(journalMaintenanceTimer);
   deploymentProxy?.close();
+  remoteEntryProxy?.close();
   server.close(() => {
     journal.close();
     fence.release();
@@ -323,6 +357,7 @@ function handOffToStagedSuccessor(context: { deploymentId: string; revision: str
   if (receiptSweepTimer) clearInterval(receiptSweepTimer);
   if (journalMaintenanceTimer) clearInterval(journalMaintenanceTimer);
   deploymentProxy?.close();
+  remoteEntryProxy?.close();
   server.close(() => {
     journal.close();
     fence.release();
