@@ -1,8 +1,8 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { RUNNING_PAGE, RUNNING_ROTATE, SeatTickAccounting, type AccountingChild, type AccountingOwner } from "./seatTickAccounting";
-import { readChildLedger } from "./seatTickChildLedger";
+import { RUNNING_PAGE, RUNNING_ROTATE, SeatTickAccounting, type AccountingChild, type AccountingOwner, type TicketPosition } from "./seatTickAccounting";
+import { OUTCOME_LIMIT, readChildLedger } from "./seatTickChildLedger";
 
 import {
   agentRegistry,
@@ -10,6 +10,7 @@ import {
   SPAWN_STARTING_ADMISSION_LEASE_MS,
   type AgentRegistryEntry,
   type RegistryFile,
+  type SeatChildrenPage,
   type SpawnLineageEdge,
   type SpawnReceipt,
 } from "@/lib/agent/registry";
@@ -841,10 +842,14 @@ const CONTAINER_MEMBERSHIPS: ReadonlySet<string> = new Set(["pipeline", "flow", 
     the check that follows it rather than hours later, and a check every five
     minutes with this budget reads an order of magnitude more than the day's
     growth. The line-framed reader takes tens of milliseconds for the lot. */
-const TICK_LEDGER_BYTES = 32 * 1024 * 1024;
+export const TICK_LEDGER_BYTES = 32 * 1024 * 1024;
 const CHILD_LEDGER_BYTES = 16 * 1024 * 1024;
-/** Children polled per check, in FIFO order. */
-const POLL_PAGE = 8;
+/** FIFO visits per check, sharing the sixty-row projection budget with
+    discovery and ready outcomes. Cold tickets retain reserved visits while
+    running transitions and new terminal children receive priority. */
+export const POLL_VISITS = 40;
+/** Lineage edges one discovery page reads. */
+const DISCOVERY_PAGE = 20;
 
 /** The registry entries that could be hosting this child, by every session key
     the records tie to it. */
@@ -956,17 +961,28 @@ function accountingGap(gap: string | null): SeatTickChildrenGap | null {
  * pages, polled through FIFO tickets, their terminal outcomes read from their
  * event ledgers and retained as owed rows until a landed wake names them.
  *
- * Three bounded passes, each fair over time rather than complete per check:
+ * Four bounded passes keep new arrivals separate from historical work:
  *
- * - **Poll.** The first {@link POLL_PAGE} poll tickets are re-projected and
- *   their ledgers read within {@link TICK_LEDGER_BYTES}, then re-queued at the
- *   tail. Every child is reached in turn; none is ever skipped for being past
- *   a page bound.
+ * - **Discovery.** The active seat's next page of {@link DISCOVERY_PAGE}
+ *   edges, in insertion order past a durable anchor, on EVERY check — so a new
+ *   worker is known one check after its edge exists whether the seat has
+ *   four children or four hundred, and however many predecessors the seat
+ *   file has retired before it. Bootstrap keeps a separate cursor for every
+ *   older edge. A predecessor takes a turn when the discovery budget allows. A child discovery already finds terminal enters the poll queue at
+ *   its head, so its ledger is read this check.
  * - **Running.** The first {@link RUNNING_PAGE} running tickets are observed,
  *   with a liveness read for a hosted open turn, and the first
  *   {@link RUNNING_ROTATE} move to the tail — so consecutive checks overlap and
  *   a stall on the thirteenth child is seen twice in a row like a stall on the
- *   first.
+ *   first. A child seen settling — its turn no longer open, its host gone, or
+ *   the child gone from the seat — is polled right here, ahead of the queue
+ *   and with the ledger budget still whole: the moment its outcome is owed is
+ *   the moment its ledger is read.
+ * - **Poll.** Up to {@link POLL_VISITS} tickets, with eight cold visits reserved, are
+ *   re-projected and their ledgers read within {@link TICK_LEDGER_BYTES}, then
+ *   re-queued — at the tail once read to the end, at the head when the budget
+ *   cut the read, so the next check resumes it first. Every child is reached
+ *   in turn; none is ever skipped for being past a page bound.
  * - **Ready.** Owed outcomes are handed to the decision in ready order.
  *
  * What a check could not account for leaves as a token, never as silence:
@@ -989,99 +1005,167 @@ async function childWork(
   const migration = accountingGap(state.accounting.gap);
   if (migration) gaps.add(migration);
   const children: SeatTickChildInput[] = [];
-  const classify = (page: NonNullable<ReturnType<typeof registry.pageSeatChildren>>, id: string) => {
+  const classify = (page: SeatChildrenPage, id: string) => {
     const edge = page.file.lineageEdges[id];
     if (!edge) return null;
     return projectChild(page.file, readOnlyConversationLookupFromSnapshot(page.file), edge, project, now);
   };
+  const pages = new Map<string, SeatChildrenPage>();
+  let projectedRows = 0;
   const seatChildren = (...args: Parameters<typeof registry.pageSeatChildren>) => {
+    const [owner, , limit, keys] = args;
+    const cached = keys?.length === 1 ? pages.get(`${owner}/${keys[0]}`) : null;
+    if (cached) return cached;
+    if (projectedRows + limit > 60) { gaps.add("ledger-pending"); return null; }
     const page = registry.pageSeatChildren(...args);
+    projectedRows += page?.keys.length ?? 0;
+    for (const id of page?.keys ?? []) pages.set(`${owner}/${id}`, page!);
     if (!page) { gaps.add("children-unindexed"); return null; }
     return page;
   };
+  let bytesLeft = TICK_LEDGER_BYTES;
+
+  /** One owner's next discovery page. */
+  const discover = (owner: AccountingOwner): boolean => {
+    const page = seatChildren(owner.conversationId, owner.after, DISCOVERY_PAGE);
+    if (!page) return false;
+    const discoveries = [page];
+    let bootstrap = owner.bootstrap;
+    let after = page.after;
+    if (!owner.after && !owner.bootstrap && !page.complete) {
+      // Capture the tail independently; the unread history keeps its own cursor.
+      bootstrap = { after: page.after };
+      after = page.latest ?? page.after;
+    } else if (bootstrap && projectedRows <= 20) {
+      const history = seatChildren(owner.conversationId, bootstrap.after, DISCOVERY_PAGE);
+      if (history) {
+        discoveries.push(history);
+        bootstrap = history.complete ? undefined : { after: history.after };
+      }
+    }
+    const discovered: { child: AccountingChild; position: TicketPosition }[] = [];
+    for (const discoveredPage of discoveries) for (const id of discoveredPage.keys) {
+      const edge = discoveredPage.file.lineageEdges[id];
+      const child = classify(discoveredPage, id);
+      if (child && edge?.evidence.launchId) discovered.push({
+        child: accounting.child(id, owner.conversationId, edge.evidence.launchId, child.input),
+        position: child.input.status === "terminal" ? "head" : "tail",
+      });
+    }
+    accounting.discovery({ ...owner, after: page.evidenceGap ? owner.after : after, bootstrap }, discovered);
+    if (bootstrap || discoveries.some((value) => value.evidenceGap || !value.complete)) gaps.add("discovery-incomplete");
+    return true;
+  };
+
+  /** One child's poll, from a page already read: re-projected, its ledger
+      read from its cursor within what is left of the check's budget, and its
+      ticket re-queued. A settled child whose read the budget cut is an
+      outcome owed and not yet known, and the check says so. */
+  const poll = (child: AccountingChild, page: SeatChildrenPage, projected: ProjectedChild | null): void => {
+    const edge = page.file.lineageEdges[child.rowKey];
+    if (!projected || !edge || edge.parentConversationId !== child.owner || edge.evidence.launchId !== child.launchId) {
+      accounting.ingest({ ...child, input: { ...child.input, status: "unknown", outcome: null } }, null, []);
+      gaps.add("child-departed");
+      return;
+    }
+    child.input = projected.input;
+    if (child.input.status === "unknown") { children.push(child.input); gaps.add("child-unplaced"); }
+    const lookup = readOnlyConversationLookupFromSnapshot(page.file);
+    const conversation = lookup.conversation(edge.childConversationId);
+    const generations = conversation?.generations ?? [];
+    const generation = generations[child.generationIndex % Math.max(1, generations.length)];
+    const receipt = page.file.receipts[child.launchId];
+    // A failed receipt after materialization cannot establish pre-execution failure.
+    const failure = receipt?.state === "failed" && receipt.key === null && receipt.artifactPath === null && generations.length === 0;
+    if (!generation) { accounting.ingest(child, null, [], failure); return; }
+    const source = accounting.source(child, conversation!.engine, generation.id);
+    const budget = Math.min(bytesLeft, CHILD_LEDGER_BYTES);
+    const read = readChildLedger(path.join(statePath("structured-host-events"), `${encodeURIComponent(generation.id)}.jsonl`), source.cursor, budget);
+    source.cursor = read.cursor;
+    if (read.cursor.atEnd && read.cursor.activeTurn === null && read.cursor.settledThrough > 0
+      && (projected.turn === "idle" || projected.turn === "terminal")) {
+      child.input = { ...child.input, status: "terminal", outcome: "finished" };
+    }
+    bytesLeft -= read.bytes;
+    if (source.cursor.gap !== null) gaps.add("ledger-gap");
+    child.generationIndex = (child.generationIndex + 1) % generations.length;
+    /* A read the budget stopped short of the end resumes first next check. */
+    const cut = !read.cursor.atEnd && (read.bytes >= budget || read.outcomes.length >= OUTCOME_LIMIT);
+    accounting.ingest(child, source, read.outcomes, false, cut ? "head" : "tail");
+    if (cut && projected.turn !== "busy") gaps.add("ledger-pending");
+  };
+
   try {
-    accounting.owner(seat.conversationId, seat.seatEpoch);
+    const active = accounting.owner(seat.conversationId, seat.seatEpoch);
     if (accounting.discoverRevokedOwners(statePath("orchestrator-seats.json"), (ownerProject) => canonicalOrchestratorProject(ownerProject) === project)) {
       gaps.add("discovery-incomplete");
     }
-    const ownerTicket = accounting.page("owner-poll", 1)[0];
-    if (ownerTicket?.kind === "owner-poll") {
-      const owner = accounting.get(ownerTicket.target);
-      if (!owner || owner.kind !== "owner") throw new Error("missing owner provenance");
-      const page = seatChildren(owner.conversationId, owner.after, owner.through, 20);
-      if (page) {
-        const discovered: AccountingChild[] = [];
-        for (const id of page.keys) {
-          const edge = page.file.lineageEdges[id]!;
-          const child = classify(page, id);
-          if (child && edge.evidence.launchId) discovered.push(accounting.child(id, owner.conversationId, edge.evidence.launchId, child.input));
-        }
-        const nextOwner: AccountingOwner = { ...owner, after: page.complete ? "" : page.nextKey, through: page.complete ? null : page.throughKey };
-        accounting.discovery(ownerTicket, nextOwner, discovered);
-        if (page.evidenceGap || !page.complete) gaps.add("discovery-incomplete");
+    if (discover(active)) {
+      /* The active owner's ticket just moved to the tail, so the head of the
+         owner queue is the predecessor whose turn it is — unless the active
+         seat is the only owner there is. */
+      const ticket = accounting.page("owner-poll", 1)[0];
+      if (projectedRows <= 20 && ticket?.kind === "owner-poll") {
+        const owner = accounting.get(ticket.target);
+        if (!owner || owner.kind !== "owner") throw new Error("missing owner provenance");
+        const migrated = owner.pollKey ? owner : accounting.owner(owner.conversationId, owner.epoch);
+        if (migrated.pollKey !== ticket.key) accounting.drop(ticket);
+        else if (migrated.key !== active.key) discover(migrated);
       }
     }
-    let bytesLeft = TICK_LEDGER_BYTES;
-    for (const ticket of accounting.page("poll", POLL_PAGE)) {
-      if (ticket.kind !== "poll") throw new Error("invalid poll ticket");
-      const child = accounting.get(ticket.target);
-      if (!child || child.kind !== "child") throw new Error("missing child provenance");
-      const page = seatChildren(child.owner, "", "", 1, [child.rowKey]);
-      if (!page) break;
-      const projected = classify(page, child.rowKey);
-      const edge = page.file.lineageEdges[child.rowKey];
-      if (!projected || !edge || edge.parentConversationId !== child.owner || edge.evidence.launchId !== child.launchId) {
-        accounting.ingest(ticket, { ...child, input: { ...child.input, status: "unknown", outcome: null } }, null, []);
-        gaps.add("child-departed");
-        continue;
-      }
-      child.input = projected.input;
-      if (child.input.status === "unknown") { children.push(child.input); gaps.add("child-unplaced"); }
-      const lookup = readOnlyConversationLookupFromSnapshot(page.file);
-      const conversation = lookup.conversation(edge.childConversationId);
-      const generations = conversation?.generations ?? [];
-      const generation = generations[child.generationIndex % Math.max(1, generations.length)];
-      const receipt = page.file.receipts[child.launchId];
-      // A failed receipt after materialization cannot establish pre-execution failure.
-      const failure = receipt?.state === "failed" && receipt.key === null && receipt.artifactPath === null && generations.length === 0;
-      if (generation && bytesLeft > 0) {
-        const source = accounting.source(child, conversation!.engine, generation.id);
-        const read = readChildLedger(path.join(statePath("structured-host-events"), `${encodeURIComponent(generation.id)}.jsonl`), source.cursor, Math.min(bytesLeft, CHILD_LEDGER_BYTES));
-        source.cursor = read.cursor;
-        if (read.cursor.atEnd && read.cursor.activeTurn === null && read.cursor.settledThrough > 0
-          && (projected.turn === "idle" || projected.turn === "terminal")) {
-          child.input = { ...child.input, status: "terminal", outcome: "finished" };
-        }
-        bytesLeft -= read.bytes;
-        if (source.cursor.gap !== null) gaps.add("ledger-gap");
-        child.generationIndex = (child.generationIndex + 1) % generations.length;
-        accounting.ingest(ticket, child, source, read.outcomes);
-      } else accounting.ingest(ticket, child, null, [], failure);
-    }
+    const observedRunning = new Set<string>();
     const running = accounting.page("running", RUNNING_PAGE);
     for (const ticket of running) {
       if (ticket.kind !== "running") continue;
       const child = accounting.get(ticket.target);
       if (!child || child.kind !== "child") throw new Error("missing running child");
-      const page = seatChildren(child.owner, "", "", 1, [child.rowKey]);
+      const page = seatChildren(child.owner, null, 1, [child.rowKey]);
       if (!page) break;
       const projected = classify(page, child.rowKey);
-      /* A child that left its running state is the poll queue's to account
-         for: its outcome is owed the moment its ledger is read, and until then
-         the check may not call the board quiet. */
-      if (!projected || projected.input.status !== "running") { gaps.add(projected ? "ledger-pending" : "child-departed"); continue; }
+      /* A child whose turn has settled, whose host is gone, or that left the
+         seat: its outcome is owed the moment its ledger is read, so it is read
+         now. What the budget cannot reach goes to the head of the poll queue,
+         and until it is read the check may not call the board quiet. */
+      if (!projected || projected.input.status !== "running" || projected.turn === "idle" || projected.turn === "terminal") {
+        if (bytesLeft > 0) poll(child, page, projected);
+        else { accounting.promote(child); gaps.add("ledger-pending"); }
+        if (!projected || projected.input.status !== "running") continue;
+        /* Still hosted with a settled turn and nothing new in its ledger: a
+           worker idling at its prompt, which is open work like any other. */
+        if (child.input.status !== "running") continue;
+      }
       let input = projected.input;
       if (projected.turn === "busy" && projected.hosted) {
         try { input = { ...input, activity: activityOf((await sources.liveness({ conversationId: input.conversationId, stallAfterMs: policy.stallAfterMs, limit: 1 }))[0]) }; }
         catch { input = { ...input, activity: null }; }
       }
       children.push(input);
+      observedRunning.add(child.key);
     }
     accounting.rotateRunning(running.slice(0, RUNNING_ROTATE));
+    for (const ticket of accounting.pollPage(POLL_VISITS)) {
+      if (bytesLeft <= 0) break;
+      if (ticket.kind !== "poll") throw new Error("invalid poll ticket");
+      let child = accounting.get(ticket.target);
+      if (!child || child.kind !== "child") throw new Error("missing child provenance");
+      child = accounting.adoptPoll(child, ticket.key);
+      if (child.pollKey !== ticket.key) { accounting.drop(ticket); continue; }
+      // Keep twenty uncached projections available for ready outcomes.
+      if (projectedRows >= 40 && !pages.has(`${child.owner}/${child.rowKey}`)) break;
+      const page = seatChildren(child.owner, null, 1, [child.rowKey]);
+      if (!page) break;
+      const projected = classify(page, child.rowKey);
+      poll(child, page, projected);
+      // A cold child re-instructed since its last poll contributes immediately.
+      if (child.input.status === "running" && !observedRunning.has(child.key)) {
+        children.push(child.input);
+        observedRunning.add(child.key);
+      }
+    }
     for (const outcome of accounting.ready(20)) {
       const child = accounting.get(outcome.child);
       if (!child || child.kind !== "child") throw new Error("missing ready child");
-      const page = seatChildren(child.owner, "", "", 1, [child.rowKey]);
+      const page = seatChildren(child.owner, null, 1, [child.rowKey]);
       if (!page) break;
       if (!classify(page, child.rowKey) || page.file.lineageEdges[child.rowKey]?.parentConversationId !== child.owner) { accounting.defer(outcome); gaps.add("child-departed"); continue; }
       children.push(outcome.input);

@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import { initializeStateCollections, SqliteStateCollection } from "@/lib/state/sqliteStateStore";
 import { seatTickWakeCommit } from "./seatTick";
+import type { SeatChildrenAnchor } from "@/lib/agent/registry";
 import { emptySeatTickState, type SeatTickChildInput, type SeatTickProjectState, type SeatTickOutstandingWake } from "./types";
 import { emptyLedgerCursor, type LedgerCursor, type LedgerOutcome } from "./seatTickChildLedger";
 
@@ -11,11 +12,24 @@ type Base = { key: string; schemaVersion: 1; project: string };
     keeps saying so until it changes. */
 type OwnerScan = { identity: string; gap: boolean };
 export type AccountingProject = Base & { kind: "project"; revision: number; sequence: number; ownerScan?: OwnerScan; state: SeatTickProjectState; migration: "ready" | "pending" | "unknown"; gap: string | null };
-export type AccountingOwner = Base & { kind: "owner"; conversationId: string; epoch: number; after: string; through: string | null };
-export type AccountingChild = Base & { kind: "child"; identity: string; rowKey: string; owner: string; launchId: string; input: SeatTickChildInput; generationIndex: number; runningKey: string | null };
+/** A seat that owns children: the active one and every predecessor the seat
+    file records. `after` is where its discovery sweep stands, and `pollKey`
+    its ticket in the owner queue, so discovery can move the ticket without a
+    scan. */
+export type AccountingOwner = Base & { kind: "owner"; conversationId: string; epoch: number; after: SeatChildrenAnchor | null; pollKey: string; bootstrap?: { after: SeatChildrenAnchor | null } };
+/** A discovered child. `pollKey` is its one ticket in the poll queue and
+    `runningKey` its ticket in the running window while it runs; each is the
+    row's own pointer, so a ticket moves in one keyed transaction. */
+export type AccountingChild = Base & { kind: "child"; identity: string; rowKey: string; owner: string; launchId: string; input: SeatTickChildInput; generationIndex: number; runningKey: string | null; pollKey: string | null };
 export type AccountingSource = Base & { kind: "source"; identity: string; child: string; engine: string; generation: string; legacyBoundary?: { identity: string; bytes: number }; cursor: LedgerCursor };
 export type AccountingOutcome = Base & { kind: "outcome"; identity: string; child: string; tuple: string[]; input: SeatTickChildInput; status: "owed" | "acknowledged"; landingKey: string | null; readyKey: string; gap: string | null };
 type Ticket = Base & { kind: "poll" | "ready" | "owner-poll" | "running"; target: string };
+/** Where a ticket enters its queue (#1465). The queues are FIFO by sequence;
+    a `head` ticket sorts before every `tail` one, in sequence among heads, so
+    evidence that a child is owed an outcome now — a terminal child discovery
+    just found, a ledger the budget cut — is read by the next visit rather
+    than after every cold child ahead of it. */
+export type TicketPosition = "head" | "tail";
 type Legacy = Base & { kind: "legacy"; conversationId: string; reconciled: boolean };
 export type AccountingRow = AccountingProject | AccountingOwner | AccountingChild | AccountingSource | AccountingOutcome | Ticket | Legacy;
 type Transaction = Parameters<Parameters<SqliteStateCollection<AccountingRow>["boundedPatch"]>[1]>[0];
@@ -81,12 +95,24 @@ function decodeAccountingRow(raw: unknown): AccountingRow | null {
         || !integer(wake.commit.eventsThrough) || !Array.isArray(wake.commit.reasons)
         || !Array.isArray(wake.commit.children) || !wake.commit.children.every(string)
         || (wake.preparedAt !== undefined && !string(wake.preparedAt)))) return null;
+      if (wake?.dispatch !== undefined && (!wake.dispatch || !string(wake.dispatch.token)
+        || !["active", "refused", "returned"].includes(wake.dispatch.state))) return null;
       if (row.ownerScan !== undefined && (!row.ownerScan || !string(row.ownerScan.identity) || typeof row.ownerScan.gap !== "boolean")) return null;
       return row;
     }
-    case "owner": return string(row.conversationId) && integer(row.epoch) && typeof row.after === "string" && nullableString(row.through) ? row : null;
+    case "owner": {
+      if (!string(row.conversationId) || !integer(row.epoch)) return null;
+      // The preceding schema used a key-ordered sweep and no ticket pointer.
+      // Restart discovery; existing outcomes and ledger cursors remain authoritative.
+      if (typeof row.after === "string" && row.pollKey === undefined) return { ...row, after: null, pollKey: "" };
+      const anchor = (value: SeatChildrenAnchor | null) => value === null
+        || (!!value && typeof value === "object" && Number.isSafeInteger(value.order) && string(value.key));
+      return typeof row.pollKey === "string" && anchor(row.after)
+        && (row.bootstrap === undefined || (!!row.bootstrap && anchor(row.bootstrap.after))) ? row : null;
+    }
     case "child": return string(row.identity) && string(row.rowKey) && string(row.owner) && string(row.launchId) && childInput(row.input)
-      && integer(row.generationIndex) && nullableString(row.runningKey) ? row : null;
+      && integer(row.generationIndex) && nullableString(row.runningKey) && (row.pollKey === undefined || nullableString(row.pollKey))
+      ? { ...row, pollKey: row.pollKey ?? null } : null;
     case "source": return string(row.identity) && string(row.child) && string(row.engine) && string(row.generation)
       && row.cursor && integer(row.cursor.offset) && integer(row.cursor.seq) && integer(row.cursor.settledThrough)
       && integer(row.cursor.initialSize) && nullableString(row.cursor.identity) && nullableString(row.cursor.activeTurn)
@@ -153,13 +179,24 @@ export class SeatTickAccounting {
     const prefix = key(kind, this.project);
     return this.collection.keyRange(prefix, `${prefix}~`, limit);
   }
-  /** A FIFO ticket at the tail of its queue; the key is returned so a row can
-      remember which ticket is its own. */
-  private ticket(tx: Transaction, row: AccountingProject, kind: Ticket["kind"], target: string): string {
+  /** Reserve cold visits even while priority ledgers keep arriving. */
+  pollPage(limit: number): AccountingRow[] {
+    const cold = this.collection.keyRange(`${key("poll", this.project)}0`, `${key("poll", this.project)}~`, 8);
+    const priority = this.page("poll", limit);
+    const seen = new Set(cold.map((ticket) => ticket.key));
+    return [...cold, ...priority.filter((ticket) => !seen.has(ticket.key))].slice(0, limit);
+  }
+  /** A FIFO ticket at the tail of its queue, or at its head (see
+      {@link TicketPosition}); the key is returned so a row can remember which
+      ticket is its own. */
+  private ticket(tx: Transaction, row: AccountingProject, kind: Ticket["kind"], target: string, position: TicketPosition = "tail"): string {
     if (!Number.isSafeInteger(++row.sequence)) throw new Error("accounting sequence exhausted");
-    const ticket = { ...this.base(kind, String(row.sequence).padStart(16, "0")), kind, target };
+    const ticket = { ...this.base(kind, `${position === "head" ? "!" : ""}${String(row.sequence).padStart(16, "0")}`), kind, target };
     tx.put(ticket);
     return ticket.key;
+  }
+  private atHead(ticketKey: string, kind: Ticket["kind"]): boolean {
+    return ticketKey.startsWith(key(kind, this.project, "!"));
   }
   /** Keep the child's running ticket in step with its status: a running child
       holds exactly one, and a child that stopped running holds none. */
@@ -271,19 +308,26 @@ export class SeatTickAccounting {
       row.state = { ...state, accounting: undefined, harvestedChildren: [] };
     });
   }
-  owner(conversationId: string, epoch: number): void {
-    const existing = this.get(key("owner", this.project, String(epoch)));
-    if (existing?.kind === "owner" && existing.conversationId === conversationId) return;
+  /** The seat's own owner row, recorded on first sight; returned so the check
+      can discover its children directly, every check. */
+  owner(conversationId: string, epoch: number): AccountingOwner {
+    const id = key("owner", this.project, String(epoch));
+    const existing = this.get(id);
+    if (existing?.kind === "owner" && existing.conversationId === conversationId && existing.pollKey) return existing;
     this.mutate((tx, row) => {
-      const id = key("owner", this.project, String(epoch));
-      const existing = tx.get(id);
-      if (existing) {
-        if (existing.kind !== "owner" || existing.conversationId !== conversationId) throw new Error("contradictory seat ownership");
+      const held = tx.get(id);
+      if (held) {
+        if (held.kind !== "owner" || held.conversationId !== conversationId) throw new Error("contradictory seat ownership");
+        if (!held.pollKey) tx.put({ ...held, pollKey: this.ticket(tx, row, "owner-poll", id) });
         return;
       }
-      tx.put({ ...this.base("owner", String(epoch)), kind: "owner", conversationId, epoch, after: "", through: null });
-      this.ticket(tx, row, "owner-poll", id);
+      const owner: AccountingOwner = { ...this.base("owner", String(epoch)), kind: "owner", conversationId, epoch, after: null, pollKey: "" };
+      owner.pollKey = this.ticket(tx, row, "owner-poll", id);
+      tx.put(owner);
     });
+    const recorded = this.get(id);
+    if (!recorded || recorded.kind !== "owner") throw new Error("missing owner provenance");
+    return recorded;
   }
   /**
    * Record the project's predecessor seats from the seat file's committed
@@ -337,8 +381,9 @@ export class SeatTickAccounting {
           if (existing.kind !== "owner" || existing.conversationId !== owner.conversationId) throw new Error("contradictory predecessor ownership");
           continue;
         }
-        tx.put({ ...this.base("owner", String(owner.epoch)), kind: "owner", conversationId: owner.conversationId, epoch: owner.epoch, after: "", through: null });
-        this.ticket(tx, row, "owner-poll", id);
+        const predecessor: AccountingOwner = { ...this.base("owner", String(owner.epoch)), kind: "owner", conversationId: owner.conversationId, epoch: owner.epoch, after: null, pollKey: "" };
+        predecessor.pollKey = this.ticket(tx, row, "owner-poll", id);
+        tx.put(predecessor);
       }
       /* A capped read is not remembered as this file: the next check reads it
          again and records the owners past the cap, which already exist by then
@@ -347,26 +392,44 @@ export class SeatTickAccounting {
     });
     return gap || capped || raced;
   }
-  discovery(ticket: Ticket, owner: AccountingOwner, children: AccountingChild[]): void {
+  /** Record one discovery page: the owner's sweep moves to `owner.after`, its
+      ticket goes to the tail of the owner queue, and each child not yet known
+      enters the poll queue — at the head when discovery already classified it
+      terminal, so its ledger is read this check rather than behind every cold
+      child before it. A turn another controller already took is skipped. */
+  discovery(owner: AccountingOwner, children: readonly { child: AccountingChild; position?: TicketPosition }[]): void {
     this.mutate((tx, row) => {
-      const current = tx.get(ticket.key);
-      if (!current) return;
-      for (const child of children) {
-        const prior = tx.get(child.key);
-        if (!prior) {
-          this.trackRunning(tx, row, child);
-          tx.put(child);
-          this.ticket(tx, row, "poll", child.key);
+      if (!tx.get(owner.pollKey)) return;
+      for (const { child, position } of children) {
+        const existing = tx.get(child.key);
+        if (existing) {
+          if (existing.kind !== "child") throw new Error("invalid child provenance");
+          if (!existing.pollKey) tx.put({ ...existing, pollKey: this.ticket(tx, row, "poll", child.key, position) });
+          continue;
         }
+        child.pollKey = this.ticket(tx, row, "poll", child.key, position);
+        this.trackRunning(tx, row, child);
+        tx.put(child);
       }
-      tx.put(owner);
-      tx.delete(ticket.key);
-      this.ticket(tx, row, "owner-poll", owner.key);
+      tx.delete(owner.pollKey);
+      tx.put({ ...owner, pollKey: this.ticket(tx, row, "owner-poll", owner.key) });
     });
+  }
+  /** Adopt an old FIFO ticket by key, without scanning or rebuilding history. */
+  adoptPoll(child: AccountingChild, ticketKey: string): AccountingChild {
+    if (child.pollKey) return child;
+    this.mutate((tx) => {
+      const current = tx.get(child.key);
+      const ticket = tx.get(ticketKey);
+      if (current?.kind === "child" && !current.pollKey && ticket?.kind === "poll" && ticket.target === child.key) {
+        tx.put({ ...current, pollKey: ticketKey });
+      }
+    });
+    return this.get(child.key) as AccountingChild;
   }
   child(rowKey: string, owner: string, launchId: string, input: SeatTickChildInput): AccountingChild {
     const identity = outcomeIdentity([owner, rowKey, launchId]);
-    return { ...this.base("child", identity), kind: "child", identity, rowKey, owner, launchId, input, generationIndex: 0, runningKey: null };
+    return { ...this.base("child", identity), kind: "child", identity, rowKey, owner, launchId, input, generationIndex: 0, runningKey: null, pollKey: null };
   }
   source(child: AccountingChild, engine: string, generation: string): AccountingSource {
     const identity = outcomeIdentity([engine, generation]);
@@ -377,9 +440,14 @@ export class SeatTickAccounting {
     }
     return { ...this.base("source", identity), kind: "source", identity, child: child.key, engine, generation, cursor: emptyLedgerCursor() };
   }
-  ingest(ticket: Ticket, child: AccountingChild, source: AccountingSource | null, outcomes: LedgerOutcome[], failure = false): void {
+  /** Record one poll of a child: its outcomes become owed rows, its running
+      ticket follows its status, and its poll ticket is re-queued at `position`
+      — the tail once its ledger was read to the end, the head when the budget
+      cut the read, so the next check resumes it first. A poll another
+      controller already recorded is skipped. */
+  ingest(child: AccountingChild, source: AccountingSource | null, outcomes: LedgerOutcome[], failure = false, position: TicketPosition = "tail"): void {
     this.mutate((tx, row) => {
-      if (!tx.get(ticket.key)) return;
+      if (!child.pollKey || !tx.get(child.pollKey)) return;
       if (source?.cursor.identity && source.legacyBoundary?.identity !== source.cursor.identity) {
         source.legacyBoundary = { identity: source.cursor.identity, bytes: source.cursor.initialSize };
       }
@@ -403,10 +471,27 @@ export class SeatTickAccounting {
       });
       if (source) tx.put(source);
       this.trackRunning(tx, row, child);
+      tx.delete(child.pollKey!);
+      child.pollKey = this.ticket(tx, row, "poll", child.key, position);
       tx.put(child);
-      tx.delete(ticket.key);
-      this.ticket(tx, row, "poll", child.key);
     });
+  }
+  /** Move a child's poll ticket to the head of its queue (#1465): a child the
+      running window saw settle that this check's ledger budget could not
+      reach is read first by the next check, not after every cold child. */
+  promote(child: AccountingChild): void {
+    if (!child.pollKey || this.atHead(child.pollKey, "poll")) return;
+    this.mutate((tx, row) => {
+      if (!tx.get(child.pollKey!)) return;
+      tx.delete(child.pollKey!);
+      child.pollKey = this.ticket(tx, row, "poll", child.key, "head");
+      tx.put(child);
+    });
+  }
+  /** Remove a ticket its target no longer claims, so a stale one cannot be
+      re-queued for ever beside the ticket the row does claim. */
+  drop(ticket: AccountingRow): void {
+    this.mutate((tx) => { if (tx.get(ticket.key)) tx.delete(ticket.key); });
   }
   /** Move observed running tickets to the tail of their queue, so the next
       check observes the children behind them. A ticket its child no longer
@@ -461,13 +546,54 @@ export class SeatTickAccounting {
       return true;
     });
   }
+  /** A dispatch claims the exact attempt it read before entering any async
+      transport. No expiry: an interrupted caller may still reserve or actuate. */
+  beginDispatch(expected: SeatTickOutstandingWake): string | null {
+    return this.mutate((tx, row) => {
+      const wake = row.state.outstandingWake;
+      if (!wake || wake.clientMessageId !== expected.clientMessageId || (wake.dispatch && wake.dispatch.state !== "refused")
+        || wake.dispatch?.token !== expected.dispatch?.token) return null;
+      const token = crypto.randomUUID();
+      row.state.outstandingWake = { ...wake, dispatch: { token, state: "active" } };
+      return token;
+    });
+  }
+  /** Record transport's return. A throw keeps admission active and unresolved;
+      only a refusal with no handle contributes to a later absence proof. */
+  returnedDispatch(expectedKey: string, token: string, refused: boolean): void {
+    this.mutate((tx, row) => {
+      const wake = row.state.outstandingWake;
+      if (wake?.clientMessageId === expectedKey && wake.dispatch?.token === token && wake.dispatch.state === "active") {
+        row.state.outstandingWake = { ...wake, dispatch: { token, state: refused ? "refused" : "returned" } };
+      }
+    });
+  }
+  cancelUndispatched(expected: SeatTickOutstandingWake): boolean {
+    return this.mutate((tx, row) => {
+      const wake = row.state.outstandingWake;
+      if (!wake || wake.clientMessageId !== expected.clientMessageId || wake.dispatch) return false;
+      row.state.outstandingWake = null;
+      return true;
+    });
+  }
+  /** After authoritative absence, release only the returned dispatch that was
+      observed. This transaction also denies all stale dispatch admissions. */
+  settleAbsent(expected: SeatTickOutstandingWake): boolean {
+    return this.mutate((tx, row) => {
+      const wake = row.state.outstandingWake;
+      if (!wake || wake.clientMessageId !== expected.clientMessageId || wake.operationId || !wake.text
+        || wake.dispatch?.state !== "refused" || wake.dispatch.token !== expected.dispatch?.token) return false;
+      row.state.outstandingWake = null;
+      return true;
+    });
+  }
   /** End the prepared attempt under `expectedKey` (#1465). See
       {@link WakeDisposition} for what each ending stamps. `state` carries the
       instant a landing is stamped at, on `lastWakeAt`. */
   settle(expectedKey: string, state: SeatTickProjectState, disposition: WakeDisposition): boolean {
     return this.mutate((tx, row) => {
       const wake = row.state.outstandingWake;
-      if (!wake || wake.clientMessageId !== expectedKey) return false;
+      if (!wake || wake.clientMessageId !== expectedKey || (disposition === "unsent" && wake.dispatch?.state === "active")) return false;
       if (disposition === "landed") for (const id of wake.commit.children) {
         const outcome = tx.get(key("outcome", this.project, id));
         if (!outcome) {

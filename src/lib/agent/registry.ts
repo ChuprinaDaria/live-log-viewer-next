@@ -297,11 +297,24 @@ export interface SpawnLineageEdge {
   createdAt: string;
 }
 
+/** Where a seat's child discovery stands (#1465): the last lineage edge a
+    sweep read, by its key and the insertion order the store assigned it. The
+    store pages `row_order` past the anchor, so a child spawned after the sweep
+    completed is the next page whatever its key sorts like; and the anchor is
+    re-resolved by key on every read, so a renumbered collection is followed
+    rather than skipped over. */
+export interface SeatChildrenAnchor {
+  order: number;
+  key: string;
+}
+
 export interface SeatChildrenPage {
   file: RegistryFile;
   keys: string[];
-  nextKey: string;
-  throughKey: string;
+  /** The anchor to continue from. Null only when nothing has been read yet. */
+  after: SeatChildrenAnchor | null;
+  /** High water captured with this page, including during historical bootstrap. */
+  latest?: SeatChildrenAnchor | null;
   complete: boolean;
   evidenceGap: boolean;
 }
@@ -4037,9 +4050,9 @@ export class AgentRegistry {
   }
 
   /** Monitor-only bounded lineage projection; JSON backends cannot prove a bounded read. */
-  pageSeatChildren(parentId: string, afterKey: string, throughKey: string | null, limit: number, keys?: readonly string[]): SeatChildrenPage | null {
+  pageSeatChildren(parentId: string, after: SeatChildrenAnchor | null, limit: number, keys?: readonly string[]): SeatChildrenPage | null {
     if (this.sqliteMode !== "sqlite" && this.sqliteMode !== "read") return null;
-    return this.sqliteStore?.pageSeatChildren(parentId, afterKey, throughKey, limit, keys) ?? null;
+    return this.sqliteStore?.pageSeatChildren(parentId, after, limit, keys) ?? null;
   }
 
   /** The monitor's own seat read. Under the authoritative SQLite registry it is

@@ -6,7 +6,7 @@ import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 
 import { emptyLaunchProfile } from "@/lib/accounts/migration/contracts";
-import { AgentRegistry, normalizeRegistry, RegistryParityError } from "./registry";
+import { AgentRegistry, normalizeRegistry, RegistryParityError, type SeatChildrenAnchor } from "./registry";
 import { SqliteAgentRegistryStore } from "./sqliteRegistryStore";
 
 const CHILD = path.join(import.meta.dir, "registry.sqliteChild.ts");
@@ -1842,28 +1842,67 @@ test("seat child discovery uses its parent index and bounded payload reads acros
   const store = new SqliteAgentRegistryStore(filename, { initialSnapshot: initial, normalize: normalizeRegistry,
     onSnapshotLoad: () => snapshots++, onRowPayloadRead: (name, count) => reads.set(name, (reads.get(name) ?? 0) + count) });
   const seen = new Set<string>();
-  let after = "";
-  let through: string | null = null;
+  let after: SeatChildrenAnchor | null = null;
+  let pages = 0;
   for (let tick = 0; tick < 20; tick++) {
     reads.clear();
-    const page = store.pageSeatChildren(parent.id, after, through, 20);
+    const page = store.pageSeatChildren(parent.id, after, 20);
+    pages++;
     expect(reads.get("lineageEdges")).toBeLessThanOrEqual(20);
     expect(page.keys.length).toBeLessThanOrEqual(20);
     page.keys.forEach((id) => seen.add(id));
-    after = page.nextKey; through = page.throughKey;
+    after = page.after;
     if (page.complete) break;
   }
   expect(seen.size).toBe(206);
+  expect(pages).toBe(11);
   expect(snapshots).toBe(0);
   const db = new Database(filename, { readonly: true });
-  const plan = db.query<{ detail: string }, [string, string, string, number]>(`EXPLAIN QUERY PLAN
-    SELECT row_key,value_json FROM registry_rows WHERE collection='lineageEdges'
+  const plan = db.query<{ detail: string }, [string, number, number]>(`EXPLAIN QUERY PLAN
+    SELECT row_key,value_json,row_order FROM registry_rows WHERE collection='lineageEdges'
     AND json_extract(value_json,'$.source')='viewer-spawn'
-    AND json_extract(value_json,'$.parentConversationId')=? AND row_key>? AND row_key<=?
-    ORDER BY row_key LIMIT ?`).all(parent.id, "", "~", 20);
-  expect(plan.some((entry) => entry.detail.includes("registry_seat_children"))).toBe(true);
+    AND json_extract(value_json,'$.parentConversationId')=? AND row_order>?
+    ORDER BY row_order LIMIT ?`).all(parent.id, -1, 20);
+  expect(plan.some((entry) => entry.detail.includes("registry_seat_children_order"))).toBe(true);
   expect(plan.some((entry) => entry.detail.includes("TEMP B-TREE"))).toBe(false);
   db.close();
+});
+
+/* Discovery pages in insertion order past a durable anchor (#1465): a child
+   spawned after the sweep completed is the very next page whatever its key
+   sorts like, and the anchor is re-resolved by key so a renumbered collection
+   is followed at its current order rather than skipped past. */
+test("a child spawned after a completed sweep is the next page, and a renumbered collection does not lose it", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "registry-seat-anchor-"));
+  const registry = new AgentRegistry(path.join(directory, "registry.json"), undefined, undefined, { sqliteMode: "sqlite" });
+  const parent = registry.ensureConversation("codex", "/sessions/anchor-seat.jsonl", null);
+  const spawn = (title: string) => registry.beginSpawnRequest({ engine: "codex", cwd: "/seat-project",
+    launchProfile: { title }, parentConversationId: parent.id, parentSource: "explicit" }).receipt.conversationId;
+  const initial = Array.from({ length: 25 }, (_, n) => spawn(`worker ${n}`));
+  const first = registry.pageSeatChildren(parent.id, null, 20)!;
+  expect(first.keys).toEqual(initial.slice(0, 20));
+  expect(first.complete).toBe(false);
+  const second = registry.pageSeatChildren(parent.id, first.after, 20)!;
+  expect(second.keys).toEqual(initial.slice(20));
+  expect(second.complete).toBe(true);
+  /* Nothing new: an empty page, the anchor where it was. */
+  const idle = registry.pageSeatChildren(parent.id, second.after, 20)!;
+  expect(idle).toMatchObject({ keys: [], complete: true, after: second.after });
+  /* A child spawned now is the next page, however its key compares. */
+  const late = spawn("late worker");
+  expect(registry.pageSeatChildren(parent.id, idle.after, 20)!.keys).toEqual([late]);
+  /* The whole collection renumbered underneath the anchor — every order
+     shifted down — and the anchor is followed by key to its current order,
+     so the child spawned after it is still the next page. */
+  const db = new Database(path.join(directory, "agent-registry.sqlite"));
+  db.query("UPDATE registry_rows SET row_order = row_order - 1000 WHERE collection='lineageEdges'").run();
+  db.close();
+  const renumbered = spawn("after renumbering");
+  const followed = registry.pageSeatChildren(parent.id, idle.after, 20)!;
+  expect(followed.keys).toEqual([late, renumbered]);
+  /* An anchor whose edge is gone restarts the sweep from the beginning. */
+  const restarted = registry.pageSeatChildren(parent.id, { key: ["conversation", "gone"].join("_"), order: 7 }, 20)!;
+  expect(restarted.keys).toEqual(initial.slice(0, 20));
 });
 
 
@@ -1878,7 +1917,7 @@ test("a cyclic child alias leaves other children in the same indexed page readab
   const initial = seed.snapshot();
   initial.conversationAliases[bad.conversationId] = bad.conversationId;
   const store = new SqliteAgentRegistryStore(path.join(directory, "registry.sqlite"), { initialSnapshot: initial, normalize: normalizeRegistry });
-  const page = store.pageSeatChildren(parent.id, "", null, 20);
+  const page = store.pageSeatChildren(parent.id, null, 20);
   expect(page.evidenceGap).toBe(true);
   expect(page.file.lineageEdges[bad.conversationId]).toBeUndefined();
   expect(page.file.lineageEdges[good.conversationId]?.parentConversationId).toBe(parent.id);
@@ -1903,5 +1942,5 @@ test("a JSON-mode registry answers the seat tick's conversation read and decline
   }]);
   expect(registry.seatTickConversation(seat.id)).toMatchObject({ id: seat.id, turn: { state: "busy" } });
   expect(registry.seatTickConversation(["conversation", "0000000000000000"].join("_"))).toBeNull();
-  expect(registry.pageSeatChildren(seat.id, "", null, 20)).toBeNull();
+  expect(registry.pageSeatChildren(seat.id, null, 20)).toBeNull();
 });

@@ -179,7 +179,7 @@ function sources(over: {
     },
     tasks: () => (over.tasks ?? []) as never,
     registry: () => (over.registry ?? {
-      pageSeatChildren: () => ({ file: { entries: {}, receipts: {}, lineageEdges: {}, memberships: {}, conversations: {}, conversationAliases: {} }, keys: [], nextKey: "", throughKey: "", complete: true, evidenceGap: false }),
+      pageSeatChildren: () => ({ file: { entries: {}, receipts: {}, lineageEdges: {}, memberships: {}, conversations: {}, conversationAliases: {} }, keys: [], after: null, complete: true, evidenceGap: false }),
       seatTickConversation: () => ({ id: CONVERSATION, turn: { state: over.seatTurn ?? "idle" } }),
       conversation: () => ({ turn: { state: over.seatTurn ?? "idle" } }),
       conversationForPath: () => null,

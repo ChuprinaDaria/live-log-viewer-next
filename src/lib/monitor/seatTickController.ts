@@ -374,58 +374,16 @@ interface WakeSettlement {
   row: "commit" | "clear" | "keep";
 }
 
-/**
- * Settle a retained wake by asking the layer that is actually holding it.
+/** Reconcile the frozen attempt against its delivery record. Arrival commits
+ * its plan; fenced loss releases it. Everything else retains identity and
+ * receives attention after the wake interval.
  *
- * Two questions used to be answered in two places, from two different pictures
- * of where the wake was, and they disagreed. They are one question here:
- *
- * - **Did it land?** A send the layer merely accepted advances no stamp and
- *   acknowledges no lifecycle event, and a structured host accepts every send
- *   the same way whether it is idle or busy — so the answer cannot be read off
- *   the send at all. It is read off the holder afterwards, and the wake it did
- *   deliver is credited then, with the plan the raising check wrote down.
- * - **Can it still be taken back?** This is the half of the epoch check the
- *   re-read before the send cannot do. A send is refused when the seat moved
- *   BEFORE it; this covers the seat moving after it, while the payload is still
- *   waiting somewhere. A predecessor woken that way is precisely the failure
- *   this issue was filed about.
- *
- * Both go to the same holder — the runtime host for a send it queued, the
- * Viewer registry for a hold that never reached a host — because a revocation
- * aimed anywhere else is a revocation the delivery path ignores. And when the
- * holder has already let the payload go, that is said out loud (`too-late`)
- * rather than reported as a successful revocation.
- *
- * **An unresolved attempt keeps its identity** (#1465). Missing or uncertain
- * evidence — a record nobody can read, a holder that does not answer, a
- * receipt the host ended without verifying, a seat replaced while the payload
- * was somewhere — never authorizes a replacement: no new key is minted and no
- * second copy is dispatched while the first one's fate is open, however long
- * it stays open and whatever the seat does. Two things end an attempt: landed
- * evidence, and the record's own proof that the send never actuated (`dropped`,
- * the fenced `safe` disposition). What the silence of the first shape lacked
- * was not an exit but ATTENTION and one bounded recovery:
- *
- * - An attempt still unresolved past the project's wake interval, and a
- *   receipt the host ended unverified as soon as it is seen, are put on the
- *   board once each, under the attempt's own key, naming the holder's last
- *   answer and what the operator can check.
- * - A record the delivery layer AFFIRMS it does not hold under the key, for a
- *   send that was never given an operation — the 409 and the 503 the layer
- *   answers before reserving anything — is re-dispatched under the SAME key
- *   with the SAME frozen payload by the next check. This is a same-identity
- *   recovery rather than a replacement: the layer reserves one delivery per
- *   key, replays a landed or in-flight one, and absorbs a resend under a key
- *   whose first attempt may have arrived, so the retry can never produce a
- *   second copy (proved in the controller tests against the real registry). A
- *   send that once held an operation is not re-dispatched on absence: its
- *   record may have been compacted while the runtime delivered it.
- *
- * A landing credited here is stamped at the instant it was OBSERVED rather than
- * the instant it happened, so the hourly bound starts up to one check interval
- * late. That is the safe direction: the bound is a floor on how often a seat is
- * woken, and erring late never lets a wake jump it.
+ * An absent key alone proves no ending. Rotation may release a no-handle
+ * attempt only after its admitted transport returned a refusal, and only if
+ * the dispatch token still matches in the accounting transaction. All sends,
+ * including same-key retries, claim that token before entering transport.
+ * A paused old caller therefore either blocks replacement or fails admission
+ * after replacement. Throws and legacy attempts retain unknown authority.
  */
 async function reconcileOutstandingWake(context: {
   project: string;
@@ -501,6 +459,12 @@ async function reconcileOutstandingWake(context: {
     } else if (observed === "uncertain") {
       settlement = { verdict: "uncertain", outcome: "uncertain", row: "keep",
         detail: "the layer holding the wake raised for the replaced seat ended it without proving arrival; the original key and all obligations remain outstanding, and no wake replaces it" };
+    } else if (observed === "absent" && !wake.operationId && wake.text && wake.dispatch?.state === "refused" && state.accounting) {
+      const accounting = new SeatTickAccounting(state.accounting.filename, context.project);
+      if (!accounting.settleAbsent(wake)) return accounting.readState();
+      state = accounting.readState();
+      settlement = { verdict: "revoked", outcome: "unsent", row: "clear",
+        detail: "the wake raised for the replaced seat was refused by the delivery layer before it reserved anything, and the record holds nothing under its key and the returned dispatch token was fenced atomically: the attempt is released unsent with nothing it named acknowledged, and the successor's next check raises its own wake" };
     } else {
       settlement = { verdict: "revoked", outcome: "unknown", row: "keep",
         detail: `the wake raised for the replaced seat could not be revoked: no holder could account for it${reason ? ` (${reason})` : ""}; it is asked again at the next check` };
@@ -508,17 +472,37 @@ async function reconcileOutstandingWake(context: {
   } else if (observed === "uncertain") {
     settlement = { verdict: "uncertain", outcome: "uncertain", row: "keep",
       detail: "the layer holding the wake ended it without proving arrival; the original key and all obligations remain outstanding, and no wake replaces it" };
-  } else if (observed === "absent" && wake.text && context.deliver) {
+  } else if (observed === "absent" && !wake.operationId && wake.text && (!wake.dispatch || wake.dispatch.state === "refused") && context.deliver) {
     /* The same-identity recovery described above: the layer affirms it holds
        nothing under this key and the send never received an operation, so the
-       frozen payload goes out again under the key it was prepared with. */
+       frozen payload goes out again under the key it was prepared with — if,
+       at this instant, the row still carries this attempt and the seat is
+       still the one it was prepared for. A row that moved on belongs to the
+       controller that moved it; a seat that moved is the next check's to
+       release. */
+    const held = state.accounting ? new SeatTickAccounting(state.accounting.filename, context.project).readState() : state;
+    const authority = context.sources.seatFor(context.project).active;
+    if (held.outstandingWake?.clientMessageId !== wake.clientMessageId) return held;
+    if (!authority || authority.conversationId !== wake.conversationId || authority.seatEpoch !== wake.seatEpoch) return state;
+    const accounting = state.accounting ? new SeatTickAccounting(state.accounting.filename, context.project) : null;
+    if (!accounting) return state;
+    const token = accounting.beginDispatch(wake);
+    state = accounting.readState();
+    if (!token) return state;
+    wake = state.outstandingWake!;
     let outcome: DeliveryOutcome | null = null;
     try {
-      outcome = await context.deliver({ pid: null, path: context.seat?.path ?? "", conversationId: wake.conversationId,
-        clientMessageId: wake.clientMessageId, text: wake.text, images: [], origin: { kind: "agent", role: "seat-tick" } });
+      outcome = await context.deliver({ pid: null, path: authority.path ?? context.seat?.path ?? "", conversationId: wake.conversationId,
+        clientMessageId: wake.clientMessageId, text: wake.text!, images: [], origin: { kind: "agent", role: "seat-tick" } });
       redispatched = deliveryOutcomeLabel(outcome);
     } catch {
       redispatched = "unreturned";
+    }
+    if (outcome) {
+      accounting.returnedDispatch(wake.clientMessageId, token, !outcome.ok && !outcome.operationId && outcome.actuation !== "started" && outcome.resend !== "verify-first");
+      state = accounting.readState();
+      if (state.outstandingWake?.clientMessageId !== wake.clientMessageId) return state;
+      wake = state.outstandingWake!;
     }
     if (outcome && wakeReached(outcome)) {
       settlement = { verdict: "landed", outcome: "landed", row: "commit",
@@ -539,6 +523,10 @@ async function reconcileOutstandingWake(context: {
      board once each — the attempt's own key is the occurrence. The card says
      what the holder last answered and what the operator can check; the tick
      itself dispatches nothing new for this project until the attempt settles. */
+  if (settlement?.row === "clear" && wake.dispatch?.state === "active") {
+    settlement = { ...settlement, row: "keep", outcome: "unknown",
+      detail: "the delivery record was fenced, but its admitted transport call has not returned; the original attempt remains outstanding until that call is accounted for" };
+  }
   const kept = !settlement || settlement.row === "keep";
   if (kept && (overdue || observed === "uncertain")) {
     const answer = observed === "unreadable" ? `could not be read${reason ? ` (${reason})` : ""}` : `answered "${observed}"`;
@@ -796,18 +784,25 @@ async function check(
           delivery = { clientMessageId, outcome: "seat-rotated" };
           // This invocation has not entered transport, so non-delivery is proven.
           if (accounting) {
-            accounting.settle(clientMessageId, state, "unsent");
+            accounting.cancelUndispatched(wake);
             state = accounting.readState();
           } else state = { ...state, outstandingWake: null };
         } else {
+          const token = accounting?.beginDispatch(wake);
+          if (accounting) state = accounting.readState();
           let outcome: DeliveryOutcome | null = null;
           try {
+            if (accounting && !token) throw new Error("wake dispatch already claimed");
             outcome = await deliver({ pid: null, path: authority.path ?? input.seat.path ?? "", conversationId: authority.conversationId,
               clientMessageId, text, images: [], origin: { kind: "agent", role: "seat-tick" } });
             delivery = { clientMessageId, outcome: deliveryOutcomeLabel(outcome) };
           } catch {
             delivery = { clientMessageId, outcome: "unreturned" };
             // Missing receipts do not authorize forgetting a prepared attempt.
+          }
+          if (accounting && token && outcome) {
+            accounting.returnedDispatch(clientMessageId, token, !outcome.ok && !outcome.operationId && outcome.actuation !== "started" && outcome.resend !== "verify-first");
+            state = accounting.readState();
           }
           if (outcome && wakeReached(outcome)) {
             const landed = seatTickWakeCommit(state, commit, input.now);

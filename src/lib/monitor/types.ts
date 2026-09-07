@@ -607,6 +607,10 @@ export interface SeatTickOutstandingWake {
       here: an attempt still unresolved one wake interval later is put on the
       board. It ends nothing — an unresolved attempt keeps its identity. */
   preparedAt?: string;
+  /** Durable admission token for the one controller allowed inside transport.
+      A returned refusal can be released on fenced absence. Active or legacy
+      attempts cannot: a caller may still reserve the original key. */
+  dispatch?: { token: string; state: "active" | "refused" | "returned" };
 }
 
 /** Project tick state; SQLite accounting owns persistence and legacy migration. */

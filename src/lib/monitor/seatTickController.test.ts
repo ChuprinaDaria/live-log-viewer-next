@@ -18,6 +18,7 @@ const { defaultSeatTickSettings } = await import("./seatTickSettings");
 const { openPullRequestsForRepo } = await import("./githubEvidence");
 const { defaultSeatTickSources, wakeStateFromRecord } = await import("./seatTickSources");
 const { resolveOriginalSend } = await import("@/lib/runtime/sendSettlement");
+const { deliverConversationMessage } = await import("@/lib/delivery");
 const { readSeatTickState, writeSeatTickState } = await import("./seatTickState");
 const { appendSeatTickRecord, readSeatTickRecords } = await import("./journalStore");
 const { SeatTickAccounting, outcomeIdentity } = await import("./seatTickAccounting");
@@ -233,7 +234,7 @@ function harness(options: {
           } as never;
         }
         return {
-          pageSeatChildren: () => ({ file: EMPTY_SNAPSHOT, keys: [], nextKey: "", throughKey: "", complete: true, evidenceGap: false }),
+          pageSeatChildren: () => ({ file: EMPTY_SNAPSHOT, keys: [], after: null, complete: true, evidenceGap: false }),
           seatTickConversation: () => ({ id: CONVERSATION, turn: { state: options.turn ?? "idle" } }),
           conversation: () => ({ turn: { state: options.turn ?? "idle" } }),
           conversationForPath: () => null,
@@ -1802,7 +1803,7 @@ interface ChildFixture {
     test spawns under it. The project is the one the child's cwd resolves to
     through the real attribution path, so the seat's project and its children's
     agree exactly the way a real spawn's do. */
-function childFixture(name: string, gitRepository = false, sqliteMode: "sqlite" | "off" = "sqlite"): ChildFixture {
+function childFixture(name: string, gitRepository = false, sqliteMode: "sqlite" | "off" = "sqlite", onRead?: (collection: string, count: number) => void): ChildFixture {
   const dir = fs.mkdtempSync(path.join(SANDBOX, `${name}-`));
   const cwd = path.join(dir, "repo");
   fs.mkdirSync(cwd, { recursive: true });
@@ -1811,7 +1812,7 @@ function childFixture(name: string, gitRepository = false, sqliteMode: "sqlite" 
     fs.writeFileSync(path.join(cwd, ".git", "HEAD"), "ref: refs/heads/main\n");
     fs.writeFileSync(path.join(cwd, ".git", "config"), '[remote "origin"]\n  url = https://example.invalid/fixtures/' + path.basename(dir) + '.git\n');
   }
-  const registry = new AgentRegistry(path.join(dir, "agent-registry.json"), () => false, undefined, { sqliteMode });
+  const registry = new AgentRegistry(path.join(dir, "agent-registry.json"), () => false, undefined, { sqliteMode, onSqliteRowPayloadRead: onRead });
   const seatPath = path.join(dir, `${crypto.randomUUID()}.jsonl`);
   const seatConversation = registry.ensureConversation("claude", seatPath, null);
   const project = projectForCwd(cwd);
@@ -2898,9 +2899,8 @@ test("a child whose ledger is a production-sized ten megabytes of deltas is harv
 test("a stall on the twelfth of twelve running children is reported within two sweeps of it entering the window (#1465)", async () => {
   const fixture = childFixture("twelve-running");
   const children = Array.from({ length: 12 }, (_, index) => fixture.spawn({ title: `worker ${index + 1}`, turn: "busy", host: "live" }));
-  /* Discovery pages children in their indexed key order, so that is the order
-     the running queue starts in; the twelfth is the last of them. */
-  const ids = children.map((child) => child.id).sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
+  // Discovery starts the running queue in insertion order.
+  const ids = children.map((child) => child.id);
   const twelfth = children.find((child) => child.id === ids[11])!;
   fixture.seed();
   const activity: Record<string, Partial<AgentLivenessRecord>> = Object.fromEntries(children.map((child) => [child.id, { lifecycle: "running", reason: "host_alive_turn_active" }]));
@@ -2971,3 +2971,259 @@ test("a blocked legacy import names itself in the journal and reaches the board 
   expect(woken).toMatchObject({ verdict: "wake", reasons: ["child-terminal"], delivery: { outcome: "delivered" } });
   expect(fixed.sent).toHaveLength(1);
 });
+
+/** Exercise the public delivery adapter's refusal before any reservation. */
+function refuseBeforeReservation(status: 409 | 503): (message: ConversationMessage) => Promise<DeliveryOutcome> {
+  return (message) => deliverConversationMessage(message, {
+    recover: async () => ({ path: message.path, conversationId: message.conversationId as never, spawned: false, target: null }),
+    enqueueStructured: async () => status === 503 ? null : {
+      ok: false, structured: true, outcome: "failed", error: "conversation cannot be resumed", status,
+    },
+  });
+}
+
+test("a returned 409 or 503 refusal is fenced across rotation and the successor acknowledges once (#1465)", async () => {
+  for (const status of [409, 503] as const) {
+    const fixture = childFixture(`rotated-refusal-${status}`);
+    setAgentRegistryForTests(fixture.registry);
+    const child = fixture.spawn({ title: "owed worker", turn: "terminal" });
+    fixture.seed();
+    const first = childRig(fixture, { realWakeState: true, deliverWith: refuseBeforeReservation(status) });
+    await runSeatTickCheck(fixture.project, first.deps);
+    const original = fixture.row().outstandingWake!;
+    expect(original.operationId).toBeNull();
+    expect(await resolveOriginalSend({ conversationId: original.conversationId, clientMessageId: original.clientMessageId }, { registry: fixture.registry, client: null })).toEqual({ kind: "absent" });
+    const successor = fixture.registry.ensureConversation("claude", path.join(fixture.dir, `${crypto.randomUUID()}.jsonl`), null);
+    const seat = { conversationId: successor.id, seatEpoch: 8, path: successor.generations[0]!.path };
+    const next = childRig(fixture, { realWakeState: true, seat, now: fixture.now + 5 * MINUTE, deliverWith: async (message) => {
+      expect(fixture.acknowledged()).toEqual([]);
+      expect(fixture.row().lastWakeAt).toBe(ago(fixture, 61));
+      const held = fixture.registry.holdDelivery(successor.id, message.text, message.clientMessageId);
+      fixture.registry.recordDeliveryOutcome(held.id, "delivered", null, "delivered");
+      return { ok: true, target: "structured", outcome: "delivered", structured: true };
+    } });
+    await runSeatTickCheck(fixture.project, next.deps);
+    expect(next.journal[0]).toMatchObject({ verdict: "revoked", delivery: { clientMessageId: original.clientMessageId, outcome: "unsent" } });
+    expect(next.sent).toHaveLength(1);
+    expect(next.sent[0]!.clientMessageId).not.toBe(original.clientMessageId);
+    expect(next.sent[0]!.conversationId).toBe(successor.id);
+    expect(next.sent[0]!.text).toContain(child.id);
+    expect(fixture.acknowledged()).toEqual([child.id]);
+    const again = childRig(fixture, { realWakeState: true, seat, now: fixture.now + 10 * MINUTE });
+    await runSeatTickCheck(fixture.project, again.deps);
+    expect(again.sent).toEqual([]);
+    expect(fixture.acknowledged()).toEqual([child.id]);
+  }
+});
+
+test("a paused old lookup cannot dispatch after a successor replaces the refused wake (#1465)", async () => {
+  const fixture = childFixture("old-lookup-interleaving");
+  setAgentRegistryForTests(fixture.registry);
+  const child = fixture.spawn({ title: "owed worker", turn: "terminal" });
+  fixture.seed();
+  await runSeatTickCheck(fixture.project, childRig(fixture, { realWakeState: true, deliverWith: refuseBeforeReservation(503) }).deps);
+  const original = fixture.row().outstandingWake!;
+  let entered!: () => void;
+  const waiting = new Promise<void>((resolve) => { entered = resolve; });
+  let release!: () => void;
+  const blocked = new Promise<void>((resolve) => { release = resolve; });
+  const old = childRig(fixture, { realWakeState: true, now: fixture.now + 5 * MINUTE });
+  const lookup = old.deps.sources!.wakeState!;
+  let paused = false;
+  const pending = runSeatTickCheck(fixture.project, { ...old.deps, sources: { ...old.deps.sources!, wakeState: async (wake) => {
+    const evidence = await lookup(wake);
+    if (!paused) { paused = true; entered(); await blocked; }
+    return evidence;
+  } } });
+  await waiting;
+  const successor = fixture.registry.ensureConversation("claude", path.join(fixture.dir, `${crypto.randomUUID()}.jsonl`), null);
+  const next = childRig(fixture, { realWakeState: true, seat: { conversationId: successor.id, seatEpoch: 8, path: null }, now: fixture.now + 6 * MINUTE });
+  await runSeatTickCheck(fixture.project, next.deps);
+  expect(next.sent).toHaveLength(1);
+  expect(fixture.acknowledged()).toEqual([child.id]);
+  release();
+  await pending;
+  expect(old.sent).toEqual([]);
+  expect(await resolveOriginalSend({ conversationId: original.conversationId, clientMessageId: original.clientMessageId }, { registry: fixture.registry, client: null })).toEqual({ kind: "absent" });
+  expect(fixture.acknowledged()).toEqual([child.id]);
+});
+
+test("a dispatch paused before reservation blocks rotation until its returned refusal is fenced (#1465)", async () => {
+  const fixture = childFixture("active-dispatch-interleaving");
+  setAgentRegistryForTests(fixture.registry);
+  const child = fixture.spawn({ title: "owed worker", turn: "terminal" });
+  fixture.seed();
+  let entered!: () => void;
+  const waiting = new Promise<void>((resolve) => { entered = resolve; });
+  let release!: () => void;
+  const blocked = new Promise<void>((resolve) => { release = resolve; });
+  const first = childRig(fixture, { realWakeState: true, deliverWith: async (message) => {
+    entered(); await blocked;
+    return refuseBeforeReservation(503)(message);
+  } });
+  const pending = runSeatTickCheck(fixture.project, first.deps);
+  await waiting;
+  const original = fixture.row().outstandingWake!;
+  expect(original.dispatch?.state).toBe("active");
+  const seat = { ...fixture.seat, seatEpoch: 8 };
+  const rotated = childRig(fixture, { realWakeState: true, seat, now: fixture.now + 61 * MINUTE });
+  await runSeatTickCheck(fixture.project, rotated.deps);
+  expect(rotated.sent).toEqual([]);
+  expect(fixture.row().outstandingWake).toEqual(original);
+  expect(rotated.cards.map(({ card }) => card.ref)).toContain("seat-tick-wake-unresolved");
+  const accounting = new SeatTickAccounting(`${fixture.stateFile}.sqlite`, fixture.project);
+  expect(accounting.settleAbsent(original)).toBe(false);
+  expect(accounting.cancelUndispatched(original)).toBe(false);
+  release(); await pending;
+  const returned = fixture.row().outstandingWake!;
+  expect(returned.dispatch?.state).toBe("refused");
+  const next = childRig(fixture, { realWakeState: true, seat, now: fixture.now + 62 * MINUTE });
+  await runSeatTickCheck(fixture.project, next.deps);
+  expect(next.sent).toHaveLength(1);
+  expect(accounting.beginDispatch(returned)).toBeNull();
+  expect(fixture.acknowledged()).toEqual([child.id]);
+});
+
+test("rotation retains absent legacy, unknown, unreadable, uncertain and too-late attempts with attention (#1465)", async () => {
+  for (const mode of ["legacy", "unknown", "unreadable", "uncertain", "too-late", "started"] as const) {
+    const fixture = childFixture(`rotated-mirror-${mode}`);
+    setAgentRegistryForTests(fixture.registry);
+    fixture.spawn({ title: "owed worker", turn: "terminal" });
+    fixture.seed();
+    await runSeatTickCheck(fixture.project, childRig(fixture, { realWakeState: true,
+      ...(mode === "started" ? { delivery: { ok: false, outcome: "failed", error: "arrival unknown", status: 409, actuation: "started", resend: "verify-first" } as DeliveryOutcome }
+        : { deliverWith: refuseBeforeReservation(409) }),
+    }).deps);
+    if (mode === "legacy" || mode === "unknown") {
+      const state = fixture.row();
+      writeSeatTickState(fixture.project, { ...state, outstandingWake: { ...state.outstandingWake!, dispatch: undefined,
+        operationId: mode === "unknown" ? "unreadable-operation" : null } }, fixture.stateFile);
+    }
+    if (mode === "uncertain") {
+      const wake = fixture.row().outstandingWake!;
+      const held = fixture.registry.holdDelivery(wake.conversationId as never, wake.text!, wake.clientMessageId, "text", [], null, { operationId: "unverified-operation", kind: "send", policy: "queue" });
+      fixture.registry.recordDeliveryOutcome(held.id, "failed", "arrival unverified", "unverified");
+    }
+    const original = fixture.row().outstandingWake!;
+    const rig = childRig(fixture, { realWakeState: mode !== "too-late", wakeState: "retained", withdrawal: "too-late",
+      seat: { ...fixture.seat, seatEpoch: 8 }, now: fixture.now + 61 * MINUTE });
+    if (mode === "unreadable") rig.deps.sources!.wakeState = async () => { throw new Error("unreadable registry"); };
+    await runSeatTickCheck(fixture.project, rig.deps);
+    expect(rig.sent).toEqual([]);
+    expect(fixture.row().outstandingWake).toEqual(original);
+    expect(fixture.acknowledged()).toEqual([]);
+    expect(rig.cards.map(({ card }) => card.ref)).toContain("seat-tick-wake-unresolved");
+  }
+});
+
+test("435 cold acknowledged children do not delay a new worker or its completion, and cold turns remain observable (#1465)", async () => {
+  let payloadRows = 0;
+  const fixture = childFixture("large-cold-fleet", false, "sqlite", (_collection, count) => { payloadRows += count; });
+  const cold = Array.from({ length: 435 }, (_, index) => fixture.spawn({ title: `cold worker ${index}`, turn: "terminal" }));
+  fixture.seed();
+  const settings = { ...defaultSeatTickSettings(fixture.project), wakeIntervalMinutes: 5 };
+  const policy = { ...DEFAULT_SEAT_TICK_POLICY, itemsPerWake: 20 };
+  let clock = fixture.now;
+  let projectedRows = 0;
+  let projectionBytes = 0;
+  let fetchedBytes = 0;
+  let maxRows = 0;
+  let maxPayloadRows = 0;
+  let maxBytes = 0;
+  const pageChildren = fixture.registry.pageSeatChildren.bind(fixture.registry);
+  fixture.registry.pageSeatChildren = (...args) => {
+    const page = pageChildren(...args);
+    projectedRows += page?.keys.length ?? 0;
+    projectionBytes += Buffer.byteLength(JSON.stringify(page?.file ?? {}));
+    return page;
+  };
+  const check = async (over: Parameters<typeof harness>[0] = {}) => {
+    projectedRows = 0; payloadRows = 0; projectionBytes = 0; fetchedBytes = 0;
+    const read = fs.readSync;
+    fs.readSync = ((...args: Parameters<typeof fs.readSync>) => {
+      const bytes = Reflect.apply(read, fs, args) as number;
+      fetchedBytes += bytes;
+      return bytes;
+    }) as typeof fs.readSync;
+    const rig = childRig(fixture, { now: clock, settings, ...over });
+    let result;
+    try { result = await runSeatTickCheck(fixture.project, { ...rig.deps, policy }); }
+    finally { fs.readSync = read; }
+    expect(projectedRows).toBeLessThanOrEqual(60);
+    expect(payloadRows).toBeLessThanOrEqual(600);
+    expect(projectionBytes).toBeLessThanOrEqual(8 * 1024 * 1024);
+    expect(fetchedBytes).toBeLessThanOrEqual(32 * 1024 * 1024);
+    expect(rig.snapshots).toBe(0);
+    expect(result?.detail).not.toContain("ledger-pending");
+    maxRows = Math.max(maxRows, projectedRows);
+    maxPayloadRows = Math.max(maxPayloadRows, payloadRows);
+    maxBytes = Math.max(maxBytes, fetchedBytes);
+    clock += 5 * MINUTE;
+    return { result, rig };
+  };
+  // Establish real acknowledged history through the controller and event ledgers.
+  const named: string[] = [];
+  for (let tick = 0; tick < 100 && fixture.acknowledged().length < cold.length; tick++) {
+    const { rig } = await check();
+    for (const message of rig.sent) for (const match of message.text.matchAll(/\[child\] (\S+) /g)) named.push(match[1]!);
+  }
+  expect(named.length).toBe(435);
+  expect(new Set(named)).toEqual(new Set(cold.map((child) => child.id)));
+  // Move the old key-ordered implementation to the beginning of a cold sweep.
+  // This uses observation only and makes the regression deterministic on that head.
+  for (let tick = 0; tick < 22; tick++) await check();
+  const fresh = fixture.spawn({ title: "new worker", turn: "busy", host: "live" });
+  const generation = fixture.registry.conversation(fresh.id as never)!.generations[0]!.id;
+  const ledger = new FileRuntimeEventStore(statePath("structured-host-events"));
+  ledger.append(generation, { kind: "turn-started", turnId: "fresh-turn", seq: 1 });
+  const discovered = await check({ childActivity: { [fresh.id]: { lifecycle: "running", reason: "host_alive_turn_active" } } });
+  expect(discovered.result).toMatchObject({ verdict: "wake", reasons: ["interval"] });
+  expect(discovered.rig.sent[0]!.text).toContain(fresh.id);
+  ledger.append(generation, { kind: "turn-ended", turnId: "fresh-turn", status: "completed", seq: 2 });
+  fixture.registry.reconcileConversations([{
+    engine: "claude", path: fresh.path, accountId: null,
+    launchProfile: emptyLaunchProfile({ cwd: fixture.cwd, title: "new worker" }),
+    turn: { state: "terminal", source: "lifecycle", terminalAt: new Date(clock).toISOString() }, observedAt: new Date(clock).toISOString(),
+  }]);
+  const finished = await check();
+  expect(finished.result).toMatchObject({ verdict: "wake", reasons: ["child-terminal"], items: 1 });
+  expect(finished.rig.sent[0]!.text).toContain(fresh.id);
+  expect(fixture.acknowledged().filter((id) => id === fresh.id)).toHaveLength(1);
+  // A cold child's later turn is owed even without a sampled running state.
+  const oldest = cold[0]!;
+  const oldGeneration = fixture.registry.conversation(oldest.id as never)!.generations[0]!.id;
+  ledger.append(oldGeneration, { kind: "turn-started", turnId: "cold-again", seq: 3 });
+  ledger.append(oldGeneration, { kind: "turn-ended", turnId: "cold-again", status: "completed", seq: 4 });
+  for (let tick = 0; tick < 55 && fixture.acknowledged().filter((id) => id === oldest.id).length < 2; tick++) await check();
+  expect(fixture.acknowledged()).toHaveLength(437);
+  expect(fixture.acknowledged().filter((id) => id === oldest.id)).toHaveLength(2);
+  for (let tick = 0; tick < 3; tick++) expect((await check()).rig.sent).toEqual([]);
+  console.log(`[435 cold] max projected rows ${maxRows}, payload rows ${maxPayloadRows}, positional bytes ${maxBytes}; new running check 1, completion check 1, 437 acknowledged outcomes`);
+}, 300_000);
+
+test("new-child discovery runs during historical bootstrap and keeps every older obligation (#1465)", async () => {
+  const fixture = childFixture("bootstrap-tail");
+  const historical = Array.from({ length: 63 }, (_, n) => fixture.spawn({ title: `historical ${n}`, turn: "terminal" }));
+  fixture.seed();
+  const policy = { ...DEFAULT_SEAT_TICK_POLICY, itemsPerWake: 20 };
+  await runSeatTickCheck(fixture.project, { ...childRig(fixture).deps, policy });
+  const accounting = new SeatTickAccounting(`${fixture.stateFile}.sqlite`, fixture.project);
+  const owner = accounting.page("owner", 1)[0]!;
+  expect(owner.kind === "owner" && owner.bootstrap).toBeTruthy();
+  const fresh = fixture.spawn({ title: "new during bootstrap", turn: "busy", host: "live" });
+  const generation = fixture.registry.conversation(fresh.id as never)!.generations[0]!.id;
+  const ledger = new FileRuntimeEventStore(statePath("structured-host-events"));
+  ledger.append(generation, { kind: "turn-started", turnId: "new-during-bootstrap", seq: 1 });
+  const next = childRig(fixture, { now: fixture.now + 61 * MINUTE });
+  await runSeatTickCheck(fixture.project, { ...next.deps, policy });
+  expect(next.liveness.map((read) => read.conversationId)).toContain(fresh.id);
+  for (let tick = 2; tick < 8; tick++) {
+    const rig = childRig(fixture, { now: fixture.now + tick * 61 * MINUTE });
+    await runSeatTickCheck(fixture.project, { ...rig.deps, policy });
+  }
+  expect(new Set(fixture.acknowledged())).toEqual(new Set(historical.map((child) => child.id)));
+  expect(fixture.acknowledged()).toHaveLength(63);
+  expect(accounting.page("child", 100)).toHaveLength(64);
+  const completedOwner = accounting.page("owner", 1)[0]!;
+  expect(completedOwner.kind === "owner" && completedOwner.bootstrap).toBeUndefined();
+}, 30_000);

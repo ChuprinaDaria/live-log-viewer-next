@@ -61,13 +61,9 @@ test("running tickets rotate so every running child is observed on two consecuti
   try {
     const accounting = new SeatTickAccounting(path.join(dir, "state.sqlite"), "project");
     accounting.initialize(emptySeatTickState(), null);
-    accounting.owner(CONVERSATION, 1);
-    const ownerTicket = accounting.page("owner-poll", 1)[0]!;
-    if (ownerTicket.kind !== "owner-poll") throw new Error("fixture");
-    const owner = accounting.get(ownerTicket.target)!;
-    if (owner.kind !== "owner") throw new Error("fixture");
+    const owner = accounting.owner(CONVERSATION, 1);
     const children = Array.from({ length: 12 }, (_, index) => accounting.child(`row-${index}`, CONVERSATION, `launch-${index}`, childInput(`child-${index}`)));
-    accounting.discovery(ownerTicket, owner, children);
+    accounting.discovery(owner, children.map((child) => ({ child })));
     expect(accounting.page("running", 60)).toHaveLength(12);
 
     const observed: string[][] = [];
@@ -96,12 +92,13 @@ test("running tickets rotate so every running child is observed on two consecuti
     if (polled.kind !== "poll") throw new Error("fixture");
     const target = accounting.get(polled.target)!;
     if (target.kind !== "child") throw new Error("fixture");
-    accounting.ingest(polled, { ...target, input: childInput(target.input.conversationId, "terminal") }, null, []);
+    expect(target.pollKey).toBe(polled.key);
+    accounting.ingest({ ...target, input: childInput(target.input.conversationId, "terminal") }, null, []);
     expect(accounting.page("running", 60)).toHaveLength(11);
     expect((accounting.get(target.key) as { runningKey: string | null }).runningKey).toBeNull();
     const again = accounting.page("poll", 60).find((ticket) => ticket.kind === "poll" && ticket.target === target.key)!;
-    if (again.kind !== "poll") throw new Error("fixture");
-    accounting.ingest(again, { ...(accounting.get(target.key) as typeof target), input: childInput(target.input.conversationId, "running") }, null, []);
+    expect((accounting.get(target.key) as typeof target).pollKey).toBe(again.key);
+    accounting.ingest({ ...(accounting.get(target.key) as typeof target), input: childInput(target.input.conversationId, "running") }, null, []);
     expect(accounting.page("running", 60)).toHaveLength(12);
     expect(accounting.page("running", 60).at(-1)!.kind === "running" && (accounting.page("running", 60).at(-1) as { target: string }).target).toBe(target.key);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
@@ -184,5 +181,131 @@ test("predecessor owners come from the seat file's committed revocations, read o
     /* A contradictory owner for a recorded epoch is refused, never overwritten. */
     write([{ project: "viewer", conversationId: ["conversation", "impostor"].join("_"), seatEpoch: 6, revokedAt: "2026-09-05T11:00:00.000Z" }]);
     expect(() => accounting.discoverRevokedOwners(seats, (project) => project === "viewer")).toThrow("contradictory predecessor ownership");
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+/* The poll queue is FIFO by sequence, with a head lane in front of it (#1465):
+   a child discovery classifies terminal, a ledger the budget cut, and a
+   settled child promoted from the running window are read by the next visit
+   rather than after every cold child ahead of them — and every child still
+   holds exactly one poll ticket, the one its row points at. */
+test("head tickets sort before the tail, a promotion moves a child's one ticket, and a stale ticket is dropped", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "seat-accounting-head-"));
+  try {
+    const accounting = new SeatTickAccounting(path.join(dir, "state.sqlite"), "project");
+    accounting.initialize(emptySeatTickState(), null);
+    const owner = accounting.owner(CONVERSATION, 1);
+    expect(accounting.page("owner-poll", 5).map((ticket) => ticket.kind === "owner-poll" && ticket.target)).toEqual([owner.key]);
+    expect(owner.pollKey).toBe(accounting.page("owner-poll", 1)[0]!.key);
+    const cold = Array.from({ length: 5 }, (_, index) => accounting.child(`cold-${index}`, CONVERSATION, `launch-cold-${index}`, childInput(`cold-${index}`, "terminal")));
+    accounting.discovery(owner, cold.map((child) => ({ child })));
+    /* The owner's ticket moved to the tail of its queue and its anchor is the
+       one the page returned; the queue holds five tail tickets in order. */
+    const advanced = accounting.get(owner.key)!;
+    expect(advanced.kind === "owner" && advanced.pollKey).not.toBe(owner.pollKey);
+    const order = () => accounting.page("poll", 60).map((ticket) => ticket.kind === "poll" ? (accounting.get(ticket.target) as { input: SeatTickChildInput }).input.conversationId : "");
+    expect(order()).toEqual(["cold-0", "cold-1", "cold-2", "cold-3", "cold-4"]);
+    /* A later discovery finds one terminal child and one running child: the
+       terminal one enters at the head, the running one at the tail. */
+    const found = accounting.child("found", CONVERSATION, "launch-found", childInput("found", "terminal"));
+    const fresh = accounting.child("fresh", CONVERSATION, "launch-fresh", childInput("fresh"));
+    accounting.discovery(accounting.get(owner.key) as typeof owner, [{ child: found, position: "head" }, { child: fresh, position: "tail" }]);
+    expect(order()).toEqual(["found", "cold-0", "cold-1", "cold-2", "cold-3", "cold-4", "fresh"]);
+    /* A poll re-queued at the head resumes first; one re-queued at the tail waits. */
+    const first = accounting.get(found.key) as typeof found;
+    accounting.ingest(first, null, [], false, "head");
+    expect(order()).toEqual(["found", "cold-0", "cold-1", "cold-2", "cold-3", "cold-4", "fresh"]);
+    accounting.ingest(accounting.get(found.key) as typeof found, null, [], false, "tail");
+    expect(order()).toEqual(["cold-0", "cold-1", "cold-2", "cold-3", "cold-4", "fresh", "found"]);
+    /* A promotion moves the child's one ticket to the head; promoting a
+       child already there changes nothing. */
+    accounting.promote(accounting.get(fresh.key) as typeof fresh);
+    expect(order()).toEqual(["fresh", "cold-0", "cold-1", "cold-2", "cold-3", "cold-4", "found"]);
+    const revision = accounting.row()!.revision;
+    accounting.promote(accounting.get(fresh.key) as typeof fresh);
+    expect(accounting.row()!.revision).toBe(revision);
+    expect(accounting.page("poll", 60)).toHaveLength(7);
+    /* Two heads keep their own order: the earlier promotion stays first. */
+    accounting.promote(accounting.get(cold[4]!.key) as typeof fresh);
+    expect(order()).toEqual(["fresh", "cold-4", "cold-0", "cold-1", "cold-2", "cold-3", "found"]);
+    /* A ticket its child does not claim is dropped, and the claimed one stays. */
+    const stale = accounting.page("poll", 1)[0]!;
+    accounting.drop(stale);
+    expect(order()).toEqual(["cold-4", "cold-0", "cold-1", "cold-2", "cold-3", "found"]);
+    /* An ingest of a child whose ticket another controller already took is a
+       no-op: no second ticket, no outcome rows. */
+    const claimed = accounting.get(cold[0]!.key) as typeof fresh;
+    accounting.ingest({ ...claimed, pollKey: stale.key }, null, [], false, "head");
+    expect(order()).toEqual(["cold-4", "cold-0", "cold-1", "cold-2", "cold-3", "found"]);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("key-sweep accounting migrates lazily without losing cursors, acknowledgments or cold tickets", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "seat-accounting-upgrade-"));
+  try {
+    const filename = path.join(dir, "state.sqlite");
+    const accounting = new SeatTickAccounting(filename, "project");
+    accounting.initialize(emptySeatTickState(), null);
+    const owner = accounting.owner(CONVERSATION, 1);
+    const child = accounting.child("child-row", CONVERSATION, "child-launch", childInput("child-row", "terminal"));
+    accounting.discovery(owner, [{ child }]);
+    const stored = accounting.get(child.key) as typeof child;
+    const source = accounting.source(stored, "claude", "generation");
+    source.cursor = { ...source.cursor, identity: "1:1", seq: 2, settledThrough: 2, offset: 100, initialSize: 100, atEnd: true };
+    accounting.ingest(stored, source, [{ turnId: "turn-one", status: "completed", seq: 2, endOffset: 100 }]);
+    const outcome = accounting.ready(1)[0]!;
+    const wake = { clientMessageId: "landed", conversationId: CONVERSATION, seatEpoch: 1, operationId: null,
+      commit: { proposal: false, reasons: [], fingerprint: "one", eventsThrough: 0, children: [outcome.identity] } };
+    expect(accounting.prepare(accounting.readState(), wake)).toBe(true);
+    accounting.settle(wake.clientMessageId, { ...accounting.readState(), lastWakeAt: "2026-09-05T12:00:00.000Z" }, "landed");
+    const acknowledged = accounting.get(outcome.key);
+    const cursor = accounting.get(source.key);
+    // Persist exactly the owner/child shapes from the published predecessor.
+    accounting.collection.boundedPatch(4, (tx) => {
+      const oldOwner = { ...tx.get(owner.key)!, after: "child-z", through: "child-z" } as Record<string, unknown>;
+      delete oldOwner.pollKey;
+      const oldChild = { ...tx.get(child.key)! } as Record<string, unknown>;
+      delete oldChild.pollKey;
+      tx.put(oldOwner as never); tx.put(oldChild as never);
+    });
+    const reopened = new SeatTickAccounting(filename, "project");
+    const migrated = reopened.owner(CONVERSATION, 1);
+    expect(migrated.after).toBeNull();
+    expect(migrated.pollKey).toBeTruthy();
+    const poll = reopened.page("poll", 1)[0]!;
+    const adopted = reopened.adoptPoll(reopened.get(child.key) as typeof child, poll.key);
+    expect(adopted.pollKey).toBe(poll.key);
+    reopened.discovery(migrated, [{ child }]);
+    expect(reopened.page("child", 20)).toHaveLength(1);
+    expect(reopened.page("poll", 20)).toHaveLength(1);
+    expect(reopened.get(outcome.key)).toEqual(acknowledged);
+    expect(reopened.get(source.key)).toEqual(cursor);
+    expect(reopened.ready(20)).toEqual([]);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("cold FIFO visits remain reserved beside a full priority backlog", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "seat-accounting-fair-"));
+  try {
+    const accounting = new SeatTickAccounting(path.join(dir, "state.sqlite"), "project");
+    accounting.initialize(emptySeatTickState(), null);
+    const owner = accounting.owner(CONVERSATION, 1);
+    const cold = Array.from({ length: 20 }, (_, n) => accounting.child(`cold-${n}`, CONVERSATION, `cold-launch-${n}`, childInput(`cold-${n}`, "terminal")));
+    const priority = Array.from({ length: 60 }, (_, n) => accounting.child(`hot-${n}`, CONVERSATION, `hot-launch-${n}`, childInput(`hot-${n}`, "terminal")));
+    accounting.discovery(owner, [...cold.map((child) => ({ child })), ...priority.map((child) => ({ child, position: "head" as const }))]);
+    const seen = new Set<string>();
+    for (let tick = 0; tick < 3; tick++) {
+      const visits = accounting.pollPage(40);
+      expect(visits).toHaveLength(40);
+      const visitedCold = visits.filter((ticket) => ticket.kind === "poll" && cold.some((child) => child.key === ticket.target));
+      expect(visitedCold.length).toBeGreaterThanOrEqual(8);
+      for (const ticket of visits) if (ticket.kind === "poll") {
+        const child = accounting.get(ticket.target) as ReturnType<typeof accounting.child>;
+        const isCold = child.rowKey.startsWith("cold-");
+        if (isCold) seen.add(child.rowKey);
+        accounting.ingest(child, null, [], false, isCold ? "tail" : "head");
+      }
+    }
+    expect(seen.size).toBe(20);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
