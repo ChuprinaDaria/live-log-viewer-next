@@ -10,6 +10,7 @@ function fixtureSessionId(index: number): string {
 }
 
 function fixture(failedCount: number, fullHistory = false) {
+  const mixed = process.env.LLV_PACKAGED_MIXED_ENGINES === "1";
   const directory = process.env.LLV_STATE_DIR!;
   const filename = path.join(directory, "agent-registry.json");
   if (!directory || fs.existsSync(filename)) throw new Error("packaged fixture requires an empty explicit state directory");
@@ -95,10 +96,10 @@ function fixture(failedCount: number, fullHistory = false) {
     data.conversations[`conversation_history_${i}`]!.turn = {
       state: "busy", source: "lifecycle", terminalAt: null, observedAt: receipt.createdAt,
     };
-    fs.writeFileSync(row.artifactPath, JSON.stringify(i < 3
+    fs.writeFileSync(row.artifactPath, JSON.stringify(!mixed || i < 3
       ? { type: "event_msg", timestamp: receipt.createdAt, payload: { type: "task_started", turn_id: `retained-${i}` } }
       : { type: "user", timestamp: receipt.createdAt, message: { role: "user", content: "Synthetic unfinished turn" } }) + "\n");
-    if (i >= 3) {
+    if (mixed && i >= 3) {
       delete data.entries[`codex:${id}`];
       const nativePath = claudeTranscriptPath(directory, id, path.join(process.env.LLV_CLAUDE_HOME!, "projects"));
       fs.mkdirSync(path.dirname(nativePath), { recursive: true });
@@ -147,7 +148,7 @@ function fixture(failedCount: number, fullHistory = false) {
     const id = `conversation_history_${i}` as const;
     data.lineageEdges[id] = {
       childConversationId: id, parentConversationId: "conversation_history_0",
-      childSessionKey: { engine: i >= 3 && i < 6 ? "claude" : "codex", sessionId: fixtureSessionId(i) }, parentSessionKey: null,
+      childSessionKey: { engine: mixed && i >= 3 && i < 6 ? "claude" : "codex", sessionId: fixtureSessionId(i) }, parentSessionKey: null,
       childArtifactPath: data.conversations[id]!.generations[0]!.path, parentArtifactPath: null,
       kind: "spawn", role: "worker", reviewsConversationId: null, source: "viewer-spawn",
       evidence: { launchId: `historical_launch_${i}`, clientAttemptId: null }, createdAt: receipt.createdAt,
@@ -160,7 +161,7 @@ function fixture(failedCount: number, fullHistory = false) {
   const journalFilename = path.join(directory, "runtime-events.sqlite");
   const journal = new RuntimeJournal(journalFilename, { structuredHosts: true });
   for (let i = 0; i < 4336; i++) {
-    const entry = data.entries[`${i >= 3 && i < 6 ? "claude" : "codex"}:${fixtureSessionId(i)}`]!;
+    const entry = data.entries[`${mixed && i >= 3 && i < 6 ? "claude" : "codex"}:${fixtureSessionId(i)}`]!;
     journal.append({ scope: { type: "session", id: `conversation_history_${i}` }, kind: "session-status",
       payload: { conversationId: `conversation_history_${i}`, sessionKey: entry.key,
         hostKind: entry.structuredHost!.kind, host: i < 734 ? "hosted" : "dead", turn: "idle", cwd: directory,

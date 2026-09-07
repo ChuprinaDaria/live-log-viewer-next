@@ -24,6 +24,7 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--viewer", type=Path, required=True, help="immutable standalone package")
 parser.add_argument("--runtime-source", type=Path, required=True, help="exact incumbent runtime-host source tree")
 parser.add_argument("--bun", type=Path, required=True)
+parser.add_argument("--mixed-engines", action="store_true", help="include three Claude protocol fixtures; requires all six hosts to remain owned")
 args = parser.parse_args()
 repo = Path(__file__).resolve().parents[1]
 viewer, runtime_source, bun = args.viewer.resolve(), args.runtime_source.resolve(), args.bun.resolve()
@@ -41,7 +42,7 @@ for key, directory in {"HOME": "home", "XDG_CONFIG_HOME": "config", "XDG_CACHE_H
 (root / "sockets").mkdir(mode=0o700)
 provider = str(root / "bin/provider")
 shutil.copy2(repo / "src/lib/runtime/fixtures/packagedProvider.py", provider)
-env.update({"LLV_CODEX_BINARY": provider, "LLV_CLAUDE_BINARY": provider})
+env.update({"LLV_CODEX_BINARY": provider, "LLV_CLAUDE_BINARY": provider, "LLV_PACKAGED_MIXED_ENGINES": "1" if args.mixed_engines else "0"})
 with open(root / "seed.log", "w") as log:
     subprocess.run([str(bun), "src/lib/runtime/fixtures/packagedStartupSeed.ts"], cwd=repo, env=env, stdout=log, stderr=subprocess.STDOUT, check=True)
 
