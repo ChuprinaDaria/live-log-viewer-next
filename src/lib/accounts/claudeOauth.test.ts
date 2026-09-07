@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
 
 import type { ClaudeAccount } from "./claude";
 import { claudeOauthMetadata, refreshClaudeOauth } from "./claudeOauth";
@@ -315,4 +315,30 @@ test("an unapproved custom OAuth origin never receives credential content", asyn
     if (previous === undefined) delete process.env.CLAUDE_CODE_CUSTOM_OAUTH_URL;
     else process.env.CLAUDE_CODE_CUSTOM_OAUTH_URL = previous;
   }
+});
+
+
+test("Keychain metadata and refresh use the same backend without a credentials file", async () => {
+  const store = await import("./claudeCredentials");
+  const candidate = account("keychain-refresh");
+  const file = path.join(candidate.home, ".credentials.json");
+  let stored = JSON.parse(fs.readFileSync(file, "utf8")); fs.unlinkSync(file);
+  const originalRead = store.readClaudeCredentials;
+  const originalReplace = store.replaceClaudeCredentials;
+  const ports: import("./claudeCredentials").ClaudeCredentialPorts = { platform: "darwin", security: (_args, input) => {
+    if (input) stored = JSON.parse(Buffer.from(input.match(/-X "([a-f0-9]+)"/)![1], "hex").toString());
+    return { status: 0, stdout: JSON.stringify(stored) };
+  } };
+  const read = spyOn(store, "readClaudeCredentials").mockImplementation((home) => originalRead(home, ports));
+  const write = spyOn(store, "replaceClaudeCredentials").mockImplementation((home, previous, document) => originalReplace(home, previous, document, ports));
+  try {
+    expect(claudeOauthMetadata(candidate)?.refreshable).toBe(true);
+    expect(await refreshClaudeOauth(candidate, { now: () => NOW, fetch: async () => Response.json({ access_token: "fixture", expires_in: 3600 }) })).toBe("refreshed");
+    expect(claudeOauthMetadata(candidate)?.expiresAt).toBe(NOW + 3600_000);
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(fs.existsSync(file)).toBe(false);
+    read.mockReturnValue({ state: "unknown" });
+    expect(claudeOauthMetadata(candidate)).toBeNull();
+    expect(await refreshClaudeOauth(candidate, { now: () => NOW, fetch: async () => { throw new Error("must not refresh an unknown store"); } })).toBe("unknown");
+  } finally { read.mockRestore(); write.mockRestore(); }
 });

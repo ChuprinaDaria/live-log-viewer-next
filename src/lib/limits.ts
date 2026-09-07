@@ -1,3 +1,4 @@
+import { readClaudeCredentials } from "@/lib/accounts/claudeCredentials";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -360,7 +361,7 @@ interface OauthWindow {
 
 /**
  * Live usage from the same OAuth endpoint the Claude Code CLI uses. The token
- * from ~/.claude/.credentials.json stays inside the server process; the
+ * from the account-scoped credential store stays inside the server process; the
  * browser only ever sees percentages.
  */
 export async function fetchClaudeLimits(
@@ -372,15 +373,13 @@ export async function fetchClaudeLimits(
   // credential assignment to the publication gate and fails the scan.
   let oauthToken = "";
   let plan: string | null = null;
-  try {
-    const raw = JSON.parse(fs.readFileSync(credentialsPath, "utf8")) as {
-      claudeAiOauth?: { accessToken?: unknown; subscriptionType?: unknown };
-    };
-    if (typeof raw.claudeAiOauth?.accessToken === "string") oauthToken = raw.claudeAiOauth.accessToken;
-    if (typeof raw.claudeAiOauth?.subscriptionType === "string") plan = raw.claudeAiOauth.subscriptionType;
-  } catch (err) {
-    return { data: null, reason: `credentials unreadable: ${err instanceof Error ? err.message : String(err)}`, source: "unavailable" };
+  const credentials = readClaudeCredentials(path.dirname(credentialsPath));
+  if (credentials.state !== "present") {
+    return { data: null, reason: credentials.state === "absent" ? "credentials absent" : "credential store unavailable", source: "unavailable" };
   }
+  const oauth = credentials.document.claudeAiOauth;
+  if (typeof oauth?.accessToken === "string") oauthToken = oauth.accessToken;
+  if (typeof oauth?.subscriptionType === "string") plan = oauth.subscriptionType;
   if (!oauthToken) return { data: null, reason: "credentials missing access token", source: "unavailable" };
   try {
     const res = await fetch(OAUTH_USAGE_URL, {

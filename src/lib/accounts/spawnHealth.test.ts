@@ -100,7 +100,8 @@ test("live usage evidence retains spawn validity classifications", () => {
   });
   expect(claudeValidityFromLimitRead({ source: "unavailable", reason: LIMITS_REAUTH_REQUIRED_REASON, data: null }, NOW)).toMatchObject({ kind: "unavailable", reason: "auth-failed" });
   expect(claudeValidityFromLimitRead({ source: "unavailable", reason: "credentials missing access token", data: null }, NOW)).toMatchObject({ kind: "unavailable", reason: "auth-failed" });
-  expect(claudeValidityFromLimitRead({ source: "unavailable", reason: "credentials unreadable: test fixture", data: null }, NOW)).toMatchObject({ kind: "unavailable", reason: "auth-failed" });
+  expect(() => claudeValidityFromLimitRead({ source: "unavailable", reason: "credentials unreadable: test fixture", data: null }, NOW)).toThrow("credential store is unavailable");
+  expect(() => claudeValidityFromLimitRead({ source: "unavailable", reason: "credential store unavailable", data: null }, NOW)).toThrow("credential store is unavailable");
   expect(claudeValidityFromLimitRead({ source: "unavailable", reason: "request timed out", data: null }, NOW)).toMatchObject({ kind: "admissible", basis: "last-known", stale: true });
   const retryAt = Math.floor(NOW / 1_000) + 900;
   expect(claudeValidityFromLimitRead({

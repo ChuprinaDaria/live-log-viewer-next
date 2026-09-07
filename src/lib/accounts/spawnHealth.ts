@@ -10,6 +10,10 @@ import { withAccountMutationLockAsync } from "./accountMutation";
 
 export type ClaudeValidityProbeResult = SpawnAccountAdmission;
 
+export class ClaudeCredentialUnavailableError extends Error {
+  constructor() { super("Claude credential store is unavailable; retry when access is restored"); this.name = "ClaudeCredentialUnavailableError"; }
+}
+
 export interface ClaudeSpawnAccountSelection {
   account: ClaudeAccount;
   admission: SpawnAccountAdmission;
@@ -40,7 +44,7 @@ function refreshSingleFlight(
   const pending = Promise.resolve()
     .then(() => refresh(account))
     .catch((error: unknown) => {
-      if (error instanceof UnknownClaudeAccountError) throw error;
+      if (error instanceof UnknownClaudeAccountError || error instanceof ClaudeCredentialUnavailableError) throw error;
       return classifySpawnAccountAdmission({
         enabled: true,
         authentication: "unknown",
@@ -77,9 +81,12 @@ export function claudeValidityFromLimitRead(
   },
   now = Date.now(),
 ): ClaudeValidityProbeResult {
+  if (result.reason === "credential store unavailable" || result.reason?.startsWith("credentials unreadable:")) {
+    throw new ClaudeCredentialUnavailableError();
+  }
   const authentication = result.reason === LIMITS_REAUTH_REQUIRED_REASON
     || result.reason === "credentials missing access token"
-    || result.reason?.startsWith("credentials unreadable:")
+    || result.reason === "credentials absent"
     ? "failed" as const
     : result.source === "live"
       ? "authenticated" as const
@@ -150,13 +157,7 @@ async function refreshValidityProbe(account: ClaudeAccount): Promise<ClaudeValid
       });
     }
     if (refreshed === "unknown") {
-      return classifySpawnAccountAdmission({
-        enabled: true,
-        authentication: "unknown",
-        limits: "unknown",
-        stale: true,
-        retryAt: null,
-      });
+      throw new ClaudeCredentialUnavailableError();
     }
     return await liveValidityProbe(current);
   });

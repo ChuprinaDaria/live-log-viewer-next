@@ -47,11 +47,46 @@ jobs:
           console.log(`argv entries: ${argv.length}, identity token fields: ${token.split(":").length}`);
           '
 
-      - name: Verify the identity fence against the real macOS kernel
-        run: >
-          bun test
-          src/lib/proc/darwinArgv.test.ts
-          src/lib/proc/darwinIdentity.test.ts
-          src/lib/proc/portable.test.ts
-          src/lib/accounts/claudeLogin.test.ts
-          src/lib/accounts/claudeLoginIdentity.test.ts
+      - name: Install the pinned provider for native credential compatibility
+        run: |
+          case "$(uname -m)" in
+            arm64) arch=arm64 ;;
+            x86_64) arch=x64 ;;
+            *) exit 1 ;;
+          esac
+          npm install --prefix "$RUNNER_TEMP/claude-provider" --ignore-scripts --no-audit --no-fund --package-lock=false "@anthropic-ai/claude-code-darwin-$arch@2.1.263"
+          echo "LLV_TEST_CLAUDE_BINARY=$RUNNER_TEMP/claude-provider/node_modules/@anthropic-ai/claude-code-darwin-$arch/claude" >> "$GITHUB_ENV"
+
+      - name: Verify identity and credential recognition in isolated processes
+        run: |
+          python3 - <<'PYCODE'
+          import os, pathlib, subprocess, tempfile
+          tests = [
+              "src/lib/proc/darwinArgv.test.ts",
+              "src/lib/proc/darwinIdentity.test.ts",
+              "src/lib/proc/portable.test.ts",
+              "src/lib/accounts/claudeCredentials.test.ts",
+              "src/lib/accounts/claude.test.ts",
+              "src/lib/accounts/claudeLogin.test.ts",
+              "src/lib/accounts/claudeLoginIdentity.test.ts",
+              "src/lib/accounts/claudeOauth.test.ts",
+              "src/lib/accounts/spawnHealth.test.ts",
+              "src/lib/accounts/credentialIsolation.test.ts",
+              "src/lib/limits.test.ts",
+              "src/app/api/accounts/route.test.ts",
+          ]
+          for test in tests:
+              root = pathlib.Path(tempfile.mkdtemp(prefix="claude-proof-", dir=os.environ["RUNNER_TEMP"]))
+              env = dict(os.environ)
+              for key in list(env):
+                  if key.startswith(("ANTHROPIC_", "CLAUDE_", "CODEX_", "LLV_")):
+                      env.pop(key)
+              for key, child in {"HOME": "home", "XDG_CONFIG_HOME": "config", "XDG_CACHE_HOME": "cache", "LLV_STATE_DIR": "state", "LLV_CLAUDE_HOME": "claude", "LLV_CODEX_HOME": "codex", "CLAUDE_CONFIG_DIR": "claude", "CODEX_HOME": "codex", "TMPDIR": "tmp", "LLV_RUNTIME_SOCKET_DIR": "sockets"}.items():
+                  directory = root / child
+                  directory.mkdir(mode=0o700, exist_ok=True)
+                  env[key] = str(directory)
+              env["USER"] = "fixture-user"
+              env["LLV_REQUIRE_NATIVE_CREDENTIALS"] = "1"
+              env["LLV_TEST_CLAUDE_BINARY"] = os.environ["LLV_TEST_CLAUDE_BINARY"]
+              subprocess.run(["bun", "test", test], env=env, check=True)
+          PYCODE

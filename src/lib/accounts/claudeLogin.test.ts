@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, expect, test } from "bun:test";
+import { afterAll, beforeEach, expect, spyOn, test } from "bun:test";
 import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
@@ -498,4 +498,64 @@ test("a reservation blocks a second account creation before filesystem mutation"
   expect(() => supervisor.reserve()).toThrow("already running");
   supervisor.abandon(reservation.operationId);
   expect(supervisor.forAccount("missing")).toBeNull();
+});
+
+
+const credentialStore = await import("./claudeCredentials");
+const { listClaudeAccounts } = await import("./claude");
+
+test("account-scoped Keychain evidence completes legacy and managed login without a file", async () => {
+  for (const id of ["default", createManagedClaudeAccount("Keychain success").id]) {
+    const candidate = listClaudeAccounts().find((item) => item.id === id)!;
+    const read = spyOn(credentialStore, "readClaudeCredentials").mockImplementation((home) => home === candidate.home
+      ? { state: "present", source: "keychain", document: { claudeAiOauth: { accessToken: "fixture" } } }
+      : { state: "absent" });
+    try {
+      const supervisor = new ClaudeLoginSupervisor(ports(), { load: () => [], save: () => undefined });
+      const operation = supervisor.start(id);
+      child.emit("close", 0);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(supervisor.get(operation.operationId)?.phase).toBe("authenticated");
+      expect(listClaudeAccounts().find((item) => item.id === id)?.authPresent).toBe(true);
+      expect(fs.existsSync(path.join(candidate.home, ".credentials.json"))).toBe(false);
+    } finally { read.mockRestore(); }
+    child = new FakeChild();
+  }
+});
+
+test("unknown store and indeterminate status never complete authentication", async () => {
+  const candidate = createManagedClaudeAccount("Unknown Keychain");
+  for (const unknownStore of [true, false]) {
+    const read = spyOn(credentialStore, "readClaudeCredentials").mockReturnValue(unknownStore
+      ? { state: "unknown" }
+      : { state: "present", source: "keychain", document: {} });
+    try {
+      const supervisor = new ClaudeLoginSupervisor({ ...ports(), status: async () => ({ loggedIn: true, method: "oauth", email: null, plan: null, indeterminate: !unknownStore }) }, { load: () => [], save: () => undefined });
+      const operation = supervisor.start(candidate.id);
+      child.emit("close", 0);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(supervisor.get(operation.operationId)?.phase).toBe("failed");
+      expect(signals).toEqual([]);
+    } finally { read.mockRestore(); }
+    child = new FakeChild();
+  }
+});
+
+test("a canceled Keychain verification cannot settle the next login", async () => {
+  const candidate = createManagedClaudeAccount("Stale Keychain");
+  let complete!: (value: Awaited<ReturnType<ClaudeLoginPorts["status"]>>) => void;
+  const read = spyOn(credentialStore, "readClaudeCredentials").mockReturnValue({ state: "present", source: "keychain", document: {} });
+  try {
+    const supervisor = new ClaudeLoginSupervisor({ ...ports(), status: () => new Promise((resolve) => { complete = resolve; }) }, { load: () => [], save: () => undefined });
+    const old = supervisor.start(candidate.id);
+    child.emit("close", 0);
+    await supervisor.cancel(old.operationId);
+    child = new FakeChild();
+    inheritedChildAlive = true;
+    const next = supervisor.start(candidate.id);
+    complete({ loggedIn: true, method: "oauth", email: null, plan: null });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(supervisor.get(old.operationId)?.phase).toBe("canceled");
+    expect(supervisor.get(next.operationId)?.phase).toBe("awaiting_browser");
+  } finally { read.mockRestore(); }
 });

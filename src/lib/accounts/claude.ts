@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { stateDir, statePath } from "@/lib/configDir";
+import { claudeCredentialFileState, readClaudeCredentials, type ClaudeCredentialRead } from "./claudeCredentials";
 import { withoutWakatimeCredential } from "@/lib/wakatime/credential";
 import { withAccountMutationLock } from "./accountMutation";
 import { AccountHistoryInventoryBlockedError, accountHistoryInventory, accountHomeExistsForRemoval, accountRemovalBlockers, cleanupAccountProviderSidecars, discardStagedAccountHome, releaseStagedAccountHome, removeHistoryFreeAccountHome, rollbackStagedAccountHome, scrubAccountHomeToRetainedHistory, stageAccountHomeCleanup, verifyStagedAccountHome, type AccountHistoryInventoryReport, type AccountOrphanCleanupReport, type StagedAccountHomeCleanup } from "./removal";
@@ -25,6 +26,7 @@ export type ClaudeAccount = {
   home: string;
   projectsDir: string;
   authPresent: boolean;
+  credentialState?: ClaudeCredentialRead["state"];
   createdAt: number;
 };
 
@@ -158,12 +160,15 @@ function write(registry: Registry): void {
 }
 
 export function managedClaudeCredentialIsSafe(home: string, required = false): boolean {
-  const file = path.join(home, ".credentials.json");
-  try { const s = fs.lstatSync(file); return s.isFile() && !s.isSymbolicLink() && s.uid === (process.getuid?.() ?? s.uid) && (s.mode & 0o077) === 0; } catch { return !required; }
+  const state = claudeCredentialFileState(home);
+  return state === "safe" || (!required && state === "absent");
 }
-function credentialIsSafe(home: string): boolean { return managedClaudeCredentialIsSafe(home, true); }
-function account(stored: StoredAccount): ClaudeAccount { const home = managedHome(stored.id); return { ...stored, home, projectsDir: projectsDirFor(home), authPresent: credentialIsSafe(home) }; }
-function main(): ClaudeAccount { const home = legacyClaudeHome(); return { id: DEFAULT_ID, label: "Main", kind: "legacy", home, projectsDir: projectsDirFor(home), authPresent: credentialIsSafe(home), createdAt: 0 }; }
+function credentialPresence(home: string): Pick<ClaudeAccount, "authPresent" | "credentialState"> {
+  const read = readClaudeCredentials(home);
+  return { authPresent: read.state === "present", credentialState: read.state };
+}
+function account(stored: StoredAccount): ClaudeAccount { const home = managedHome(stored.id); return { ...stored, home, projectsDir: projectsDirFor(home), ...credentialPresence(home) }; }
+function main(): ClaudeAccount { const home = legacyClaudeHome(); return { id: DEFAULT_ID, label: "Main", kind: "legacy", home, projectsDir: projectsDirFor(home), ...credentialPresence(home), createdAt: 0 }; }
 export function listClaudeAccounts(): ClaudeAccount[] { return [main(), ...readRegistry().registry.accounts.map(account)]; }
 export function activeClaudeAccountId(): string { const active = readRegistry().registry.active; return listClaudeAccounts().some((item) => item.id === active) ? active : DEFAULT_ID; }
 export function claudeAccountsMutationLocked(): boolean { return readRegistry().corrupt; }
@@ -496,6 +501,6 @@ export function cleanupOrphanedClaudeHomes(): AccountOrphanCleanupReport {
   });
 }
 
-const SHADOWED_ENV = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_BASE_URL", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "GOOGLE_APPLICATION_CREDENTIALS", "VERTEXAI_PROJECT", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX"];
+const SHADOWED_ENV = ["CLAUDE_SECURESTORAGE_CONFIG_DIR","ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_BASE_URL", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "GOOGLE_APPLICATION_CREDENTIALS", "VERTEXAI_PROJECT", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX"];
 export function claudeManagedEnvironment(home: string, base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv { const env: NodeJS.ProcessEnv = { ...withoutWakatimeCredential(base), CLAUDE_CONFIG_DIR: home }; for (const key of SHADOWED_ENV) delete env[key]; return env; }
 export function isManagedClaudeHome(home: string): boolean { return listClaudeAccounts().some((item) => item.kind === "managed" && item.home === home && managedClaudeHomeIsSafe(item.id, true)); }

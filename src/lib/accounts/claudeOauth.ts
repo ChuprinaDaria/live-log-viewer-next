@@ -1,7 +1,7 @@
-import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
+import { readClaudeCredentials, replaceClaudeCredentials } from "./claudeCredentials";
 import type { ClaudeAccount } from "./claude";
 
 const CLAUDE_OAUTH_TOKEN_URL = "https://platform.claude.com/v1/oauth/token";
@@ -36,45 +36,18 @@ type OauthRecord = Record<string, unknown> & {
 
 type CredentialDocument = Record<string, unknown> & { claudeAiOauth?: OauthRecord };
 
-function credentialPath(account: ClaudeAccount): string {
-  return path.join(account.home, ".credentials.json");
-}
-
 function readCredentialDocument(account: ClaudeAccount): CredentialDocument | null {
-  if (!account.authPresent) return null;
-  try {
-    const parsed = JSON.parse(fs.readFileSync(credentialPath(account), "utf8")) as unknown;
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as CredentialDocument : null;
-  } catch {
-    return null;
-  }
+  const read = readClaudeCredentials(account.home);
+  return read.state === "present" ? read.document : null;
 }
 
 export function claudeOauthMetadata(account: ClaudeAccount): { expiresAt: number; refreshable: boolean } | null {
+  if (!account.authPresent) return null;
   const oauth = readCredentialDocument(account)?.claudeAiOauth;
   return typeof oauth?.accessToken === "string" && oauth.accessToken.length > 0
     && typeof oauth.expiresAt === "number" && Number.isFinite(oauth.expiresAt)
     ? { expiresAt: oauth.expiresAt, refreshable: typeof oauth.refreshToken === "string" && oauth.refreshToken.length > 0 }
     : null;
-}
-
-function writeCredentialDocument(account: ClaudeAccount, document: CredentialDocument): void {
-  const file = credentialPath(account);
-  const temporary = path.join(account.home, `.${path.basename(file)}.${process.pid}.${crypto.randomUUID()}.tmp`);
-  try {
-    const descriptor = fs.openSync(temporary, "wx", 0o600);
-    try {
-      fs.writeFileSync(descriptor, JSON.stringify(document), "utf8");
-      fs.fsyncSync(descriptor);
-    } finally {
-      fs.closeSync(descriptor);
-    }
-    fs.renameSync(temporary, file);
-    const directory = fs.openSync(account.home, "r");
-    try { fs.fsyncSync(directory); } finally { fs.closeSync(directory); }
-  } finally {
-    fs.rmSync(temporary, { force: true });
-  }
 }
 
 const productionDependencies: ClaudeOauthRefreshDependencies = {
@@ -174,7 +147,9 @@ async function refreshClaudeOauthLocked(
   account: ClaudeAccount,
   dependencies: ClaudeOauthRefreshDependencies,
 ): Promise<ClaudeOauthRefreshResult> {
-  const original = readCredentialDocument(account);
+  const originalRead = readClaudeCredentials(account.home);
+  if (originalRead.state !== "present") return originalRead.state === "absent" ? "invalid" : "unknown";
+  const original = originalRead.document;
   const oauth = original?.claudeAiOauth;
   if (!original || !oauth
     || typeof oauth.accessToken !== "string" || oauth.accessToken.length === 0
@@ -268,8 +243,7 @@ async function refreshClaudeOauthLocked(
   }
 
   try {
-    writeCredentialDocument(account, { ...current, claudeAiOauth: nextOauth });
-    return "refreshed";
+    return replaceClaudeCredentials(account.home, originalRead, { ...current, claudeAiOauth: nextOauth }) ? "refreshed" : "unknown";
   } catch {
     return "unknown";
   }
