@@ -191,6 +191,22 @@ export async function selectHealthyClaudeAccount(
     return { account, oauth: unknown ? null : metadata, unknown };
   });
   type Evaluated = { account: ClaudeAccount; admission: SpawnAccountAdmission };
+  const unknownAccounts = new Set(classified.filter((candidate) => candidate.unknown).map((candidate) => candidate.account.id));
+  const evaluate = async (
+    account: ClaudeAccount,
+    probe: ClaudeSpawnHealthDependencies["probe"],
+  ): Promise<Evaluated | null> => {
+    try {
+      return { account, admission: await probe(account) };
+    } catch (error) {
+      // Credential uncertainty excludes only this candidate. An explicit pin
+      // must still refuse substitution; identity and other errors retain their fences.
+      if (!(error instanceof ClaudeCredentialUnavailableError)
+        || (pinPreferred && account.id === preferredId)) throw error;
+      unknownAccounts.add(account.id);
+      return null;
+    }
+  };
   const rank = (admission: SpawnAccountAdmission) => admission.kind === "admissible"
     ? admission.basis === "current" ? 2 : 1
     : 0;
@@ -205,9 +221,10 @@ export async function selectHealthyClaudeAccount(
     ...(pinPreferred && preferredId && requested ? { requestedAdmission: requested.admission } : {}),
   });
 
-  const current = await Promise.all(classified
+  const current = (await Promise.all(classified
     .filter((candidate) => candidate.oauth && candidate.oauth.expiresAt > now)
-    .map(async ({ account }) => ({ account, admission: await dependencies.probe(account) })));
+    .map(({ account }) => evaluate(account, dependencies.probe))))
+    .filter((candidate) => candidate !== null);
   let requested = preferredId ? current.find((candidate) => candidate.account.id === preferredId) ?? null : null;
   if (pinPreferred && requested?.admission.kind === "admissible") return result(requested, requested);
 
@@ -228,13 +245,14 @@ export async function selectHealthyClaudeAccount(
   const currentSelection = select(current);
   if (currentSelection) return result(currentSelection, requested);
 
-  const refreshed = await Promise.all(classified
+  const refreshed = (await Promise.all(classified
     .filter((candidate) => candidate.oauth?.expiresAt && candidate.oauth.expiresAt <= now && candidate.oauth.refreshable)
     .filter((candidate) => candidate.account.id !== preferredExpired?.account.id)
-    .map(async ({ account }) => ({ account, admission: await refreshSingleFlight(account, dependencies.refresh) })));
+    .map(({ account }) => evaluate(account, (candidate) => refreshSingleFlight(candidate, dependencies.refresh)))))
+    .filter((candidate) => candidate !== null);
   const all = [...current, ...(requested ? [requested] : []), ...refreshed];
   const refreshedSelection = select(all);
   if (refreshedSelection) return result(refreshedSelection, requested);
-  if (classified.some((candidate) => candidate.unknown)) throw new ClaudeCredentialUnavailableError();
+  if (unknownAccounts.size > 0) throw new ClaudeCredentialUnavailableError();
   throw new NoHealthyClaudeAccountError(accounts.map((candidate) => candidate.id));
 }

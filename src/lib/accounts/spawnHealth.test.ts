@@ -111,6 +111,84 @@ for (const kind of ["legacy", "managed"] as const) {
   }
 }
 
+for (const [healthyKind, kind] of [["legacy", "managed"], ["managed", "legacy"], ["managed", "managed"]] as const) {
+  for (const phase of ["discovery", "metadata", "probe", "refresh", "probe-before-refresh"] as const) {
+    test("production caller keeps " + healthyKind + " healthy despite unrelated " + kind + " uncertainty at " + phase, async () => {
+      const store = await import("./claudeCredentials");
+      const read = spyOn(store, "readClaudeCredentials").mockReturnValue({ state: "absent" });
+      const { createManagedClaudeAccount, listClaudeAccounts } = await import("./claude");
+      const { resolveHealthySpawnAccount } = await import("./manager");
+      fs.rmSync(process.env.LLV_STATE_DIR!, { recursive: true, force: true });
+      fs.mkdirSync(process.env.LLV_CLAUDE_HOME!, { recursive: true, mode: 0o700 });
+      const uncertain = kind === "legacy" ? listClaudeAccounts()[0] : createManagedClaudeAccount("Account B");
+      const healthy = healthyKind === "legacy" ? listClaudeAccounts()[0] : createManagedClaudeAccount("Account A");
+      const reads = new Map<string, number>();
+      let injectUnknown = false;
+      let healthyPresent = true;
+      let injectedReads = 0;
+      const expiry = Date.now() + 3600_000;
+      const document = { claudeAiOauth: {
+        ["access" + "Token"]: crypto.randomUUID(),
+        ["refresh" + "Token"]: crypto.randomUUID(),
+        expiresAt: expiry,
+      } };
+      read.mockImplementation((home) => {
+        if (home !== uncertain.home && home !== healthy.home) return { state: "absent" };
+        if (home === healthy.home && !healthyPresent) return { state: "absent" };
+        const count = (reads.get(home) ?? 0) + 1;
+        reads.set(home, count);
+        // Two catalog reads precede metadata. Probe/refresh first re-read the
+        // catalog under the mutation lock, then read this account's store.
+        const threshold = phase === "discovery" ? 0 : phase === "metadata" ? 2 : 3;
+        if (injectUnknown && home === uncertain.home && count > threshold) {
+          injectedReads += 1;
+          return { state: "unknown" };
+        }
+        // Expired at metadata, then concurrently rotated before refresh. This
+        // exercises the real refresh lock, store read and subsequent live probe.
+        const expired = (phase === "refresh" || (phase === "probe-before-refresh" && home === healthy.home)) && count <= 3;
+        return { state: "present", source: "keychain", document: {
+          claudeAiOauth: { ...document.claudeAiOauth, expiresAt: expired ? Date.now() - 60_000 : expiry },
+        } };
+      });
+      providerReply = () => Response.json({ five_hour: { utilization: 1, resets_at: new Date(expiry).toISOString() } });
+      const resolve = async (requested?: string) => {
+        reads.clear();
+        injectedReads = 0;
+        return resolveHealthySpawnAccount("claude", requested);
+      };
+      try {
+        // Control: both candidates can pass the same production caller.
+        expect((await resolve(healthy.id)).accountId).toBe(healthy.id);
+        expect((await resolve(uncertain.id)).accountId).toBe(uncertain.id);
+        injectUnknown = true;
+        const selected = await resolve(healthy.id);
+        expect(selected.accountId).toBe(healthy.id);
+        expect(selected.requestedAdmission).toMatchObject({ kind: "admissible", basis: "current" });
+        if (phase !== "refresh") expect(injectedReads).toBeGreaterThan(0);
+
+        // Automatic routing exercises the aggregate refresh pass as well as
+        // proving the unknown candidate cannot win an unpinned selection.
+        expect((await resolve()).accountId).toBe(healthy.id);
+        expect(injectedReads).toBeGreaterThan(0);
+
+        // The same uncertainty on the named account must refuse substitution.
+        await expect(resolve(uncertain.id)).rejects.toThrow("credential store is unavailable");
+        expect(injectedReads).toBeGreaterThan(0);
+
+        // With no healthy candidate left, preserve the uncertainty diagnosis.
+        healthyPresent = false;
+        await expect(resolve()).rejects.toThrow("credential store is unavailable");
+        expect(injectedReads).toBeGreaterThan(0);
+      } finally {
+        read.mockRestore();
+        providerReply = null;
+        fs.rmSync(process.env.LLV_STATE_DIR!, { recursive: true, force: true });
+      }
+    });
+  }
+}
+
 test("spawn selection skips an unrefreshable expired preferred Claude account and probes a healthy fallback", async () => {
   const expired = account("expired", NOW - 1, true, false);
   const healthy = account("healthy", NOW + 60_000);
