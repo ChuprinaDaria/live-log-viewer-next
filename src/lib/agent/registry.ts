@@ -297,6 +297,28 @@ export interface SpawnLineageEdge {
   createdAt: string;
 }
 
+/** Where a seat's child discovery stands (#1465): the last lineage edge a
+    sweep read, by its key and the insertion order the store assigned it. The
+    store pages `row_order` past the anchor, so a child spawned after the sweep
+    completed is the next page whatever its key sorts like; and the anchor is
+    re-resolved by key on every read, so a renumbered collection is followed
+    rather than skipped over. */
+export interface SeatChildrenAnchor {
+  order: number;
+  key: string;
+}
+
+export interface SeatChildrenPage {
+  file: RegistryFile;
+  keys: string[];
+  /** The anchor to continue from. Null only when nothing has been read yet. */
+  after: SeatChildrenAnchor | null;
+  /** High water captured with this page, including during historical bootstrap. */
+  latest?: SeatChildrenAnchor | null;
+  complete: boolean;
+  evidenceGap: boolean;
+}
+
 export interface DurableConversationMembership {
   conversationId: ViewerConversationId;
   kind: "flow" | "pipeline" | "orchestrator";
@@ -3371,8 +3393,10 @@ export class AgentRegistry {
     }
   }
 
-  private assertSqliteParity(snapshot: SqliteRegistrySnapshot = this.sqliteStore!.snapshot()): void {
-    const json = readFile(this.filename, this.mcpGrantPolicy);
+  private assertSqliteParity(
+    snapshot: SqliteRegistrySnapshot = this.sqliteStore!.snapshot(),
+    json: RegistryFile = readFile(this.filename, this.mcpGrantPolicy),
+  ): void {
     if (!isDeepStrictEqual(snapshot.file, json)) {
       const fields = [...new Set([...Object.keys(snapshot.file), ...Object.keys(json)])]
         .filter((field) => !isDeepStrictEqual(
@@ -3946,16 +3970,17 @@ export class AgentRegistry {
     const claim = this.acquireLock(lock, captureProcessIdentity(process.pid));
     try {
       const sqlite = this.sqliteMode === "dual-write" ? this.sqliteStore!.snapshot() : null;
+      const original = readFileWithPayload(this.filename, this.mcpGrantPolicy);
       if (sqlite) {
-        const mirrorRevision = sqliteMirrorRevision(this.filename);
+        const mirrorRevision = original.sqliteRevision;
         if (mirrorRevision !== null && mirrorRevision !== sqlite.revision) {
           throw new RegistryParityError(
             `agent registry backend revisions differ: JSON ${mirrorRevision}, SQLite ${sqlite.revision}`,
           );
         }
-        this.assertSqliteParity(sqlite);
+        // Validate the same locked JSON snapshot the mutation will consume.
+        this.assertSqliteParity(sqlite, original.file);
       }
-      const original = readFileWithPayload(this.filename, this.mcpGrantPolicy);
       const rollbackFile = sqlite && original.sqliteRevision !== sqlite.revision
         ? clone(original.file)
         : null;
@@ -3964,7 +3989,7 @@ export class AgentRegistry {
       const currentPayload = serializeRegistry(file, sqlite?.revision);
       const changed = original.payload !== currentPayload;
       if (changed) {
-        const payload = serializeRegistry(file, sqlite ? sqlite.revision + 1 : undefined);
+        const payload = sqlite ? serializeRegistry(file, sqlite.revision + 1) : currentPayload;
         writeAtomicPayload(this.filename, payload);
       }
       if (sqlite && !changed) this.assertSqliteParity();
@@ -4025,6 +4050,25 @@ export class AgentRegistry {
   snapshotSpawns(launchIds: readonly string[]): SnapshotSpawnProjection {
     if (this.sqliteStore) return this.sqliteStore.snapshotSpawns(launchIds);
     return snapshotSpawnsFromRegistry(this.readOnlySnapshot(), launchIds);
+  }
+
+  /** Monitor-only bounded lineage projection; JSON backends cannot prove a bounded read. */
+  pageSeatChildren(parentId: string, after: SeatChildrenAnchor | null, limit: number, keys?: readonly string[]): SeatChildrenPage | null {
+    if (this.sqliteMode !== "sqlite" && this.sqliteMode !== "read") return null;
+    return this.sqliteStore?.pageSeatChildren(parentId, after, limit, keys) ?? null;
+  }
+
+  /** The monitor's own seat read. Under the authoritative SQLite registry it is
+      a keyed read that never materializes the file; a JSON-mode registry
+      answers from its ordinary snapshot instead (#1465), so the seat's turn is
+      always readable — the children projection beside it is what a JSON
+      backend cannot bound, and {@link pageSeatChildren} says so with null. */
+  seatTickConversation(id: string): Pick<RegistryConversation, "id" | "turn"> | null {
+    if (this.sqliteStore && (this.sqliteMode === "sqlite" || this.sqliteMode === "read")) {
+      return this.sqliteStore.seatTickConversation(id);
+    }
+    const conversation = this.conversation(id as ViewerConversationId);
+    return conversation ? { id: conversation.id, turn: conversation.turn } : null;
   }
 
   /** Resolves only conversation ids already present in the bounded custom-title

@@ -6,7 +6,7 @@ import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 
 import { emptyLaunchProfile } from "@/lib/accounts/migration/contracts";
-import { AgentRegistry, normalizeRegistry, RegistryParityError } from "./registry";
+import { AgentRegistry, normalizeRegistry, RegistryParityError, type SeatChildrenAnchor } from "./registry";
 import { SqliteAgentRegistryStore } from "./sqliteRegistryStore";
 
 const CHILD = path.join(import.meta.dir, "registry.sqliteChild.ts");
@@ -1620,6 +1620,106 @@ test("SQLite ordered collection reads use the collection-order index", () => {
   fs.rmSync(directory, { recursive: true, force: true });
 });
 
+test("SQLite replacement writes only changed positions while preserving replacement order", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "llv-registry-replacement-order-"));
+  const seed = new AgentRegistry(path.join(directory, "seed.json"), undefined, undefined, { sqliteMode: "off" });
+  const receipt = beginTestSpawn(seed, "/replacement-order");
+  const initial = seed.snapshot();
+  initial.receipts = Object.fromEntries(Array.from({ length: 650 }, (_, index) => {
+    const launchId = `replacement-${index}`;
+    return [launchId, { ...receipt, launchId }];
+  }));
+  const filename = path.join(directory, "registry.sqlite");
+  const store = new SqliteAgentRegistryStore(filename, { initialSnapshot: initial, normalize: normalizeRegistry });
+  const observer = new Database(filename);
+  observer.exec(`
+    CREATE TABLE position_writes (row_key TEXT);
+    CREATE TRIGGER observe_position_write AFTER UPDATE OF row_order ON registry_rows
+    BEGIN INSERT INTO position_writes VALUES (NEW.row_key); END;
+  `);
+  const next = store.snapshot();
+  next.file.receipts.appended = { ...receipt, launchId: "appended" };
+  expect(store.replace(next.file, next.revision).replaced).toBe(true);
+  expect(observer.query<{ count: number }, []>("SELECT COUNT(*) AS count FROM position_writes").get()!.count).toBe(0);
+  expect(Object.keys(store.snapshot().file.receipts).at(-1)).toBe("appended");
+
+  const reordered = store.snapshot();
+  const rows = Object.entries(reordered.file.receipts);
+  reordered.file.receipts = Object.fromEntries([rows.at(-1)!, ...rows.slice(1, -1)]);
+  expect(store.replace(reordered.file, reordered.revision).replaced).toBe(true);
+  expect(Object.keys(store.snapshot().file.receipts)).toEqual(Object.keys(reordered.file.receipts));
+  expect(observer.query<{ count: number }, []>("SELECT COUNT(*) AS count FROM position_writes").get()!.count).toBe(1);
+  observer.close();
+});
+
+test("SQLite writers acquire a released lock without the long busy-handler sleep", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "llv-registry-writer-wakeup-"));
+  const seed = new AgentRegistry(path.join(directory, "seed.json"), undefined, undefined, { sqliteMode: "off" });
+  const receipt = beginTestSpawn(seed, "/writer-wakeup");
+  const filename = path.join(directory, "registry.sqlite");
+  let acquiredAt = 0;
+  const store = new SqliteAgentRegistryStore(filename, {
+    initialSnapshot: seed.snapshot(), normalize: normalizeRegistry,
+    onWriterWait: () => { acquiredAt = Date.now(); },
+  });
+  const delays: number[] = [];
+  for (let pulse = 0; pulse < 4; pulse++) {
+    const ready = path.join(directory, `ready-${pulse}`);
+    const released = path.join(directory, `released-${pulse}`);
+    const holder = Bun.spawn([process.execPath, "-e", `
+      const fs = require("node:fs");
+      const { Database } = require("bun:sqlite");
+      const [filename, ready, released] = process.argv.slice(1);
+      const db = new Database(filename);
+      db.exec("PRAGMA busy_timeout = 5000; BEGIN IMMEDIATE");
+      fs.writeFileSync(ready, "ready");
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 85);
+      db.exec("COMMIT");
+      fs.writeFileSync(released, String(Date.now()));
+      db.close();
+    `, filename, ready, released], { stdout: "pipe", stderr: "pipe" });
+    const deadline = performance.now() + 2_000;
+    while (!fs.existsSync(ready) && performance.now() < deadline) {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1);
+    }
+    expect(fs.existsSync(ready)).toBe(true);
+    store.mutate((file) => { file.receipts[receipt.launchId]!.error = `pulse-${pulse}`; }, false);
+    expect(await holder.exited).toBe(0);
+    expect(await new Response(holder.stderr).text()).toBe("");
+    delays.push(Math.max(0, acquiredAt - Number(fs.readFileSync(released, "utf8"))));
+  }
+  console.info(`[agent registry writer wakeup] release-to-acquire delays: ${delays.join(", ")}ms`);
+  expect(Math.max(...delays)).toBeLessThan(10);
+});
+
+test("SQLite mutation acquisition retains the five-second deadline and leaves a held writer untouched", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "llv-registry-writer-deadline-"));
+  const seed = new AgentRegistry(path.join(directory, "seed.json"), undefined, undefined, { sqliteMode: "off" });
+  const receipt = beginTestSpawn(seed, "/writer-deadline");
+  const filename = path.join(directory, "registry.sqlite");
+  const store = new SqliteAgentRegistryStore(filename, { initialSnapshot: seed.snapshot(), normalize: normalizeRegistry });
+  const before = store.snapshot();
+  const holder = new Database(filename);
+  holder.exec("BEGIN IMMEDIATE");
+  try {
+    const startedAt = performance.now();
+    expect(() => store.mutate((file) => { file.receipts[receipt.launchId]!.error = "must not land"; }, false))
+      .toThrow("database is locked");
+    const elapsed = performance.now() - startedAt;
+    expect(elapsed).toBeGreaterThanOrEqual(5_000);
+    expect(elapsed).toBeLessThan(5_500);
+    expect(holder.inTransaction).toBe(true);
+  } finally {
+    holder.exec("ROLLBACK");
+    holder.close();
+  }
+  const after = store.snapshot();
+  expect(after.revision).toBe(before.revision);
+  expect(after.file).toEqual(before.file);
+  store.mutate((file) => { file.receipts[receipt.launchId]!.error = "after release"; }, false);
+  expect(store.snapshot().file.receipts[receipt.launchId]!.error).toBe("after release");
+}, 7_000);
+
 test.each(["off", "dual-write", "read", "sqlite"] as const)(
   "%s diagnostics keep cumulative counts and a rolling rate beyond the percentile sample cap",
   (sqliteMode) => {
@@ -1822,3 +1922,126 @@ test("production-sized SQLite registry bounds ten-lane writes, concurrent reads,
   expect(sqlite.writerWaitP95).toBeLessThan(100);
   expect(sqlite.readerP95).toBeLessThan(100);
 }, 60_000);
+
+test("seat child discovery uses its parent index and bounded payload reads across a large unrelated registry", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "registry-seat-page-"));
+  const seed = new AgentRegistry(path.join(directory, "seed.json"), undefined, undefined, { sqliteMode: "off" });
+  const parent = seed.ensureConversation("codex", "/sessions/seat.jsonl", null);
+  const child = seed.beginSpawnRequest({ engine: "codex", cwd: "/seat-project", launchProfile: { title: "bounded child" }, parentConversationId: parent.id, parentSource: "explicit" });
+  const initial = seed.snapshot();
+  const edge = initial.lineageEdges[child.receipt.conversationId]!;
+  for (let n = 0; n < 3000; n++) {
+    const id = ["conversation", String(n).padStart(8, "0")].join("_") as typeof parent.id;
+    initial.lineageEdges[id] = { ...edge, childConversationId: id,
+      parentConversationId: n < 205 ? parent.id : ["conversation", "unrelated"].join("_") as typeof parent.id,
+      evidence: { ...edge.evidence, launchId: null } };
+  }
+  const reads = new Map<string, number>();
+  let snapshots = 0;
+  const filename = path.join(directory, "registry.sqlite");
+  const store = new SqliteAgentRegistryStore(filename, { initialSnapshot: initial, normalize: normalizeRegistry,
+    onSnapshotLoad: () => snapshots++, onRowPayloadRead: (name, count) => reads.set(name, (reads.get(name) ?? 0) + count) });
+  const seen = new Set<string>();
+  let after: SeatChildrenAnchor | null = null;
+  let pages = 0;
+  for (let tick = 0; tick < 20; tick++) {
+    reads.clear();
+    const page = store.pageSeatChildren(parent.id, after, 20);
+    pages++;
+    expect(reads.get("lineageEdges")).toBeLessThanOrEqual(20);
+    expect(page.keys.length).toBeLessThanOrEqual(20);
+    page.keys.forEach((id) => seen.add(id));
+    after = page.after;
+    if (page.complete) break;
+  }
+  expect(seen.size).toBe(206);
+  expect(pages).toBe(11);
+  expect(snapshots).toBe(0);
+  const db = new Database(filename, { readonly: true });
+  const plan = db.query<{ detail: string }, [string, number, number]>(`EXPLAIN QUERY PLAN
+    SELECT row_key,value_json,row_order FROM registry_rows WHERE collection='lineageEdges'
+    AND json_extract(value_json,'$.source')='viewer-spawn'
+    AND json_extract(value_json,'$.parentConversationId')=? AND row_order>?
+    ORDER BY row_order LIMIT ?`).all(parent.id, -1, 20);
+  expect(plan.some((entry) => entry.detail.includes("registry_seat_children_order"))).toBe(true);
+  expect(plan.some((entry) => entry.detail.includes("TEMP B-TREE"))).toBe(false);
+  db.close();
+});
+
+/* Discovery pages in insertion order past a durable anchor (#1465): a child
+   spawned after the sweep completed is the very next page whatever its key
+   sorts like, and the anchor is re-resolved by key so a renumbered collection
+   is followed at its current order rather than skipped past. */
+test("a child spawned after a completed sweep is the next page, and a renumbered collection does not lose it", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "registry-seat-anchor-"));
+  const filename = path.join(directory, "registry.sqlite");
+  const registry = new AgentRegistry(path.join(directory, "registry.json"), undefined, undefined, { sqliteMode: "sqlite", sqliteFilename: filename });
+  const parent = registry.ensureConversation("codex", "/sessions/anchor-seat.jsonl", null);
+  const spawn = (title: string) => registry.beginSpawnRequest({ engine: "codex", cwd: "/seat-project",
+    launchProfile: { title }, parentConversationId: parent.id, parentSource: "explicit" }).receipt.conversationId;
+  const initial = Array.from({ length: 25 }, (_, n) => spawn(`worker ${n}`));
+  const first = registry.pageSeatChildren(parent.id, null, 20)!;
+  expect(first.keys).toEqual(initial.slice(0, 20));
+  expect(first.complete).toBe(false);
+  const second = registry.pageSeatChildren(parent.id, first.after, 20)!;
+  expect(second.keys).toEqual(initial.slice(20));
+  expect(second.complete).toBe(true);
+  /* Nothing new: an empty page, the anchor where it was. */
+  const idle = registry.pageSeatChildren(parent.id, second.after, 20)!;
+  expect(idle).toMatchObject({ keys: [], complete: true, after: second.after });
+  /* A child spawned now is the next page, however its key compares. */
+  const late = spawn("late worker");
+  expect(registry.pageSeatChildren(parent.id, idle.after, 20)!.keys).toEqual([late]);
+  /* The whole collection renumbered underneath the anchor — every order
+     shifted down — and the anchor is followed by key to its current order,
+     so the child spawned after it is still the next page. */
+  const db = new Database(filename, { readwrite: true, create: false });
+  db.query("UPDATE registry_rows SET row_order = row_order - 1000 WHERE collection='lineageEdges'").run();
+  db.close();
+  const renumbered = spawn("after renumbering");
+  const followed = registry.pageSeatChildren(parent.id, idle.after, 20)!;
+  expect(followed.keys).toEqual([late, renumbered]);
+  /* An anchor whose edge is gone restarts the sweep from the beginning. */
+  const restarted = registry.pageSeatChildren(parent.id, { key: ["conversation", "gone"].join("_"), order: 7 }, 20)!;
+  expect(restarted.keys).toEqual(initial.slice(0, 20));
+});
+
+
+test("a cyclic child alias leaves other children in the same indexed page readable", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "registry-seat-alias-"));
+  const seed = new AgentRegistry(path.join(directory, "seed.json"), undefined, undefined, { sqliteMode: "off" });
+  const parent = seed.ensureConversation("codex", "/sessions/seat.jsonl", null);
+  const spawn = (title: string) => seed.beginSpawnRequest({ engine: "codex", cwd: "/seat-project",
+    launchProfile: { title }, parentConversationId: parent.id, parentSource: "explicit" }).receipt;
+  const bad = spawn("ambiguous");
+  const good = spawn("readable");
+  const initial = seed.snapshot();
+  initial.conversationAliases[bad.conversationId] = bad.conversationId;
+  const store = new SqliteAgentRegistryStore(path.join(directory, "registry.sqlite"), { initialSnapshot: initial, normalize: normalizeRegistry });
+  const page = store.pageSeatChildren(parent.id, null, 20);
+  expect(page.evidenceGap).toBe(true);
+  expect(page.file.lineageEdges[bad.conversationId]).toBeUndefined();
+  expect(page.file.lineageEdges[good.conversationId]?.parentConversationId).toBe(parent.id);
+  expect(page.file.receipts[good.launchId]?.conversationId).toBe(good.conversationId);
+});
+
+
+/* The monitor's seat read under a JSON-mode registry (#1465): the seat's turn
+   is answered from the ordinary snapshot, and the children projection a JSON
+   backend cannot bound says so with null rather than failing the read. */
+test("a JSON-mode registry answers the seat tick's conversation read and declines to page children", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "registry-seat-json-"));
+  const registry = new AgentRegistry(path.join(directory, "registry.json"), undefined, undefined, { sqliteMode: "off" });
+  const seat = registry.ensureConversation("codex", "/sessions/json-seat.jsonl", null);
+  registry.reconcileConversations([{
+    engine: "codex",
+    path: "/sessions/json-seat.jsonl",
+    accountId: null,
+    launchProfile: emptyLaunchProfile({ cwd: "/seat-project", title: "seat" }),
+    turn: { state: "busy", source: "assistant", terminalAt: null },
+    observedAt: "2026-09-05T12:00:00.000Z",
+  }]);
+  expect(registry.seatTickConversation(seat.id)).toMatchObject({ id: seat.id, turn: { state: "busy" } });
+  expect(registry.seatTickConversation(["conversation", "0000000000000000"].join("_"))).toBeNull();
+  expect(registry.pageSeatChildren(seat.id, null, 20)).toBeNull();
+});
