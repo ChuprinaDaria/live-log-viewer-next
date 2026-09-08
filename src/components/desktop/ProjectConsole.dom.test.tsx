@@ -87,7 +87,7 @@ function get(url: string): unknown {
   if (url.startsWith("/api/projects?project=")) return DETAIL;
   if (url.startsWith("/api/projects")) return { projects: [{ id: "bot", name: "bot", firm: "noologic", parent: null, grants: { mcp: [], skills: [] }, secrets: [], rules: 0 }] };
   if (url.startsWith("/api/firms")) return { firms: [{ id: "noologic", name: "Noologic", projects: ["bot"], people: [], grants: { mcp: [], skills: [] }, secrets: [], rules: 0 }] };
-  if (url.startsWith("/api/machines") && url.includes("accounts=1")) return { profiles: ["daria"] };
+  if (url.startsWith("/api/machines") && url.includes("accounts=1")) return { profiles: ["account-a"] };
   if (url.startsWith("/api/machines") && url.includes("sessions=1")) return { sessions: [] };
   if (url.startsWith("/api/machines")) return { hosts: [{ id: "walter", ssh: null, engines: ["claude", "codex"], is_local: true, status: { reachable: true, detail: "" } }] };
   if (url.startsWith("/api/mcp-registry")) return REGISTRY;

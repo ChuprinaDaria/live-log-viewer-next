@@ -56,7 +56,7 @@ describe("effectiveRows", () => {
 
 describe("machineOf", () => {
   test("names a pulled host and nothing else", () => {
-    expect(machineOf(entry({ path: "/home/u/.claude/projects/pulled/ryzen/x/a.jsonl" }))).toBe("ryzen");
-    expect(machineOf(entry({ path: "/home/u/.claude/projects/x/a.jsonl" }))).toBe("");
+    expect(machineOf(entry({ path: "/w/.claude/projects/pulled/ryzen/x/a.jsonl" }))).toBe("ryzen");
+    expect(machineOf(entry({ path: "/w/.claude/projects/x/a.jsonl" }))).toBe("");
   });
 });

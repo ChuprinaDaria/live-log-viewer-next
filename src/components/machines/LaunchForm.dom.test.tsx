@@ -46,7 +46,7 @@ let lastPostBody: Record<string, unknown> | null = null;
 
 function get(url: string): unknown {
   if (url.startsWith("/api/machines") && url.includes("accounts=1")) {
-    return { profiles: ["daria", "kostya"] };
+    return { profiles: ["account-a", "account-b"] };
   }
   if (url.startsWith("/api/machines") && url.includes("sessions=1")) {
     return { sessions: [] };
@@ -114,13 +114,13 @@ test("launch form: firm-grouped projects, machine picker, model default, fresh f
   expect(ryzenBtn.disabled).toBe(true);
   expect(ryzenBtn.title).toBe("спить");
 
-  /* picking walter loads accounts; picking kostya */
+  /* picking walter loads accounts; picking account-b */
   const walterBtn = Array.from(el.querySelectorAll(`${machineGroup} button`))
     .find((b) => b.textContent?.includes("walter")) as HTMLButtonElement;
   act(() => { walterBtn.click(); });
   await settle();
-  const kostyaBtn = findButton(el, "kostya", '[role="group"][aria-label="Акаунт"]');
-  act(() => { kostyaBtn.click(); });
+  const accountBBtn = findButton(el, "account-b", '[role="group"][aria-label="Акаунт"]');
+  act(() => { accountBBtn.click(); });
 
   /* model select defaults to opus; switching LLM to Codex changes it */
   const modelSelect = el.querySelector('[aria-label="Модель"]') as HTMLSelectElement;
@@ -136,7 +136,7 @@ test("launch form: firm-grouped projects, machine picker, model default, fresh f
   await settle();
 
   expect(lastPostBody).toEqual({
-    host: "walter", project: "money", engine: "codex", model: "gpt-6-astra", account: "kostya", fresh: true,
+    host: "walter", project: "money", engine: "codex", model: "gpt-6-astra", account: "account-b", fresh: true,
   });
   expect(el.textContent).toContain("pulled");
 });

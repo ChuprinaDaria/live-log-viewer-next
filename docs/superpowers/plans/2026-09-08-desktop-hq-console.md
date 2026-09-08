@@ -169,8 +169,8 @@ describe("effectiveRows", () => {
 
 describe("machineOf", () => {
   test("names a pulled host and nothing else", () => {
-    expect(machineOf(entry({ path: "/home/u/.claude/projects/pulled/ryzen/x/a.jsonl" }))).toBe("ryzen");
-    expect(machineOf(entry({ path: "/home/u/.claude/projects/x/a.jsonl" }))).toBe("");
+    expect(machineOf(entry({ path: "/w/.claude/projects/pulled/ryzen/x/a.jsonl" }))).toBe("ryzen");
+    expect(machineOf(entry({ path: "/w/.claude/projects/x/a.jsonl" }))).toBe("");
   });
 });
 ```
@@ -661,7 +661,7 @@ git commit -m "Десктоп відкривається на пульт і ча
 
 ### Task 4: fleetctl — fresh code on the target, and what code each machine holds
 
-**Files (repo `/home/dchuprina/projects/agents`, i.e. `../` from fleet):**
+**Files (repo `../` from fleet — the agents repo that holds fleet):**
 - Modify: `fleetctl/fleetlib/spawn.py` (`session_spawn`, `session_transfer`), `fleetctl/fleetlib/registry.py` (the two `Func` entries + one new), `fleetctl/README.md` (one paragraph under the sessions section)
 - Create: `fleetctl/fleetlib/code.py`, `fleetctl/tests/test_code.py`, `fleetctl/tests/test_spawn_fresh.py`
 
@@ -716,12 +716,12 @@ git commit -m "Десктоп відкривається на пульт і ча
   Move mode keeps the existing source-machine + session pickers (moved verbatim from `MobileMachinesScreen`).
   `MobileMachinesScreen` renders `<MobileShell screen="machines" …><LaunchForm initialProject={initialProject} /></MobileShell>` and nothing else of its own.
 
-- [ ] **Step 1: Failing test** (`LaunchForm.dom.test.tsx`, prelude from «Test harness»; `fetch` answers `/api/machines?probe=0` and `/api/machines` with `{ machines: [{ id: "walter", ssh: null, engines: ["claude","codex"], is_local: true, status: { reachable: true, detail: "" } }, { id: "ryzen", ssh: "ryzen", engines: ["claude"], status: { reachable: false, detail: "спить" } }] }`, `?host=walter&accounts=1` with `{ profiles: ["daria", "kostya"] }`, `/api/firms` + `/api/projects` as in Task 2; POST `/api/machines` records the body and answers `{ session: { host: "walter", project: "bot", engine: "claude", tmux: "fc-bot-1", cwd: "/w/bot", attach: "", code: { action: "pulled" } } }`):
+- [ ] **Step 1: Failing test** (`LaunchForm.dom.test.tsx`, prelude from «Test harness»; `fetch` answers `/api/machines?probe=0` and `/api/machines` with `{ machines: [{ id: "walter", ssh: null, engines: ["claude","codex"], is_local: true, status: { reachable: true, detail: "" } }, { id: "ryzen", ssh: "ryzen", engines: ["claude"], status: { reachable: false, detail: "спить" } }] }`, `?host=walter&accounts=1` with `{ profiles: ["account-a", "account-b"] }`, `/api/firms` + `/api/projects` as in Task 2; POST `/api/machines` records the body and answers `{ session: { host: "walter", project: "bot", engine: "claude", tmux: "fc-bot-1", cwd: "/w/bot", attach: "", code: { action: "pulled" } } }`):
   - projects grouped by firm, `initialProject="money"` preselected;
   - the ryzen button is disabled with title "спить";
-  - picking walter loads accounts; picking `kostya`;
+  - picking walter loads accounts; picking `account-b`;
   - model select defaults to `opus`; switching LLM to Codex changes the default to `gpt-6-astra`;
-  - clicking «Запустити» POSTs `{ host: "walter", project: "money", engine: "codex", model: "gpt-6-astra", account: "kostya", fresh: true }` and the page shows "pulled".
+  - clicking «Запустити» POSTs `{ host: "walter", project: "money", engine: "codex", model: "gpt-6-astra", account: "account-b", fresh: true }` and the page shows "pulled".
 - [ ] **Step 2:** run, fails.
 - [ ] **Step 3:** implement; move the state/effects out of `MobileMachinesScreen.tsx` into `launchForm.ts` (`useLaunchForm(props)`) and the JSX into `LaunchForm.tsx`; delete the duplicated code from the mobile screen.
 - [ ] **Step 4:** `bun test src/components/machines/LaunchForm.dom.test.tsx`; `bunx eslint src/components/machines src/components/mobile/MobileMachinesScreen.tsx src/app/api/machines/route.ts`.

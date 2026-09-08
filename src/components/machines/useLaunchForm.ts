@@ -69,7 +69,7 @@ export interface LaunchFormState {
   fresh: boolean;
   setFresh: (fresh: boolean) => void;
 
-  prompt: string;
+  readonly prompt: string;
   setPrompt: (prompt: string) => void;
 
   mode: LaunchMode;
