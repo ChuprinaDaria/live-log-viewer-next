@@ -35,7 +35,8 @@ export type MobileScreen =
   | { kind: "firms" }
   | { kind: "permissions" }
   | { kind: "channels" }
-  | { kind: "machines" };
+  | { kind: "machines" }
+  | { kind: "archive" };
 export type MobileScreenKind = MobileScreen["kind"];
 export type MobileSheetName = "projects" | "attention" | "menu" | "host" | "search" | "seat" | "rotate" | "switch" | "model" | "stage";
 /** How the current state was reached; the shell picks its transition from it. */
@@ -61,7 +62,7 @@ export interface MobileNavEntry {
   screen: MobileScreen;
 }
 
-const SCREEN_KINDS: ReadonlySet<string> = new Set(["board", "chat", "pipelines", "pipeline", "accounts", "orchestrator", "secrets", "mcp", "settings", "roles", "firms", "permissions", "channels", "machines"]);
+const SCREEN_KINDS: ReadonlySet<string> = new Set(["board", "chat", "pipelines", "pipeline", "accounts", "orchestrator", "secrets", "mcp", "settings", "roles", "firms", "permissions", "channels", "machines", "archive"]);
 const WITH_ID: ReadonlySet<string> = new Set(["chat", "pipeline"]);
 
 function isScreen(value: unknown): value is MobileScreen {

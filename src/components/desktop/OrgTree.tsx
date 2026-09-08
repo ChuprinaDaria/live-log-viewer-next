@@ -1,40 +1,53 @@
 "use client";
 
-import { Building2, ChevronRight } from "lucide-react";
-import { useMemo, useState } from "react";
+import { Archive, Building2 } from "lucide-react";
+import { useEffect, useState } from "react";
 
 import { projectTree, useOrg } from "@/components/mobile/firmsModel";
-import { buildProjectSummaries } from "@/components/projectModel";
-import { fmtAge } from "@/components/utils";
 import { useLocale } from "@/lib/i18n";
-import type { FileEntry } from "@/lib/types";
-
-import { unassignedFiles } from "./desktopHomeModel";
 
 /*
  * The console's org tree as the desktop's left column: firms, their projects,
  * subfolders indented. Read from fleetctl through `useOrg`, never from the
- * transcript directories — those only feed the «Без проєкту» bucket at the
- * bottom, which is where every unclaimed session waits for the sorter.
+ * transcript directories.
+ *
+ * At the bottom, one row and not a pile. The «Без проєкту» bucket used to list
+ * every unclaimed session here, which is exactly the «звалище старих сесій»
+ * the operator asked to be rid of: those sessions are summarised in the
+ * archive now, and this row only says how many there are and opens it.
  */
 
 export interface OrgTreeProps {
-  files: readonly FileEntry[];
   /** Console project id, or null. */
   selected: string | null;
   onSelect: (project: string) => void;
-  /** A board project key from the «Без проєкту» bucket. */
-  onOpenBoardProject: (boardProject: string) => void;
+  /** Open the session archive. */
+  onOpenArchive: () => void;
 }
 
 const ROW = "flex min-h-8 w-full items-center gap-1.5 rounded-[8px] px-2 text-left text-[12.5px] hover:bg-quiet focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40";
 
-export function OrgTree({ files, selected, onSelect, onOpenBoardProject }: OrgTreeProps) {
+export function OrgTree({ selected, onSelect, onOpenArchive }: OrgTreeProps) {
   const { t } = useLocale();
   const org = useOrg();
-  const [bucketOpen, setBucketOpen] = useState(false);
-  const unassigned = useMemo(() => unassignedFiles(files), [files]);
-  const bucketRows = useMemo(() => (bucketOpen ? buildProjectSummaries([...unassigned]) : []), [bucketOpen, unassigned]);
+  /* Nothing while it is unknown: a count is either the archive's own or absent,
+     never a zero this column made up. */
+  const [archived, setArchived] = useState<number | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      try {
+        const response = await fetch("/api/archive?count=1", { cache: "no-store" });
+        if (!response.ok) return;
+        const body = await response.json() as { count?: unknown };
+        if (alive && typeof body.count === "number") setArchived(body.count);
+      } catch {
+        /* the row still opens the archive, which says what went wrong */
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
 
   return (
     <nav aria-label={t("firms.title")} className="flex flex-col gap-1 px-2 py-2">
@@ -56,23 +69,13 @@ export function OrgTree({ files, selected, onSelect, onOpenBoardProject }: OrgTr
           ))}
         </div>
       ))}
-      {unassigned.length ? (
-        <div className="mt-2 border-t border-border pt-2">
-          <button type="button" data-org-unassigned aria-expanded={bucketOpen} title={t("desktop.unassignedHint")}
-            className={`${ROW} font-semibold text-muted`} onClick={() => setBucketOpen((was) => !was)}>
-            <ChevronRight className={`h-3 w-3 shrink-0 transition-transform ${bucketOpen ? "rotate-90" : ""}`} aria-hidden />
-            <span className="truncate">{t("desktop.unassigned")}</span>
-            <span className="ml-auto tabular-nums">{unassigned.length}</span>
-          </button>
-          {bucketRows.map((summary) => (
-            <button key={summary.project} type="button" data-org-unassigned-row={summary.project}
-              className={`${ROW} pl-6 text-secondary`} onClick={() => onOpenBoardProject(summary.project)}>
-              <span className="truncate">{summary.displayName}</span>
-              <span className="ml-auto text-[11px] text-muted">{fmtAge(summary.smt)}</span>
-            </button>
-          ))}
-        </div>
-      ) : null}
+      <div className="mt-2 border-t border-border pt-2">
+        <button type="button" data-org-archive className={`${ROW} font-semibold text-muted`} onClick={onOpenArchive}>
+          <Archive className="h-3.5 w-3.5 shrink-0" aria-hidden />
+          <span className="truncate">{t("archive.title")}</span>
+          {archived === null ? null : <span className="ml-auto tabular-nums">{archived}</span>}
+        </button>
+      </div>
     </nav>
   );
 }

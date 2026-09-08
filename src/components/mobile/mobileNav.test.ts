@@ -241,6 +241,10 @@ describe("history entries", () => {
     expect(readMobileNavEntry({ [MOBILE_NAV_STATE_KEY]: { d: 2, screen: { kind: "machines" } } })).toEqual({ d: 2, screen: { kind: "machines" } });
   });
 
+  test("an archive entry round-trips too: the session archive is a root, not a sheet", () => {
+    expect(readMobileNavEntry({ [MOBILE_NAV_STATE_KEY]: { d: 2, screen: { kind: "archive" } } })).toEqual({ d: 2, screen: { kind: "archive" } });
+  });
+
   test("attach is ref-counted: the listener stays until the last screen detaches", () => {
     const b = browser();
     const nav = createMobileNav(b.host);

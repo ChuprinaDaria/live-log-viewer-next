@@ -47,7 +47,8 @@ const realFetch = globalThis.fetch;
 globalThis.fetch = (async (input: RequestInfo | URL) => {
   const url = String(input);
   const body = url.startsWith("/api/orchestrator/hq") ? { seat: null, pending: null, exists: false }
-    : url.startsWith("/api/firms") ? { firms: [] } : url.startsWith("/api/projects") ? { projects: [] } : {};
+    : url.startsWith("/api/firms") ? { firms: [] } : url.startsWith("/api/projects") ? { projects: [] }
+    : url === "/api/archive?count=1" ? { count: 4 } : url.startsWith("/api/archive") ? { cards: [] } : {};
   return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
 }) as typeof fetch;
 afterEach(() => { globalThis.fetch = realFetch; });
@@ -56,11 +57,29 @@ const flush = () => new Promise((r) => setTimeout(r, 0));
 test("desktop home = console column + HQ room, and «Дошка» hands off", async () => {
   setLocale("uk");
   let boards = 0;
-  const el = mount(<DesktopHome files={[]} selectedProject={null} onSelectProject={() => {}} onOpenBoard={() => { boards += 1; }} onOpenBoardProject={() => {}} onOpenFile={() => {}} />);
+  const el = mount(<DesktopHome files={[]} selectedProject={null} onSelectProject={() => {}} onOpenBoard={() => { boards += 1; }} onOpenFile={() => {}} />);
   await act(flush); await act(flush);
   expect(el.querySelector("[data-desktop-console]")).not.toBeNull();
   expect(el.querySelector('[data-mobile2-hq="vacant"]')).not.toBeNull();
   expect(el.querySelector("[data-mobile2-tabs]")).toBeNull();
   act(() => { (el.querySelector("[data-desktop-board]") as HTMLButtonElement).click(); });
   expect(boards).toBe(1);
+});
+
+test("the archive row opens the archive in the right-side panel, and Esc closes it", async () => {
+  setLocale("uk");
+  const el = mount(<DesktopHome files={[]} selectedProject={null} onSelectProject={() => {}} onOpenBoard={() => {}} onOpenFile={() => {}} />);
+  await act(flush); await act(flush);
+  expect(el.querySelector('[data-mobile2-screen="archive"]')).toBeNull();
+
+  act(() => { (el.querySelector("[data-org-archive]") as HTMLButtonElement).click(); });
+  await act(flush); await act(flush);
+  const panel = document.querySelector('[data-desktop-archive-panel]');
+  expect(panel).not.toBeNull();
+  expect(panel!.querySelector('[data-mobile2-screen="archive"]')).not.toBeNull();
+  /* One navigation per surface: the panel suppresses the phone's tab bar. */
+  expect(panel!.querySelector("[data-mobile2-tabs]")).toBeNull();
+
+  act(() => { window.dispatchEvent(new dom.KeyboardEvent("keydown", { key: "Escape", bubbles: true }) as unknown as Event); });
+  expect(document.querySelector('[data-desktop-archive-panel]')).toBeNull();
 });

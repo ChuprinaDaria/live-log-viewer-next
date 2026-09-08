@@ -1197,7 +1197,6 @@ export function Viewer() {
           selectedProject={consoleProject}
           onSelectProject={setConsoleProject}
           onOpenBoard={openBoard}
-          onOpenBoardProject={(key) => { openBoard(); selectProject(key); }}
           onOpenFile={(file) => { setHomeMode("board"); openFile(file); }}
         />
         <AttentionHost mobile={false} />

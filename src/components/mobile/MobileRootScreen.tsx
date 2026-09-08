@@ -1,8 +1,9 @@
 "use client";
 
-import { Building2, Info, MessagesSquare, Server, ShieldCheck, SlidersHorizontal, UserRound } from "lucide-react";
+import { Archive, Building2, Info, MessagesSquare, Server, ShieldCheck, SlidersHorizontal, UserRound } from "lucide-react";
 import type { ReactNode } from "react";
 
+import { ArchiveScreen } from "@/components/archive/ArchiveScreen";
 import { KeepAwakeMenuRow } from "@/components/KeepAwakeControl";
 import { SoundToggle } from "@/components/SoundToggle";
 import { useLocale } from "@/lib/i18n";
@@ -49,6 +50,7 @@ export function renderMobileRootScreen(kind: MobileScreenKind, ctx: MobileRootCo
     case "channels": return <MobileChannelsScreen host={ctx.host} renderSheet={ctx.renderSheet} />;
     case "machines": return <MobileMachinesScreen host={ctx.host} renderSheet={ctx.renderSheet} />;
     case "mcp": return <MobileMcpScreen host={ctx.host} renderSheet={ctx.renderSheet} />;
+    case "archive": return <ArchiveScreen host={ctx.host} renderSheet={ctx.renderSheet} />;
     default: return null;
   }
 }
@@ -74,6 +76,7 @@ function MobileSettingsScreen({ ctx }: { ctx: MobileRootContext }) {
           <MobileSheetRow icon={<Building2 className="h-[18px] w-[18px]" aria-hidden />} label={t("firms.title")} attrs={{ "data-mobile2-go": "firms" }} onSelect={() => nav.push({ kind: "firms" })} />
           <MobileSheetRow icon={<ShieldCheck className="h-[18px] w-[18px]" aria-hidden />} label={t("perms.title")} attrs={{ "data-mobile2-go": "permissions" }} onSelect={() => nav.push({ kind: "permissions" })} />
           <MobileSheetRow icon={<MessagesSquare className="h-[18px] w-[18px]" aria-hidden />} label={t("channels.title")} attrs={{ "data-mobile2-go": "channels" }} onSelect={() => nav.push({ kind: "channels" })} />
+          <MobileSheetRow icon={<Archive className="h-[18px] w-[18px]" aria-hidden />} label={t("archive.title")} attrs={{ "data-mobile2-go": "archive" }} onSelect={() => nav.push({ kind: "archive" })} />
         </div>
         <div className={card}>
           <div className="flex min-h-11 items-center gap-2 px-4">

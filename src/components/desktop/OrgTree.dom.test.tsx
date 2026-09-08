@@ -1,4 +1,4 @@
-import { afterEach, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, expect, test } from "bun:test";
 import { Window } from "happy-dom";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -38,15 +38,12 @@ afterEach(() => {
   root = null; container = null;
 });
 
-import type { FileEntry } from "@/lib/types";
 import { setLocale } from "@/lib/i18n";
 import { OrgTree } from "./OrgTree";
 
-function entry(over: Partial<FileEntry>): FileEntry {
-  return { path: "/x/a.jsonl", root: "claude-projects", name: "a.jsonl", project: "dir-1", title: "A", engine: "claude", kind: "session", fmt: "jsonl", parent: null, mtime: 100, size: 1, activity: "idle", proc: null, pid: null, model: null, pendingQuestion: null, ...over } as FileEntry;
-}
-
 const realFetch = globalThis.fetch;
+let asked: string[] = [];
+let countAnswer: { status: number; body: unknown } = { status: 200, body: { count: 317 } };
 function answer(url: string) {
   if (url.startsWith("/api/firms")) return { firms: [{ id: "noologic", name: "Noologic", projects: ["bot", "money"], people: [], grants: { mcp: [], skills: [] }, secrets: [], rules: 0 }] };
   if (url.startsWith("/api/projects")) return { projects: [
@@ -56,27 +53,51 @@ function answer(url: string) {
   ] };
   return {};
 }
-globalThis.fetch = (async (input: RequestInfo | URL) =>
-  new Response(JSON.stringify(answer(String(input))), { status: 200, headers: { "content-type": "application/json" } })) as typeof fetch;
-afterEach(() => { globalThis.fetch = realFetch; });
+globalThis.fetch = (async (input: RequestInfo | URL) => {
+  const url = String(input);
+  asked.push(url);
+  if (url.startsWith("/api/archive")) {
+    return new Response(JSON.stringify(countAnswer.body), { status: countAnswer.status, headers: { "content-type": "application/json" } });
+  }
+  return new Response(JSON.stringify(answer(url)), { status: 200, headers: { "content-type": "application/json" } });
+}) as typeof fetch;
+afterEach(() => { asked = []; countAnswer = { status: 200, body: { count: 317 } }; });
+afterAll(() => { globalThis.fetch = realFetch; });
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
-test("renders firms, projects, subfolders and the unassigned bucket", async () => {
+test("renders firms, projects, subfolders and the one archive row", async () => {
   setLocale("uk");
-  const files = [entry({ path: "/u1", project: "dir-old" }), entry({ path: "/u2", project: "dir-old" }), entry({ path: "/a", org: { firm: "noologic", firmName: "Noologic", project: "bot", projectName: "bot", via: "path" } })];
   const selected: string[] = [];
-  const el = mount(<OrgTree files={files} selected="bot" onSelect={(p) => selected.push(p)} onOpenBoardProject={() => {}} />);
+  let archives = 0;
+  const el = mount(<OrgTree selected="bot" onSelect={(p) => selected.push(p)} onOpenArchive={() => { archives += 1; }} />);
   await act(flush); await act(flush);
   expect(el.querySelector('[data-org-firm="noologic"]')?.textContent).toContain("Noologic");
   expect(el.querySelector('[data-org-project="bot"]')?.getAttribute("aria-current")).toBe("true");
   expect(el.querySelector('[data-org-project="eva"]')).not.toBeNull();
-  const bucket = el.querySelector('[data-org-unassigned]') as HTMLButtonElement;
-  expect(bucket.textContent).toContain("Без проєкту");
-  expect(bucket.textContent).toContain("2");
-  expect(el.querySelector('[data-org-unassigned-row]')).toBeNull();
-  act(() => { bucket.click(); });
-  expect(el.querySelector('[data-org-unassigned-row="dir-old"]')).not.toBeNull();
+
+  /* The «Без проєкту» pile is gone: the sessions it held are summarised in
+     the archive now, not listed as rows nobody reads. */
+  expect(el.querySelector("[data-org-unassigned]")).toBeNull();
+  expect(el.querySelector("[data-org-unassigned-row]")).toBeNull();
+
+  const archive = el.querySelector("[data-org-archive]") as HTMLButtonElement;
+  expect(archive.textContent).toContain("Архів сесій");
+  expect(archive.textContent).toContain("317");
+  act(() => { archive.click(); });
+  expect(archives).toBe(1);
+
   act(() => { (el.querySelector('[data-org-project="money"]') as HTMLButtonElement).click(); });
   expect(selected).toEqual(["money"]);
+});
+
+test("the archive row shows no count while the count is unknown", async () => {
+  setLocale("uk");
+  countAnswer = { status: 503, body: { error: "NOT_INSTALLED" } };
+  const el = mount(<OrgTree selected={null} onSelect={() => {}} onOpenArchive={() => {}} />);
+  await act(flush); await act(flush);
+  const archive = el.querySelector("[data-org-archive]") as HTMLButtonElement;
+  expect(archive.textContent).toContain("Архів сесій");
+  expect(archive.textContent).not.toContain("317");
+  expect(asked.some((url) => url === "/api/archive?count=1")).toBe(true);
 });

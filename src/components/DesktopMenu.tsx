@@ -1,6 +1,6 @@
 "use client";
 
-import { Blocks, Building2, KeyRound, Menu, Radio, Server, ShieldCheck, UserRound, X } from "lucide-react";
+import { Archive, Blocks, Building2, KeyRound, Menu, Radio, Server, ShieldCheck, UserRound, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { useLocale, type MessageKey } from "@/lib/i18n";
@@ -22,7 +22,7 @@ import { SuppressMobileTabs } from "./mobile/MobileShell";
  * a second navigation inside a panel is not navigation.
  */
 
-type MenuKind = "secrets" | "mcp" | "machines" | "permissions" | "roles" | "firms" | "channels";
+type MenuKind = "secrets" | "mcp" | "machines" | "permissions" | "roles" | "firms" | "channels" | "archive";
 
 const ITEMS: { kind: MenuKind; label: MessageKey; Icon: typeof KeyRound }[] = [
   { kind: "secrets", label: "mobile2.tabs.secrets", Icon: KeyRound },
@@ -32,6 +32,7 @@ const ITEMS: { kind: MenuKind; label: MessageKey; Icon: typeof KeyRound }[] = [
   { kind: "roles", label: "roles.title", Icon: UserRound },
   { kind: "firms", label: "firms.title", Icon: Building2 },
   { kind: "channels", label: "channels.title", Icon: Radio },
+  { kind: "archive", label: "archive.title", Icon: Archive },
 ];
 
 export function DesktopMenu() {

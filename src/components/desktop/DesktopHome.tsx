@@ -1,7 +1,9 @@
 "use client";
 
-import { LayoutGrid } from "lucide-react";
+import { LayoutGrid, X } from "lucide-react";
+import { useEffect, useState } from "react";
 
+import { ArchiveScreen } from "@/components/archive/ArchiveScreen";
 import { MobileHqRoom } from "@/components/mobile/MobileHqRoom";
 import { SuppressMobileTabs } from "@/components/mobile/MobileShell";
 import { useLocale } from "@/lib/i18n";
@@ -23,12 +25,20 @@ export interface DesktopHomeProps {
   selectedProject: string | null;
   onSelectProject: (project: string | null) => void;
   onOpenBoard: () => void;
-  onOpenBoardProject: (boardProject: string) => void;
   onOpenFile: (file: FileEntry) => void;
 }
 
-export function DesktopHome({ files, selectedProject, onSelectProject, onOpenBoard, onOpenBoardProject, onOpenFile }: DesktopHomeProps) {
+export function DesktopHome({ files, selectedProject, onSelectProject, onOpenBoard, onOpenFile }: DesktopHomeProps) {
   const { t } = useLocale();
+  const [archiveOpen, setArchiveOpen] = useState(false);
+
+  useEffect(() => {
+    if (!archiveOpen) return;
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setArchiveOpen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [archiveOpen]);
+
   return (
     <div className="flex h-full">
       <aside data-desktop-console className="flex w-[280px] shrink-0 flex-col overflow-y-auto border-r border-border bg-card">
@@ -40,7 +50,7 @@ export function DesktopHome({ files, selectedProject, onSelectProject, onOpenBoa
             {t("desktop.board")}
           </button>
         </div>
-        <OrgTree files={files} selected={selectedProject} onSelect={(id) => onSelectProject(id === selectedProject ? null : id)} onOpenBoardProject={onOpenBoardProject} />
+        <OrgTree selected={selectedProject} onSelect={(id) => onSelectProject(id === selectedProject ? null : id)} onOpenArchive={() => setArchiveOpen(true)} />
         {selectedProject ? <ProjectConsole project={selectedProject} files={files} onOpenFile={onOpenFile} /> : null}
       </aside>
       <main data-desktop-hq className="flex min-w-0 flex-1 flex-col">
@@ -48,6 +58,27 @@ export function DesktopHome({ files, selectedProject, onSelectProject, onOpenBoa
           <MobileHqRoom files={files} host={null} />
         </SuppressMobileTabs>
       </main>
+
+      {/* The archive comes in on the right, in the same panel the menu's pages
+          use: a column those screens were drawn for, and Esc to close it. */}
+      {archiveOpen ? (
+        <div className="fixed inset-0 z-50 flex justify-end bg-black/20" onClick={() => setArchiveOpen(false)}>
+          <div data-desktop-archive-panel className="flex h-full w-full max-w-[560px] flex-col border-l border-border bg-canvas shadow-xl"
+            onClick={(event) => event.stopPropagation()}>
+            <div className="flex h-10 shrink-0 items-center justify-end border-b border-border bg-card px-2">
+              <button type="button" aria-label={t("common.close")} onClick={() => setArchiveOpen(false)}
+                className="inline-flex h-7 w-7 items-center justify-center rounded-[8px] text-muted hover:bg-quiet hover:text-primary">
+                <X className="h-4 w-4" aria-hidden />
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-hidden">
+              <SuppressMobileTabs>
+                <ArchiveScreen host={null} />
+              </SuppressMobileTabs>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
