@@ -2857,4 +2857,8 @@ export const en = {
   "mobile2.hq.start": "Start the orchestrator",
   "mobile2.hq.starting": "The orchestrator is starting…",
   "mobile2.hq.unreachable": "The server is not answering — the orchestrator’s status is unknown.",
+  "desktop.firmsUnreachable": "The console is unreachable: firms and projects cannot be read.",
+  "desktop.noFirms": "No firms yet.",
+  "desktop.unassigned": "No project",
+  "desktop.unassignedHint": "Sessions no console project claims. The sorter will go through them.",
 } satisfies Dictionary;

@@ -2769,4 +2769,8 @@ export const uk: Record<keyof typeof en, Message> = {
   "mobile2.hq.start": "Запустити оркестратора",
   "mobile2.hq.starting": "Оркестратор стартує…",
   "mobile2.hq.unreachable": "Сервер не відповідає — статус оркестратора невідомий.",
+  "desktop.firmsUnreachable": "Пульт не відповідає: фірми й проєкти не читаються.",
+  "desktop.noFirms": "Фірм ще немає.",
+  "desktop.unassigned": "Без проєкту",
+  "desktop.unassignedHint": "Сесії, які не привʼязані до проєкту пульта. Їх перебере сортувальник.",
 };
