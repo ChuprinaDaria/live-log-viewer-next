@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { getLocale, translate, type MessageKey } from "@/lib/i18n";
+import { HQ_AVATAR_MAX_BYTES, HQ_AVATAR_MIMES } from "@/lib/orchestrator/hqIdentityShared";
 
 /*
  * The HQ room's signature as the dashboard reads and sets it (see
@@ -16,9 +17,6 @@ export interface HqIdentityRead {
   name: string;
   avatarUrl: string | null;
 }
-
-const MAX_BYTES = 3 * 1024 * 1024;
-const MIMES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
 
 export interface HqIdentityState {
   /** Null until the first answer. */
@@ -107,8 +105,8 @@ export function useHqIdentity(): HqIdentityState {
   const saveAvatar = useCallback(async (file: File): Promise<string | null> => {
     /* Refused here first: a 3 MB file the server would reject anyway should
        never be read into memory and base64'd on a phone. */
-    if (!MIMES.includes(file.type)) return say("hq.identity.badType");
-    if (file.size > MAX_BYTES) return say("hq.identity.tooBig");
+    if (!(HQ_AVATAR_MIMES as readonly string[]).includes(file.type)) return say("hq.identity.badType");
+    if (file.size > HQ_AVATAR_MAX_BYTES) return say("hq.identity.tooBig");
     const base64 = await readBase64(file);
     if (base64 === null) return say("hq.identity.badType");
     return apply({ avatar: { mime: file.type, base64 } });

@@ -4,6 +4,8 @@ import path from "node:path";
 
 import { statePath } from "@/lib/configDir";
 
+import { HQ_AVATAR_MAX_BYTES, HQ_DEFAULT_NAME, HQ_NAME_MAX, type HqAvatarMime } from "./hqIdentityShared";
+
 /*
  * How the standing HQ orchestrator signs itself in its room: a name and,
  * optionally, a picture. The operator sets both from the dashboard, so this is
@@ -14,8 +16,6 @@ import { statePath } from "@/lib/configDir";
  * JSON file the room reads on every poll would be re-parsed and re-shipped for
  * every render; as a file it is served once and cached by its `updatedAt`.
  */
-
-export type HqAvatarMime = "image/png" | "image/jpeg" | "image/webp" | "image/gif";
 
 export interface HqAvatar {
   /** Basename inside the state dir, never a path the caller supplied. */
@@ -30,13 +30,7 @@ export interface HqIdentity {
   avatar: HqAvatar | null;
 }
 
-export const HQ_DEFAULT_NAME = "Дітріх";
-export const HQ_NAME_MAX = 40;
-export const HQ_AVATAR_MAX_BYTES = 3 * 1024 * 1024;
-
-/** The four inert raster formats the room embeds. SVG is excluded for the same
-    reason /api/image excludes it: served from the app origin it would run
-    embedded same-origin script. */
+/** The file extension each accepted type is stored under. */
 const EXTENSION: Record<HqAvatarMime, string> = {
   "image/png": "png",
   "image/jpeg": "jpg",

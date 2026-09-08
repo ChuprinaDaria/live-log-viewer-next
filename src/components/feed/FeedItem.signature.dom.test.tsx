@@ -6,8 +6,13 @@ import { createRoot, type Root } from "react-dom/client";
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const dom = new Window({ url: "http://localhost/" });
+/* Both branches of the prose renderer are covered: the HQ room is the MOBILE
+   one, and the desktop feed can carry a signature too. `mobile` is flipped per
+   test, and `useIsMobile` reads matchMedia on every mount. */
+let mobile = false;
 const matchMedia = (query: string) => ({
-  matches: false, media: query, onchange: null,
+  matches: query === MOBILE_LAYOUT_QUERY ? mobile : false,
+  media: query, onchange: null,
   addListener: () => {}, removeListener: () => {},
   addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => false,
 });
@@ -21,6 +26,9 @@ Object.assign(globalThis, {
   cancelAnimationFrame: (id: number) => clearTimeout(id),
   matchMedia,
 });
+/* `useIsMobile` reads `window.matchMedia`, and `window` here is the happy-dom
+   instance rather than globalThis. */
+Object.assign(dom, { matchMedia });
 
 let root: Root | null = null;
 let container: HTMLElement | null = null;
@@ -35,11 +43,14 @@ afterEach(() => {
   act(() => { root?.unmount(); });
   container?.remove();
   root = null; container = null;
+  mobile = false;
 });
 afterAll(() => { globalThis.fetch = realFetch; });
 
 const realFetch = globalThis.fetch;
 globalThis.fetch = (async () => new Response("{}", { status: 200, headers: { "content-type": "application/json" } })) as unknown as typeof fetch;
+
+import { MOBILE_LAYOUT_QUERY } from "@/lib/attention/eligibility";
 
 import { FeedItem } from "./FeedItem";
 import type { Item } from "./parse";
@@ -94,5 +105,38 @@ test("a tool row is never signed", () => {
     outputPreview: "", outputTruncated: false, open: false,
   };
   mount(<FeedItem item={tool} signature={{ name: "Дітріх", avatarUrl: null }} />);
+  expect(signature()).toBeNull();
+});
+
+/* The phone is the surface the HQ room actually runs on: `FeedItem` renders a
+   different prose branch there, and the signature has to survive the switch. */
+test("on the phone the answer is signed the same way", () => {
+  mobile = true;
+  mount(<FeedItem item={prose} signature={{ name: "Дітріх", avatarUrl: "/api/orchestrator/hq/avatar?v=1" }} />);
+  expect(document.querySelector("[data-mobile-message='agent']")).not.toBeNull();
+  const row = signature();
+  expect(row).not.toBeNull();
+  expect(row!.textContent).toContain("Дітріх");
+  expect(row!.querySelector("img")!.getAttribute("src")).toBe("/api/orchestrator/hq/avatar?v=1");
+});
+
+test("on the phone with no picture the letter circle stands in", () => {
+  mobile = true;
+  mount(<FeedItem item={prose} signature={{ name: "дітріх", avatarUrl: null }} />);
+  const row = signature();
+  expect(row).not.toBeNull();
+  expect(row!.querySelector("img")).toBeNull();
+  expect(row!.textContent).toContain("Д");
+});
+
+test("on the phone an unsigned feed and the operator's own message stay bare", () => {
+  mobile = true;
+  mount(<FeedItem item={prose} />);
+  expect(signature()).toBeNull();
+});
+
+test("on the phone the operator's message is never signed", () => {
+  mobile = true;
+  mount(<FeedItem item={user} signature={{ name: "Дітріх", avatarUrl: null }} />);
   expect(signature()).toBeNull();
 });

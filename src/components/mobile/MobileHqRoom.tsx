@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import { ChevronDown, Loader2 } from "@/components/icons";
 import { engineLabel } from "@/components/feed/engineMark";
@@ -12,6 +12,7 @@ import { accountDisplayName, accountIdFromPath, DEFAULT_ACCOUNT_ID } from "@/lib
 import { useEngineAccounts } from "@/hooks/useEngineAccounts";
 import { useKeyboardInset } from "@/hooks/useComposer";
 import { useLocale } from "@/lib/i18n";
+import { HQ_AVATAR_ACCEPT, HQ_DEFAULT_NAME, HQ_NAME_MAX } from "@/lib/orchestrator/hqIdentityShared";
 import type { FileEntry } from "@/lib/types";
 
 import { MobileShell, type MobileShellHost, type SheetRenderer } from "./MobileShell";
@@ -64,10 +65,15 @@ export function MobileHqRoom({ files, host, renderSheet }: {
   const kbInset = useKeyboardInset();
   const [open, setOpen] = useState(false);
   const file = hqFileOf(files, hq.status);
-  /* The signature the operator set; the i18n word only until the first read
-     answers, so the title never flashes an empty name. */
-  const name = identity.identity?.name ?? t("mobile2.hq.name");
+  /* The signature the operator set; the built-in name only until the first read
+     answers, so the title never flashes an empty name — and never a different
+     one than the server would give for a state dir with no identity file. */
+  const name = identity.identity?.name ?? HQ_DEFAULT_NAME;
   const avatarUrl = identity.identity?.avatarUrl ?? null;
+  /* Stable across the seat poll's six-second re-render: a fresh object here
+     re-renders every memoized FeedItem and re-parses the whole transcript's
+     markdown for nothing. */
+  const signature = useMemo(() => ({ name, avatarUrl }), [name, avatarUrl]);
   const seated = Boolean(hq.status?.seat && hq.status.exists);
   const waiting = hq.starting || Boolean(hq.status?.pending) || (seated && !file);
 
@@ -75,24 +81,27 @@ export function MobileHqRoom({ files, host, renderSheet }: {
     <button
       type="button"
       data-mobile2-hq-title
-      aria-expanded={file ? open : undefined}
+      aria-expanded={open}
       className="flex min-w-0 items-center gap-1 text-title font-semibold text-primary"
-      onClick={() => setOpen((was) => file !== null && !was)}
+      onClick={() => setOpen((was) => !was)}
     >
       <HqAvatar name={name} avatarUrl={avatarUrl} />
       <span className="min-w-0 truncate">{name}</span>
-      {file ? <ChevronDown className={`h-4 w-4 shrink-0 text-secondary transition-transform ${open ? "rotate-180" : ""}`} aria-hidden /> : null}
+      <ChevronDown className={`h-4 w-4 shrink-0 text-secondary transition-transform ${open ? "rotate-180" : ""}`} aria-hidden />
     </button>
   );
 
   return (
     <MobileShell screen="orchestrator" title={title} host={host} renderSheet={renderSheet}>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col" style={kbInset > 0 ? { paddingBottom: kbInset } : undefined}>
+        {/* The panel is reachable in every state, seat or no seat: the name and
+            the picture are what a FUTURE seat is briefed with, so the operator
+            has to be able to set them before the first one exists. Without a
+            transcript there is no runtime to describe, so only the identity
+            block shows. */}
+        {open ? <HqRuntimePanel file={file} identity={identity} /> : null}
         {file ? (
-          <>
-            {open ? <HqRuntimePanel file={file} identity={identity} /> : null}
-            <HqConversation file={file} signature={{ name, avatarUrl }} />
-          </>
+          <HqConversation file={file} signature={signature} />
         ) : hq.status === null && !hq.failed ? (
           <div className="flex flex-1 items-center justify-center gap-2 text-body text-muted">
             <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
@@ -151,10 +160,23 @@ function HqConversation({ file, signature }: { file: FileEntry; signature: { nam
   );
 }
 
-/** What the seat is running on, folded behind the title. Four facts and the
-    one control that changes them; a fact the session does not carry says
-    «типова» rather than inventing a value. */
-function HqRuntimePanel({ file, identity }: { file: FileEntry; identity: HqIdentityState }) {
+/** What the seat is running on, folded behind the title, plus the signature the
+    room puts on its answers. With no transcript there is no runtime to describe
+    and only the signature block shows — that is the point: the name and the
+    picture must be settable before the first seat exists. */
+function HqRuntimePanel({ file, identity }: { file: FileEntry | null; identity: HqIdentityState }) {
+  return (
+    <div data-mobile2-hq-runtime className="shrink-0 border-b border-border bg-card px-4 py-2">
+      {file ? <HqRuntimeRows file={file} /> : null}
+      <HqIdentityBlock identity={identity} bare={file === null} />
+    </div>
+  );
+}
+
+/** The four runtime facts and the one control that changes them; a fact the
+    session does not carry says «типова» rather than inventing a value. Split out
+    so its hooks only run when there IS a session to read. */
+function HqRuntimeRows({ file }: { file: FileEntry }) {
   const { t } = useLocale();
   const { caps, structuredSession } = useAgentCapabilities(file);
   const account = accountIdFromPath(file.path);
@@ -169,7 +191,7 @@ function HqRuntimePanel({ file, identity }: { file: FileEntry; identity: HqIdent
     { label: t("launch.account"), value: accountName === DEFAULT_ACCOUNT_ID ? t("mobile2.hq.accountDefault") : accountName },
   ];
   return (
-    <div data-mobile2-hq-runtime className="shrink-0 border-b border-border bg-card px-4 py-2">
+    <>
       <dl className="flex flex-col divide-y divide-border">
         {rows.map((row) => (
           <div key={row.label} className="flex min-h-9 items-center justify-between gap-3">
@@ -178,7 +200,6 @@ function HqRuntimePanel({ file, identity }: { file: FileEntry; identity: HqIdent
           </div>
         ))}
       </dl>
-      <HqIdentityBlock identity={identity} />
       {caps.controls.runtime.state === "hidden" ? null : (
         <div className="mt-2 flex justify-end">
           <RuntimePill
@@ -189,14 +210,14 @@ function HqRuntimePanel({ file, identity }: { file: FileEntry; identity: HqIdent
           />
         </div>
       )}
-    </div>
+    </>
   );
 }
 
 /** The one place the operator sets who the room signs its answers as: a name
     that saves when the field is left, and a picture behind a file input. One
     status line for both, so a save and a refusal never stack. */
-function HqIdentityBlock({ identity }: { identity: HqIdentityState }) {
+function HqIdentityBlock({ identity, bare = false }: { identity: HqIdentityState; bare?: boolean }) {
   const { t } = useLocale();
   const picker = useRef<HTMLInputElement | null>(null);
   const [status, setStatus] = useState<{ text: string; bad: boolean } | null>(null);
@@ -208,21 +229,26 @@ function HqIdentityBlock({ identity }: { identity: HqIdentityState }) {
 
   const commitName = () => {
     const next = draft;
-    setDraft(null);
     /* Nothing typed, or typed back to what it already is: no request. */
-    if (next === null || next === identity.identity?.name) return;
-    void identity.saveName(next).then(settle);
+    if (next === null || next === identity.identity?.name) { setDraft(null); return; }
+    void identity.saveName(next).then((error) => {
+      /* The draft is dropped only once the server has the name. A refusal or a
+         dead connection keeps what the operator typed on screen, beside the
+         reason — clearing it first threw their work away. */
+      if (!error) setDraft(null);
+      settle(error);
+    });
   };
 
   return (
-    <div data-hq-identity className="mt-2 flex flex-col gap-2 border-t border-border pt-2">
+    <div data-hq-identity className={`flex flex-col gap-2 ${bare ? "" : "mt-2 border-t border-border pt-2"}`}>
       <div className="text-body text-secondary">{t("hq.identity.title")}</div>
       <label className="flex min-h-9 items-center justify-between gap-3">
         <span className="shrink-0 text-body text-secondary">{t("hq.identity.name")}</span>
         <input
           type="text"
           value={name}
-          maxLength={40}
+          maxLength={HQ_NAME_MAX}
           data-hq-identity-name
           className="min-w-0 flex-1 rounded-control border border-border bg-sunken px-2 py-1 text-right text-body font-semibold text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
           onChange={(event) => setDraft(event.target.value)}
@@ -230,7 +256,11 @@ function HqIdentityBlock({ identity }: { identity: HqIdentityState }) {
           onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); commitName(); } }}
         />
       </label>
-      <div className="flex min-h-11 items-center gap-3">
+      {/* Said plainly rather than pretended away: the mandate takes the name
+          when the seat is created, so a live one keeps the name it was briefed
+          with until it is reseated. */}
+      <p className="text-caption text-muted">{t("hq.identity.reseatNote")}</p>
+      <div className="flex min-h-11 flex-wrap items-center gap-x-3 gap-y-2">
         <span className="shrink-0 text-body text-secondary">{t("hq.identity.avatar")}</span>
         <HqAvatar name={name} avatarUrl={avatarUrl} size={64} />
         <span className="ml-auto flex shrink-0 items-center gap-2">
@@ -246,7 +276,7 @@ function HqIdentityBlock({ identity }: { identity: HqIdentityState }) {
         <input
           ref={picker}
           type="file"
-          accept="image/png,image/jpeg,image/webp,image/gif"
+          accept={HQ_AVATAR_ACCEPT}
           data-hq-avatar-input
           className="hidden"
           onChange={(event) => {

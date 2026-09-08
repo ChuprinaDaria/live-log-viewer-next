@@ -25,6 +25,9 @@ export async function GET(): Promise<NextResponse<ApiError> | NextResponse> {
     headers: {
       "Content-Type": avatar.mime,
       "Content-Length": String(data.byteLength),
+      /* Same as /api/image: the declared type is sniffed at write time, and the
+         browser must not second-guess it into something scriptable. */
+      "X-Content-Type-Options": "nosniff",
       "Cache-Control": "private, max-age=31536000, immutable",
     },
   });

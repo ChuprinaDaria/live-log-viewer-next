@@ -39,6 +39,8 @@ const G = globalThis as Record<string, unknown>;
 /** Every POST the room made, in order. */
 const posts: { url: string; body: Record<string, unknown> }[] = [];
 let identityAnswer: { name: string; avatarUrl: string | null } = { name: "Дітріх", avatarUrl: null };
+/** Set by a test that wants the next identity POST refused. */
+let refuseNextPost: { status: number; body: unknown } | null = null;
 
 const OVERRIDES: Record<string, unknown> = {
   window: dom, document: dom.document, navigator: dom.navigator,
@@ -60,6 +62,11 @@ const OVERRIDES: Record<string, unknown> = {
       const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
       posts.push({ url, body });
       if (url.startsWith("/api/orchestrator/hq/identity")) {
+        if (refuseNextPost) {
+          const refusal = refuseNextPost;
+          refuseNextPost = null;
+          return { ok: false, status: refusal.status, json: async () => refusal.body, text: async () => JSON.stringify(refusal.body) };
+        }
         if (typeof body.name === "string") identityAnswer = { ...identityAnswer, name: body.name };
         if (body.clearAvatar === true) identityAnswer = { ...identityAnswer, avatarUrl: null };
         if (body.avatar) identityAnswer = { ...identityAnswer, avatarUrl: "/api/orchestrator/hq/avatar?v=2" };
@@ -75,8 +82,11 @@ const OVERRIDES: Record<string, unknown> = {
 function answer(body: unknown) {
   return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
 }
-/** The seated HQ, as `GET /api/orchestrator/hq` reports it. */
-const hqAnswer = { seat: { conversationId: "conv-hq", path: "/w/hq.jsonl" }, pending: null, exists: true };
+/** The seated HQ, as `GET /api/orchestrator/hq` reports it. A test that wants
+    an empty fleet swaps this for a vacant seat. */
+const SEATED = { seat: { conversationId: "conv-hq", path: "/w/hq.jsonl" }, pending: null, exists: true };
+const VACANT = { seat: null, pending: null, exists: false };
+let hqAnswer: unknown = SEATED;
 
 const HAS: Record<string, boolean> = {};
 const SAVED: Record<string, unknown> = {};
@@ -94,12 +104,16 @@ afterAll(async () => {
 });
 
 const { MobileHqRoom } = await import("./MobileHqRoom");
+const { setLocale } = await import("@/lib/i18n");
 
 let roots: Root[] = [];
 beforeEach(() => {
+  setLocale("uk");
   dom.document.body.replaceChildren();
   roots = [];
   posts.length = 0;
+  hqAnswer = SEATED;
+  refuseNextPost = null;
   identityAnswer = { name: "Дітріх", avatarUrl: null };
 });
 afterEach(async () => {
@@ -192,4 +206,36 @@ test("a picked GIF is POSTed as base64 under its own mime", async () => {
   ]);
   /* And the room now signs with it: the title shows the picture, not a letter. */
   expect(q("[data-mobile2-hq-title] img[data-hq-avatar]")?.getAttribute("src")).toBe("/api/orchestrator/hq/avatar?v=2");
+});
+
+test("the panel is reachable before any seat exists, so a name can be set first", async () => {
+  /* The mandate takes the name when the seat is created. If the panel only
+     opened over a live transcript, the first orchestrator would always be
+     briefed with the default and there would be no way to change that. */
+  hqAnswer = VACANT;
+  await mount();
+  expect(q("[data-mobile2-hq='vacant']")).not.toBeNull();
+  await openPanel();
+  const panel = q("[data-hq-identity]");
+  expect(panel).not.toBeNull();
+  /* No transcript, so no runtime facts to describe — only the signature. */
+  expect(q("[data-mobile2-hq-runtime] dl")).toBeNull();
+
+  const input = q("[data-hq-identity-name]") as unknown as HTMLInputElement;
+  flushSync(() => handlers(input as unknown as Element).onChange({ target: { value: "Гвардія" } }));
+  flushSync(() => handlers(input as unknown as Element).onKeyDown({ key: "Enter", preventDefault: () => {} }));
+  await settle();
+  expect(identityPosts()).toEqual([{ url: "/api/orchestrator/hq/identity", body: { name: "Гвардія" } }]);
+});
+
+test("a refused name stays in the field with the reason beside it", async () => {
+  await mount();
+  await openPanel();
+  const input = q("[data-hq-identity-name]") as unknown as HTMLInputElement;
+  refuseNextPost = { status: 400, body: { error: "name must be 1–40 characters", code: "name_invalid" } };
+  flushSync(() => handlers(input as unknown as Element).onChange({ target: { value: "x".repeat(41) } }));
+  flushSync(() => handlers(input as unknown as Element).onKeyDown({ key: "Enter", preventDefault: () => {} }));
+  await settle();
+  expect((q("[data-hq-identity-name]") as unknown as HTMLInputElement).value).toBe("x".repeat(41));
+  expect(q("[data-hq-identity] [role='status']")?.textContent).toContain("Імʼя");
 });

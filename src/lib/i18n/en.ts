@@ -2855,6 +2855,7 @@ export const en = {
   "hq.identity.tooBig": "File over 3 MB",
   "hq.identity.badType": "PNG, JPEG, WebP or GIF only",
   "hq.identity.nameInvalid": "Name: 1–40 characters",
+  "hq.identity.reseatNote": "A seated orchestrator learns a new name after a reseat",
   "mobile2.hq.name": "Orchestrator",
   "mobile2.hq.placeholder": "what are we doing?",
   "mobile2.hq.engine": "Engine",

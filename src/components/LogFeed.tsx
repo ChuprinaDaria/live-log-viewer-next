@@ -1079,7 +1079,13 @@ export function LogFeed({ file, showSvc, lineFilter, onStatus, paused, follow, s
               visibleItems.map(({ anchorKey, key, item, responseDurationMs }, visibleIndex) => {
                 const answer = speakableAnswer(feed.items, visibleStartIndex + visibleIndex);
                 const speakText = answer?.firstIndex === visibleStartIndex + visibleIndex ? answer.text : undefined;
-                const turnHead = !bare && isTurnHead(feed.items, visibleStartIndex + visibleIndex);
+                /* The head of the turn is computed in BOTH modes now. A bare
+                   room shows no who/model header, but it still needs to know
+                   where an answer starts: one message arrives as several
+                   `prose` items, and the room's signature belongs above the
+                   first of them, not above every paragraph. */
+                const head = isTurnHead(feed.items, visibleStartIndex + visibleIndex);
+                const turnHead = !bare && head;
                 /* The launch prompt of a bare room is its mandate — the
                    system's words, not the operator's — so the room opens on
                    the first real turn. */
@@ -1097,7 +1103,7 @@ export function LogFeed({ file, showSvc, lineFilter, onStatus, paused, follow, s
                     data-feed-source-id={"sourceId" in item ? item.sourceId : undefined}
                     className={compact ? "feed-cv" : undefined}
                   >
-                    <FeedItem item={item} speakText={speakText} turnHead={turnHead} signature={bare ? signature : undefined} />
+                    <FeedItem item={item} speakText={speakText} turnHead={turnHead} signature={bare && head ? signature : undefined} />
                     {responseDurationMs !== undefined ? <ResponseDuration durationMs={responseDurationMs} /> : null}
                   </div>
                 );

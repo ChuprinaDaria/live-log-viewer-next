@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 
 import {
   clearHqAvatar,
-  HQ_AVATAR_MAX_BYTES,
   InvalidHqAvatarError,
   InvalidHqNameError,
   readHqIdentity,
@@ -10,6 +9,7 @@ import {
   writeHqName,
   type HqIdentity,
 } from "@/lib/orchestrator/hqIdentity";
+import { HQ_AVATAR_MAX_BYTES } from "@/lib/orchestrator/hqIdentityShared";
 import { rejectCrossOrigin } from "@/lib/sameOrigin";
 
 /* The signature the HQ room puts on the orchestrator's messages: a name, and
@@ -28,7 +28,7 @@ interface HqIdentityView {
 
 interface HqIdentityRefusal {
   error: string;
-  code: "name_invalid" | "avatar_type" | "avatar_size" | "avatar_mismatch";
+  code: "invalid_json" | "name_invalid" | "avatar_type" | "avatar_size" | "avatar_mismatch";
 }
 
 function view(identity: HqIdentity): HqIdentityView {
@@ -62,7 +62,9 @@ export async function POST(req: NextRequest): Promise<NextResponse<HqIdentityVie
   try {
     body = (await req.json()) as Record<string, unknown>;
   } catch {
-    return refuse({ error: "invalid JSON", code: "name_invalid" }, 400);
+    /* A body that is not JSON says nothing about the name — the client shows
+       its generic failure rather than «Імʼя: 1–40 символів». */
+    return refuse({ error: "invalid JSON", code: "invalid_json" }, 400);
   }
 
   let identity = readHqIdentity();

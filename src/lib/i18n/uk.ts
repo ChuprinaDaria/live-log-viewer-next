@@ -2767,6 +2767,7 @@ export const uk: Record<keyof typeof en, Message> = {
   "hq.identity.tooBig": "Файл понад 3 МБ",
   "hq.identity.badType": "Тільки PNG, JPEG, WebP або GIF",
   "hq.identity.nameInvalid": "Імʼя: 1–40 символів",
+  "hq.identity.reseatNote": "Живий оркестратор дізнається нове імʼя після пересадки",
   "mobile2.hq.name": "Оркестратор",
   "mobile2.hq.placeholder": "що робимо?",
   "mobile2.hq.engine": "Рушій",
