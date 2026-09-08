@@ -85,7 +85,21 @@ export function MobileInlineCatalog({ catalog, query, onQuery, files, onOpen }: 
           <span aria-hidden className={`h-2 w-2 shrink-0 rounded-full ${file.activity === "live" ? "bg-success" : "bg-strong"}`} />
           <span className="flex min-w-0 flex-1 flex-col gap-0.5">
             <span className="line-clamp-2 break-words text-body font-semibold text-primary [overflow-wrap:anywhere]">{file.title || file.name}</span>
-            <span className="truncate text-label text-muted">{file.engine}{query.trim() ? ` · ${file.project}` : ""}</span>
+            {/* Which firm and project this session belongs to. The catalog is
+                the one place rows really are from different projects, so this
+                is where the pair earns its line — and it replaces the hashed
+                scanner id the search view used to print, which named a
+                directory digest at the operator rather than a project.
+                Without a console answer the row says nothing extra: a missing
+                firm is honest, a guessed one is not. */}
+            {file.org ? (
+              <span data-mobile-catalog-org className="flex min-w-0 items-center gap-1 text-label text-muted">
+                <span className="truncate">{file.org.firmName}</span>
+                <span aria-hidden className="shrink-0 opacity-60">→</span>
+                <span className="truncate font-medium">{file.org.projectName}</span>
+              </span>
+            ) : null}
+            <span className="truncate text-label text-muted">{file.engine}{query.trim() && !file.org ? ` · ${file.project}` : ""}</span>
           </span>
           <ChevronRight aria-hidden className="h-[18px] w-[18px] shrink-0 text-muted" />
         </button>;

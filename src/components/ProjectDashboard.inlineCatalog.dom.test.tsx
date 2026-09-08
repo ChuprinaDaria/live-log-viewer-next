@@ -459,3 +459,31 @@ for (const mismatch of ["project", "conversation"] as const) {
     }
   });
 }
+
+/* The catalog is the one list whose rows really come from different projects,
+   so it is where «firm → project» earns its line — and where the hashed
+   scanner id used to be printed at the operator instead. */
+test("a catalog row names its firm and project, and says nothing when none claims it", async () => {
+  const owned = file({
+    path: "/repo/owned.jsonl",
+    title: "Fix the upload fallback",
+    org: { firm: "noologic", firmName: "Noologic", project: "ai-trainer", projectName: "AI Trainer", via: "path" },
+  } as unknown as Partial<FileEntry> & { path: string });
+  const orphan = file({ path: "/repo/orphan.jsonl", title: "Nothing claims this one" });
+  catalogReply = () => jsonResponse({ items: [owned, orphan], total: 2, nextCursor: null });
+
+  const root = mount();
+  expect(await waitFor(() => board(root) !== null)).toBe(true);
+  click(q(root, '[data-mobile2-row="catalog"]'));
+  expect(await waitFor(() => all(root, "[data-catalog-path]").length === 2)).toBe(true);
+
+  const rows = all(root, "[data-catalog-path]");
+  const labels = all(root, "[data-mobile-catalog-org]");
+  expect(labels).toHaveLength(1);
+  expect(labels[0]!.textContent).toContain("Noologic");
+  expect(labels[0]!.textContent).toContain("AI Trainer");
+
+  /* The unclaimed row keeps its engine line and gains no invented firm. */
+  expect(rows[1]!.querySelector("[data-mobile-catalog-org]")).toBeNull();
+  expect(rows[1]!.textContent).toContain("Nothing claims this one");
+});
