@@ -187,6 +187,9 @@ dom.history.replaceState = (s: unknown, t: string, u?: string | URL) => { histor
 beforeEach(() => {
   resetFilesClientCacheForTests();
   dom.localStorage.clear();
+  /* The desktop now opens on the HQ home (spec 2026-09-08); this file mounts
+     the real Viewer and asserts on the board's own deep-link resolution. */
+  dom.localStorage.setItem("llvDesktopHome", "board");
   dom.sessionStorage.clear();
   document.body.replaceChildren();
   requestLog.length = 0;

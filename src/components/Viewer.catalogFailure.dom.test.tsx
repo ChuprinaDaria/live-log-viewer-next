@@ -89,6 +89,9 @@ beforeEach(() => {
   phoneWidth = false;
   resetFilesClientCacheForTests();
   dom.localStorage.clear();
+  /* The desktop now opens on the HQ home (spec 2026-09-08); these tests are
+     about the catalog failure notice on the board. */
+  dom.localStorage.setItem("llvDesktopHome", "board");
   dom.sessionStorage.clear();
   document.body.replaceChildren();
 });

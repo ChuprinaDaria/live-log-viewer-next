@@ -2773,4 +2773,7 @@ export const uk: Record<keyof typeof en, Message> = {
   "desktop.noFirms": "Фірм ще немає.",
   "desktop.unassigned": "Без проєкту",
   "desktop.unassignedHint": "Сесії, які не привʼязані до проєкту пульта. Їх перебере сортувальник.",
+  "desktop.consoleTitle": "Пульт",
+  "desktop.board": "Дошка",
+  "desktop.hqRow": "HQ · Чат",
 };

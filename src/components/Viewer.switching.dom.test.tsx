@@ -391,6 +391,9 @@ beforeEach(() => {
     beta: seededBoard([BETA_A.path, BETA_B.path]),
   };
   dom.localStorage.clear();
+  /* The desktop now opens on the HQ home (spec 2026-09-08); every "desktop:"
+     test here asserts on the board itself. */
+  dom.localStorage.setItem("llvDesktopHome", "board");
   dom.sessionStorage.clear();
   dom.location.hash = "";
   document.body.replaceChildren();

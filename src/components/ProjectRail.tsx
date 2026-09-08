@@ -56,11 +56,14 @@ interface Props {
   onSelect: (project: string) => void;
   onToggleCrown?: (project: string, crowned: boolean) => void;
   onCreateProject?: (name: string, root: string, options?: CreateProjectRequestOptions) => Promise<CreateProjectOutcome>;
+  /** Present once the desktop home ships (Task 3): a row above the Overview
+      row that hands the operator back to the HQ chat + console. */
+  onOpenHome?: () => void;
 }
 
 const EMPTY_CROWNS: ReadonlySet<string> = new Set();
 
-export function ProjectRail({ files, projectCatalog, projectDisplayNames = {}, pipelines, workflows, archivedProjects, crownedProjects = EMPTY_CROWNS, selected, loaded, catalogFailures = 0, now, onSelect, onToggleCrown, onCreateProject }: Props) {
+export function ProjectRail({ files, projectCatalog, projectDisplayNames = {}, pipelines, workflows, archivedProjects, crownedProjects = EMPTY_CROWNS, selected, loaded, catalogFailures = 0, now, onSelect, onToggleCrown, onCreateProject, onOpenHome }: Props) {
   const { t } = useLocale();
   const isMobile = useIsMobile();
   const [query, setQuery] = useState("");
@@ -259,6 +262,19 @@ export function ProjectRail({ files, projectCatalog, projectDisplayNames = {}, p
         />
       ) : null}
       <nav className="flex-1 overflow-y-auto px-2 pb-3 pt-1" aria-label={t("rail.projects")}>
+        {onOpenHome ? (
+          <RailRow
+            label={t("desktop.hqRow")}
+            live={0}
+            attention={0}
+            total={null}
+            age=""
+            active={false}
+            hasLive={false}
+            home
+            onClick={onOpenHome}
+          />
+        ) : null}
         <RailRow
           label={t("rail.overview")}
           live={0}
@@ -577,6 +593,7 @@ function RailRow({
   muted = false,
   crowned = false,
   reserveCrownSlot = false,
+  home = false,
   onClick,
 }: {
   label: string;
@@ -592,11 +609,15 @@ function RailRow({
   /** Mobile rails keep the crown toggle always visible, so the row's counts
       leave room for it instead of underlapping. */
   reserveCrownSlot?: boolean;
+  /** The HQ-home row above Overview (Task 3): tagged for tests, nothing else
+      reads it. */
+  home?: boolean;
   onClick: () => void;
 }) {
   const isMobile = useIsMobile();
   return (
     <button
+      data-rail-home={home ? "" : undefined}
       className={[
         "mb-0.5 flex w-full items-center gap-2 rounded-[10px] border px-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40",
         isMobile ? "min-h-11" : "py-2",

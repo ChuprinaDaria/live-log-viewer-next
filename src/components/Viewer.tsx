@@ -27,6 +27,8 @@ import { AttentionIsland, AttentionQueueRow } from "./attention/AttentionIsland"
 import { AttentionToast } from "./attention/AttentionToast";
 import { buildMobileAttentionQueue } from "./attention/attentionQueue";
 import { MobileAttentionSheet } from "./attention/MobileAttentionSheet";
+import { DesktopHome } from "./desktop/DesktopHome";
+import { readHomeMode, writeHomeMode, type HomeMode } from "./desktop/desktopHomeModel";
 import { purgeLegacyOperatorCredential } from "./operatorCredential";
 import { ArtifactPreviewHost } from "./preview/ArtifactPreviewHost";
 import { VoiceBridgeRelayHost } from "./voice/VoiceBridgeRelayHost";
@@ -200,6 +202,15 @@ export function Viewer() {
     [projectCatalog],
   );
   const isMobile = useIsMobile();
+  /* The desktop's home (spec 2026-09-08): HQ chat + console until the operator
+     asks for the board, remembered across visits. The server render and the
+     first client render agree on "hq"; the stored preference is read back in
+     an effect, same as every other localStorage-backed choice in this file. */
+  const [homeMode, setHomeMode] = useState<HomeMode>("hq");
+  useEffect(() => { setHomeMode(readHomeMode()); }, []);
+  const [consoleProject, setConsoleProject] = useState<string | null>(null);
+  const openBoard = useCallback(() => { writeHomeMode("board"); setHomeMode("board"); }, []);
+  const openHome = useCallback(() => { writeHomeMode("hq"); setHomeMode("hq"); }, []);
   /* The per-project orchestrator dock (PRD #976 slice A). Its open state is the
      operator's and belongs to the PROJECT (#1149), exactly as the dock's width
      does (#1011): the server render and the first client render agree on
@@ -1012,7 +1023,7 @@ export function Viewer() {
   const shell = (
     <div className="flex h-full">
       {isMobile ? null : (
-        <ProjectRail files={files} projectCatalog={projectCatalog} projectDisplayNames={projectDisplayNames} pipelines={pipelines} workflows={workflows} archivedProjects={archivedProjects} crownedProjects={crownedProjects} selected={project} now={clock} loaded={loaded} catalogFailures={catalogFailures} onSelect={selectProject} onToggleCrown={toggleCrown} onCreateProject={createProject} />
+        <ProjectRail files={files} projectCatalog={projectCatalog} projectDisplayNames={projectDisplayNames} pipelines={pipelines} workflows={workflows} archivedProjects={archivedProjects} crownedProjects={crownedProjects} selected={project} now={clock} loaded={loaded} catalogFailures={catalogFailures} onSelect={selectProject} onToggleCrown={toggleCrown} onCreateProject={createProject} onOpenHome={openHome} />
       )}
       {/* PUSHED INTO the layout, never over it (PRD #976 decision 1): the dock
           is a flex sibling between the rail and the board, so the board keeps
@@ -1178,5 +1189,26 @@ export function Viewer() {
      unmounts every time the «⋯» menu closes — reads a controller that outlives
      the menu. `shell` is built above, so a status change re-renders this provider
      and its context consumers only, never the board. */
+  if (!isMobile && homeMode === "hq") {
+    return (
+      <KeepAwakeProvider>
+        <DesktopHome
+          files={files}
+          selectedProject={consoleProject}
+          onSelectProject={setConsoleProject}
+          onOpenBoard={openBoard}
+          onOpenBoardProject={(key) => { openBoard(); selectProject(key); }}
+          onOpenFile={(file) => { setHomeMode("board"); openFile(file); }}
+          onCreateAgent={() => undefined}
+        />
+        <AttentionHost mobile={false} />
+        <ArtifactPreviewHost mobile={false} />
+        <VoicePipHost mobile={false} />
+        <VoiceBridgeRelayHost />
+        <VoiceComposerHost />
+        <StagingBadge />
+      </KeepAwakeProvider>
+    );
+  }
   return <KeepAwakeProvider>{shell}</KeepAwakeProvider>;
 }

@@ -2861,4 +2861,7 @@ export const en = {
   "desktop.noFirms": "No firms yet.",
   "desktop.unassigned": "No project",
   "desktop.unassignedHint": "Sessions no console project claims. The sorter will go through them.",
+  "desktop.consoleTitle": "Console",
+  "desktop.board": "Board",
+  "desktop.hqRow": "HQ · Chat",
 } satisfies Dictionary;

@@ -96,6 +96,9 @@ let mounted: { unmount: () => void } | null = null;
 beforeEach(() => {
   resetFilesClientCacheForTests();
   dom.localStorage.clear();
+  /* The desktop now opens on the HQ home (spec 2026-09-08); this file's
+     assertions are all about the dock, which only exists on the board. */
+  dom.localStorage.setItem("llvDesktopHome", "board");
   dom.sessionStorage.clear();
   dom.location.hash = "";
   dom.document.body.replaceChildren();
