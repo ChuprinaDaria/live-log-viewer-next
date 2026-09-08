@@ -1,6 +1,6 @@
 "use client";
 
-import { Building2, Info, SlidersHorizontal, UserRound } from "lucide-react";
+import { Building2, Info, ShieldCheck, SlidersHorizontal, UserRound } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { KeepAwakeMenuRow } from "@/components/KeepAwakeControl";
@@ -11,6 +11,7 @@ import type { FileEntry } from "@/lib/types";
 import { MobileHqRoom } from "./MobileHqRoom";
 import { MobileFirmsScreen } from "./MobileFirmsScreen";
 import { MobileMcpScreen } from "./MobileMcpScreen";
+import { MobilePermissionsScreen } from "./MobilePermissionsScreen";
 import { MobileRolesScreen } from "./MobileRolesScreen";
 import { MobileSecretsScreen } from "./MobileSecretsScreen";
 import { MobileBarTitle, MobileShell, type MobileShellHost, type SheetRenderer } from "./MobileShell";
@@ -41,6 +42,7 @@ export function renderMobileRootScreen(kind: MobileScreenKind, ctx: MobileRootCo
     case "secrets": return <MobileSecretsScreen host={ctx.host} renderSheet={ctx.renderSheet} />;
     case "roles": return <MobileRolesScreen host={ctx.host} renderSheet={ctx.renderSheet} />;
     case "firms": return <MobileFirmsScreen host={ctx.host} renderSheet={ctx.renderSheet} />;
+    case "permissions": return <MobilePermissionsScreen host={ctx.host} renderSheet={ctx.renderSheet} />;
     case "mcp": return <MobileMcpScreen host={ctx.host} renderSheet={ctx.renderSheet} />;
     default: return null;
   }
@@ -64,6 +66,7 @@ function MobileSettingsScreen({ ctx }: { ctx: MobileRootContext }) {
         <div className={card}>
           <MobileSheetRow icon={<SlidersHorizontal className="h-[18px] w-[18px]" aria-hidden />} label={t("roles.title")} attrs={{ "data-mobile2-go": "roles" }} onSelect={() => nav.push({ kind: "roles" })} />
           <MobileSheetRow icon={<Building2 className="h-[18px] w-[18px]" aria-hidden />} label={t("firms.title")} attrs={{ "data-mobile2-go": "firms" }} onSelect={() => nav.push({ kind: "firms" })} />
+          <MobileSheetRow icon={<ShieldCheck className="h-[18px] w-[18px]" aria-hidden />} label={t("perms.title")} attrs={{ "data-mobile2-go": "permissions" }} onSelect={() => nav.push({ kind: "permissions" })} />
         </div>
         <div className={card}>
           <div className="flex min-h-11 items-center gap-2 px-4">

@@ -26,8 +26,8 @@ test("the row type carries key names and has no place to put a value", () => {
      is the structural half of that promise: there is no `env` on the row, so
      a value cannot reach the page even by accident. */
   expect(row.env_keys).toEqual(["COHERE_API_KEY", "PYTHONPATH"]);
-  expect((row as Record<string, unknown>).env).toBeUndefined();
-  expect((row as Record<string, unknown>).headers).toBeUndefined();
+  expect((row as unknown as Record<string, unknown>).env).toBeUndefined();
+  expect((row as unknown as Record<string, unknown>).headers).toBeUndefined();
 });
 
 test("a firm target reads by its human name when one is known, its slug otherwise", () => {
