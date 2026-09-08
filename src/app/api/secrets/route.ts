@@ -4,8 +4,16 @@ import path from "node:path";
 
 import { NextResponse } from "next/server";
 
+import { fleetctl, fleetctlInstalled } from "@/lib/fleetctl/client";
+
 /*
  * The Secrets page's inventory (TZ-UI.md: the secrets page).
+ *
+ * The operator's console (`fleetctl`) is the source when it is installed: it
+ * holds the same 82 credentials PLUS the annotations she makes — the firm and
+ * project each key belongs to, and its short purpose — which the raw inventory
+ * file does not carry. Without the console the file is read directly, so the
+ * page still answers on a machine that has no console.
  *
  * The file is written by the operator's own inventory agent and re-read on
  * EVERY request — never cached into the build, never memoized — because the
@@ -34,6 +42,10 @@ export type SecretState = "alive" | "dead" | "unchecked";
 
 export interface SecretView {
   name: string;
+  /** The firm this key was bound to in the console, when it was. */
+  firm?: string;
+  /** The project inside that firm. */
+  project?: string;
   /** The human name when the inventory carries one; absent otherwise. */
   label?: string;
   /** What this key is FOR, in the operator's own words. Absent when the
@@ -148,25 +160,88 @@ function list<T>(value: unknown, project: (item: unknown) => T | null): T[] {
   return Array.isArray(value) ? value.flatMap((item) => { const projected = project(item); return projected ? [projected] : []; }) : [];
 }
 
+/** The console's own record, mapped into the view the page already reads.
+    `state` is its word for liveness; nothing here can carry a value, because
+    the console does not return one and this projection names its fields. */
+interface ConsoleSecret {
+  id: string;
+  label?: string;
+  purpose_short?: string;
+  kind?: string;
+  provider?: string;
+  owner?: string;
+  state?: string;
+  limit?: string | number | null;
+  checked_at?: string;
+  firm?: string | null;
+  project?: string | null;
+}
+
+function fromConsole(record: ConsoleSecret): SecretView | null {
+  if (!record.id) return null;
+  return {
+    name: record.id,
+    ...(text(record.label) ? { label: text(record.label)! } : {}),
+    ...(text(record.purpose_short) ? { purpose: text(record.purpose_short)! } : {}),
+    provider: text(record.provider) ?? "—",
+    ...(text(record.kind) ? { kind: text(record.kind)! } : {}),
+    state: record.state === "alive" ? "alive" : record.state === "dead" ? "dead" : "unchecked",
+    ...(text(record.limit) ? { limit: text(record.limit)! } : {}),
+    ...(text(record.checked_at) ? { checkedAt: text(record.checked_at)! } : {}),
+    ...(text(record.firm) ? { firm: text(record.firm)! } : {}),
+    ...(text(record.project) ? { project: text(record.project)! } : {}),
+  };
+}
+
 export async function GET(): Promise<NextResponse<SecretsInventoryView | { error: string }>> {
+  if (fleetctlInstalled()) {
+    try {
+      const answer = await fleetctl<{ secrets: ConsoleSecret[] }>({ fn: "secrets_list" });
+      const secrets = (answer.secrets ?? []).flatMap((record) => {
+        const view = fromConsole(record);
+        return view ? [view] : [];
+      });
+      if (secrets.length) {
+        /* Accounts and CLI logins are not the console's to hold; they stay in
+           the inventory file the checker writes. */
+        const file = readInventory();
+        return NextResponse.json({
+          generatedAt: file?.generatedAt ?? null,
+          secrets,
+          accounts: file?.accounts ?? [],
+          clis: file?.clis ?? [],
+        }, { headers });
+      }
+    } catch {
+      /* Fall through to the file. */
+    }
+  }
+  const file = readInventory();
+  if (!file) {
+    return NextResponse.json({ error: fs.existsSync(INVENTORY) ? "INVENTORY_UNPARSABLE" : "INVENTORY_MISSING" }, { status: fs.existsSync(INVENTORY) ? 500 : 404, headers });
+  }
+  return NextResponse.json(file, { headers });
+}
+
+/** The raw inventory file, or null when it is missing or unreadable. */
+function readInventory(): SecretsInventoryView | null {
   let raw: string;
   try {
     raw = fs.readFileSync(INVENTORY, "utf8");
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    return NextResponse.json({ error: code === "ENOENT" ? "INVENTORY_MISSING" : "INVENTORY_UNREADABLE" }, { status: code === "ENOENT" ? 404 : 500, headers });
+  } catch {
+    return null;
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    return NextResponse.json({ error: "INVENTORY_UNPARSABLE" }, { status: 500, headers });
+    return null;
   }
   const record = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
-  return NextResponse.json({
+  return {
     generatedAt: text(record.generated_at) ?? null,
     secrets: list(record.secrets, secretView),
     accounts: list(record.accounts, accountView),
     clis: list(record.clis, cliView),
-  }, { headers });
+  };
 }

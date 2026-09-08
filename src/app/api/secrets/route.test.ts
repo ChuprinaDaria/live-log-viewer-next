@@ -9,6 +9,12 @@ import path from "node:path";
    inventory into a temporary directory and imports the route fresh, because
    the path is read at module load. */
 
+/* The route prefers the operator's console when one is installed; these cases
+   are about the FILE it falls back to, so they point the console at a path
+   that has none. Set before the first import, because the console's directory
+   is read at module load. */
+process.env.FLEETCTL_DIR = path.join(os.tmpdir(), "fleetctl-absent-for-tests");
+
 const roots: string[] = [];
 let caseNumber = 0;
 

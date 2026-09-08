@@ -229,6 +229,9 @@ function Row({ row }: { row: SecretView }) {
     row.kind && row.kind !== "token" ? row.kind : null,
     row.masked,
     row.limit ? t("secrets.limit", { value: row.limit }) : null,
+    /* Where this key belongs, once the operator has bound it in the console:
+       the project if it has one, the firm otherwise. */
+    row.project ?? row.firm ?? null,
   ].filter(Boolean).join(" · ");
   return (
     <li className="flex min-h-14 flex-col justify-center px-3 py-2.5 pl-5" data-mobile2-secret={row.name} data-mobile2-secret-state={row.state}>

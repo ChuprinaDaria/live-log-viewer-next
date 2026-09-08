@@ -39,7 +39,21 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       if (!SLUG.test(firm)) return NextResponse.json({ error: "firm id is invalid" }, { status: 400, headers });
       return NextResponse.json(await fleetctl({ fn: "firm_show", params: { firm } }), { headers });
     }
-    return NextResponse.json(await fleetctl({ fn: "firms_list" }), { headers });
+    /* Bound credentials live on the SECRET, annotated in the console, not in
+       the org store — so the card asks the console which keys name this firm
+       rather than keeping a second copy of the answer that could drift. */
+    const [firms, secrets] = await Promise.all([
+      fleetctl<{ firms: { id: string; secrets?: string[] }[] }>({ fn: "firms_list" }),
+      fleetctl<{ secrets: { id: string; firm?: string | null; project?: string | null }[] }>({ fn: "secrets_list" })
+        .catch(() => ({ secrets: [] as { id: string; firm?: string | null; project?: string | null }[] })),
+    ]);
+    return NextResponse.json({
+      ...firms,
+      firms: firms.firms.map((entry) => ({
+        ...entry,
+        secrets: secrets.secrets.filter((secret) => secret.firm === entry.id).map((secret) => secret.id),
+      })),
+    }, { headers });
   } catch (error) {
     return NextResponse.json({ error: fleetctlMessage(error) }, { status: fleetctlStatus(error), headers });
   }
