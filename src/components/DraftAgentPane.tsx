@@ -27,7 +27,7 @@ import { conversationIdentity, withoutArchivedPredecessors } from "@/lib/account
 import type { RuntimeImageCapability } from "@/lib/runtime/structuredContent";
 
 import { ComposerBar } from "./ComposerBar";
-import { DirectoryPicker } from "./DirectoryPicker";
+import { DirectoryPicker, splitDirectoryPath } from "./DirectoryPicker";
 import { DraftLaunchStatus } from "./DraftLaunchStatus";
 import {
   CONFIRM_ATTENTION_MS,
@@ -748,10 +748,6 @@ export function DraftAgentPane({
       return;
     }
     if (attachments.images.length && !attachments.validate()) return;
-    if (!cwd.trim()) {
-      setStatus({ kind: "err", text: t("draft.needDir") });
-      return;
-    }
     if (selectedRole) {
       const missing = selectedRole.parameters.find((parameter) => {
         if (!parameter.required) return false;
@@ -840,23 +836,16 @@ export function DraftAgentPane({
         </button>
       </header>
 
-      {/* The launch card: engine, directory, and one disclosure for the rest.
-          The directory picker's popup hangs out of the card, so the card cannot
-          clip its own overflow and stacks over the pane below, which scrolls. */}
+      {/* The launch card: engine, and one disclosure for the rest. A
+          conversation needs no directory — the server runs it in the
+          operator's home — so the picker lives inside the disclosure, whose
+          summary starts with where the agent will work. The picker's popup
+          hangs out of the card, so the card cannot clip its own overflow and
+          stacks over the pane below, which scrolls. */}
       <div className="shrink-0 px-3 pt-3 pb-2 sm:px-2.5 sm:pt-2 sm:pb-1.5">
         <div className="relative z-20 divide-y divide-border overflow-visible rounded-surface border border-border bg-sunken">
           <div className="flex items-center gap-2 px-2 py-1.5">
             <EngineRadioGroup engine={engine} disabled={fieldsDisabled} touch onChange={setEngine} />
-          </div>
-          <div className="flex items-center px-2 py-1.5">
-            <DirectoryPicker
-              id={dirPickerId}
-              value={cwd}
-              dirs={dirs}
-              disabled={fieldsDisabled}
-              ariaLabel={t("draft.dirAria")}
-              onChange={setCwd}
-            />
           </div>
           <details open={advancedOpen} onToggle={(event) => setAdvancedOpen(event.currentTarget.open)}>
             <summary
@@ -865,11 +854,37 @@ export function DraftAgentPane({
             >
               <span className="shrink-0">{t("draft.advanced")}</span>
               <span className="min-w-0 flex-1 truncate text-right font-normal text-muted">
-                {launchSummary(t, launch, selectedRole ? roleName(t, selectedRole) : null)}
+                {launchSummary(t, launch, selectedRole ? roleName(t, selectedRole) : null, cwd.trim() ? splitDirectoryPath(cwd).tail : t("draft.summaryConversation"))}
               </span>
               <ChevronDown className={`h-4 w-4 shrink-0 text-muted transition-transform ${advancedOpen ? "rotate-180" : ""}`} aria-hidden />
             </summary>
             <div className="flex flex-col gap-3 border-t border-border bg-card px-3 py-3 sm:gap-2.5 sm:px-2.5 sm:py-2">
+              <div className="flex min-w-0 flex-col gap-1">
+                <span className="text-label font-semibold text-muted">{t("launch.directory")}</span>
+                <div className="flex items-start gap-2">
+                  <DirectoryPicker
+                    id={dirPickerId}
+                    value={cwd}
+                    dirs={dirs}
+                    disabled={fieldsDisabled}
+                    ariaLabel={t("draft.dirAria")}
+                    onChange={setCwd}
+                  />
+                  {cwd.trim() ? (
+                    <button
+                      type="button"
+                      disabled={fieldsDisabled}
+                      onClick={() => setCwd("")}
+                      aria-label={t("draft.clearDirAria")}
+                      title={t("draft.clearDirAria")}
+                      className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-control text-muted hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-60 sm:h-8 sm:w-8"
+                    >
+                      <X className="h-4 w-4" aria-hidden />
+                    </button>
+                  ) : null}
+                </div>
+                {cwd.trim() ? null : <span className="text-caption text-muted">{t("draft.noDirHint")}</span>}
+              </div>
               <RoleSection
                 idPrefix={draftId}
                 roles={roles}

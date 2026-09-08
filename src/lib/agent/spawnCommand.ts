@@ -354,9 +354,13 @@ export async function executeSpawnRequest(
     supersedesConversationId = predecessor.id;
   }
 
+  /* A conversation needs no directory of its own, but every CLI session runs
+     somewhere: an absent cwd is the operator's home, the one place that
+     belongs to no project in particular. */
   const rawCwd = typeof body.cwd === "string" ? body.cwd.trim() : "";
-  if (!rawCwd) return NextResponse.json({ error: "working directory is required" }, { status: 400 });
-  const cwd = path.resolve(rawCwd === "~" || rawCwd.startsWith("~/") ? path.join(os.homedir(), rawCwd.slice(1)) : rawCwd);
+  const cwd = path.resolve(
+    !rawCwd ? os.homedir() : rawCwd === "~" || rawCwd.startsWith("~/") ? path.join(os.homedir(), rawCwd.slice(1)) : rawCwd,
+  );
   let stat: fs.Stats;
   try {
     stat = fs.statSync(cwd);

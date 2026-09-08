@@ -208,3 +208,8 @@ test("the launch summary adds role, codex speed and the resolved account only wh
   /* A claude draft ignores a stale codex speed; an unresolved account id adds no token. */
   expect(launchSummary(en, { engine: "claude", model: "opus", effort: "", speed: "fast", accounts, launchAccountId: "gone" })).toBe("Opus 5 · default");
 });
+
+test("the launch summary leads with where the agent works when the host says so", () => {
+  expect(launchSummary(en, { engine: "claude", model: "opus", effort: "", speed: "", ...noAccounts }, null, "fleet")).toBe("fleet · Opus 5 · default");
+  expect(launchSummary(en, { engine: "claude", model: "opus", effort: "", speed: "", ...noAccounts }, "reviewer", "conversation")).toBe("conversation · reviewer · Opus 5 · default");
+});

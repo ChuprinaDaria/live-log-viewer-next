@@ -2636,8 +2636,10 @@ test("operator callers may grant native sub-agent permission", async () => {
     body: JSON.stringify({ title: "Test semantic spawn", src: "/caller.jsonl", role: "orchestrator", prompt: "Delegate orchestration", allowSubagents: true }),
   }));
 
+  /* No cwd is a conversation in the operator's home, not a refusal; the
+     request is then judged as the direct operator spawn it claims to be. */
   expect(response.status).toBe(400);
-  expect(await response.json()).toEqual({ error: "working directory is required" });
+  expect(await response.json()).toEqual({ error: "clientAttemptId is required for direct operator spawn" });
 });
 
 test("operator and agent structured Claude role launches both retain bypass permissions", async () => {

@@ -220,16 +220,19 @@ export function useAgentLaunchDraft(options: {
 }
 
 /**
- * The one-line truth about a launch draft, for a collapsed settings row: role,
- * model, effort, codex speed, account — each token present only when the value
- * exists, so nothing stands in for data that is not there.
+ * The one-line truth about a launch draft, for a collapsed settings row:
+ * where it runs, role, model, effort, codex speed, account — each token
+ * present only when the value exists, so nothing stands in for data that is
+ * not there.
  */
 export function launchSummary(
   t: TFunction,
   draft: Pick<AgentLaunchDraft, "engine" | "model" | "effort" | "speed" | "accounts" | "launchAccountId">,
   roleLabel?: string | null,
+  where?: string | null,
 ): string {
   const tokens: string[] = [];
+  if (where) tokens.push(where);
   if (roleLabel) tokens.push(roleLabel);
   const model = ENGINE_MODELS[draft.engine].find((option) => option.id === draft.model);
   tokens.push(draft.model ? (model?.shortLabel ?? draft.model) : t("draft.summaryModelDefault"));

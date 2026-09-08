@@ -140,7 +140,7 @@ export function hasRecoverableRequest(attempt: SpawnAttempt): attempt is SpawnAt
     request.engine === attempt.engine &&
     (request.title === undefined || (typeof request.title === "string" && durableSemanticTitle(request.title, 120) !== null)) &&
     typeof request.model === "string" &&
-    typeof request.cwd === "string" && request.cwd.length > 0 &&
+    typeof request.cwd === "string" &&
     typeof request.effort === "string" &&
     (request.fast === null || typeof request.fast === "boolean") &&
     typeof request.accountId === "string" &&
