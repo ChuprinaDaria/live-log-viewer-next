@@ -636,7 +636,7 @@ test("a refused designation is terminal: the error is shown and the corrected re
   flushSync(() => confirmButton(host).click());
   await settle();
   expect(panelState(host)).toBe("intent-error");
-  expect(host.querySelector("[data-orchestrator-intent-error]")?.textContent).toContain("orchestrator cwd could not be resolved");
+  expect(host.querySelector("[data-orchestrator-intent-error]")?.textContent).toContain("no directory on the machine running the dashboard");
 
   seatResponses = [{ status: 202, body: { ok: true, conversationId: "conversation_orch", launchId: "launch-a", seat: activeSeat() } }];
   flushSync(() => confirmButton(host).click());
@@ -1021,7 +1021,7 @@ test("a durable terminal error releases the key, so the corrected mandate is the
   await settle();
   flushSync(() => undefined);
   expect(panelState(reopened)).toBe("intent-error");
-  expect(reopened.querySelector("[data-orchestrator-intent-error]")?.textContent).toContain("orchestrator cwd could not be resolved");
+  expect(reopened.querySelector("[data-orchestrator-intent-error]")?.textContent).toContain("no directory on the machine running the dashboard");
 
   seatResponses = [{ status: 202, body: { ok: true, conversationId: "conversation_orch", launchId: "launch-a", seat: activeSeat() } }];
   flushSync(() => confirmButton(reopened).click());

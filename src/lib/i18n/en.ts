@@ -1986,6 +1986,7 @@ export const en = {
   "orchPanel.creatingResume": "Finish this designation",
   "orchPanel.errorTitle": "The orchestrator wasn't designated",
   "orchPanel.errorHint": "Nothing is running. Fix the mandate or the parameters and try again.",
+  "orchPanel.errorCwd": "This project has no directory on the machine running the dashboard — only its conversations were carried here. A seat opens where the directory is: pick a project that exists on this machine, or open the dashboard of the one that holds it.",
   "orchPanel.errorUnknownTitle": "The last attempt's outcome is unknown",
   "orchPanel.errorUnknownHint": "The reply was lost, so an orchestrator may already exist. Trying again replays the same request instead of creating a second one.",
   "orchPanel.transportLost": "The reply never arrived — the connection dropped.",

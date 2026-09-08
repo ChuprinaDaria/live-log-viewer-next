@@ -756,8 +756,15 @@ function OrchestratorDraft({
                 ? rotate ? "orchPanel.rotateErrorUnknownTitle" : "orchPanel.errorUnknownTitle"
                 : rotate ? "orchPanel.rotateErrorTitle" : "orchPanel.errorTitle")}
             </p>
+            {/* The commonest failure here is not a broken mandate: the project
+                simply lives on another machine. Its transcripts were carried
+                to this one, so it shows in the list, but a seat can only open
+                where the directory is. Saying that plainly beats printing the
+                resolver's own words at the operator. */}
             <pre className="mt-1 max-h-24 overflow-y-auto whitespace-pre-wrap break-words font-sans text-ui leading-4 text-secondary">
-              {state.error}
+              {state.error?.includes("cwd could not be resolved")
+                ? t("orchPanel.errorCwd")
+                : state.error}
             </pre>
             <p className="mt-1 text-caption text-muted">
               {t(state.retry === "same"

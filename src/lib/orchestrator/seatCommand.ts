@@ -675,7 +675,10 @@ export async function executeOrchestratorSeatRequest(
     return {
       status: 400,
       body: {
-        error: "orchestrator cwd could not be resolved — pass cwd explicitly or set LLV_ORCHESTRATOR_CWD",
+        /* Almost always this means the project lives on ANOTHER machine: the
+           dashboard shows every project whose transcripts were carried here,
+           and a seat can only be opened where the directory actually is. */
+        error: "orchestrator cwd could not be resolved: this project has no directory on the machine running the dashboard — open it on the machine that holds it, pass cwd explicitly, or set LLV_ORCHESTRATOR_CWD",
         code: "cwd_unresolved",
         seat: orchestratorSeatFor(project).pending,
       },
