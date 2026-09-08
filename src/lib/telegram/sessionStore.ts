@@ -29,10 +29,33 @@ import { validTelegramAccountId, type TelegramAccountIdentity, type TelegramErro
  */
 
 const DIR_NAME = "telegram";
+const ACCOUNTS_DIR = "accounts";
 const SESSION_FILE = "session.json";
 const CONNECTOR_TOKEN_FILE = "connector-token";
 const CONNECTION_FILE = "connection.json";
 export const TELEGRAM_CONNECTOR_TOKEN_ENV = "LLV_TELEGRAM_MCP_TOKEN";
+
+/**
+ * The name a NAMED account slot answers to.
+ *
+ * It becomes a directory name, a vault record id and an environment variable,
+ * so it is deliberately narrower than any of the three: lowercase, no dots, no
+ * separators, two to thirty-two characters. Nothing read from a slug can
+ * escape the accounts directory, and nothing a person types can produce a
+ * record id the console would refuse.
+ */
+export const TELEGRAM_ACCOUNT_SLUG = /^[a-z0-9][a-z0-9_-]{1,31}$/;
+
+/**
+ * The legacy single slot, under the name the listing reports it by.
+ *
+ * The HQ's connector reads `<state>/telegram/session.json` and always has; the
+ * spawn path hands `telegram-mcp` the token beside it. That slot therefore
+ * stays exactly where it is — `default` is an alias for READING it, never a
+ * slot to write into, and every write path below refuses the name outright
+ * rather than quietly relocating the credential the connector depends on.
+ */
+export const DEFAULT_TELEGRAM_SLUG = "default";
 
 export type StoredTelegramSession = {
   version: 1;
@@ -105,8 +128,7 @@ function assertSafeSecretFile(pathname: string): void {
  * state-dir root above it stays the app-wide boundary it already is — this
  * fences the component this module creates.
  */
-export function ensureTelegramStateDir(create = true): string | null {
-  const dir = statePath(DIR_NAME);
+function ensureOwnerOnlyDir(dir: string, create: boolean, what: string): string | null {
   let stat: fs.Stats;
   try {
     stat = fs.lstatSync(dir);
@@ -116,15 +138,55 @@ export function ensureTelegramStateDir(create = true): string | null {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     stat = fs.lstatSync(dir);
   }
-  if (stat.isSymbolicLink()) throw new UnsafeTelegramSessionError("telegram directory is a symlink");
-  if (!stat.isDirectory()) throw new UnsafeTelegramSessionError("telegram directory is not a directory");
+  if (stat.isSymbolicLink()) throw new UnsafeTelegramSessionError(`${what} is a symlink`);
+  if (!stat.isDirectory()) throw new UnsafeTelegramSessionError(`${what} is not a directory`);
   if (typeof process.getuid === "function" && stat.uid !== process.getuid()) {
-    throw new UnsafeTelegramSessionError("telegram directory is not owned by this user");
+    throw new UnsafeTelegramSessionError(`${what} is not owned by this user`);
   }
   if ((stat.mode & 0o077) !== 0) {
-    throw new UnsafeTelegramSessionError("telegram directory permissions are wider than owner-only");
+    throw new UnsafeTelegramSessionError(`${what} permissions are wider than owner-only`);
   }
   return dir;
+}
+
+export function ensureTelegramStateDir(create = true): string | null {
+  return ensureOwnerOnlyDir(statePath(DIR_NAME), create, "telegram directory");
+}
+
+/** A slug that may be READ. `default` passes: it is the legacy slot's alias. */
+function accountSlug(slug: unknown): string {
+  if (typeof slug !== "string" || !TELEGRAM_ACCOUNT_SLUG.test(slug)) {
+    throw new Error("Telegram account slug is invalid");
+  }
+  return slug;
+}
+
+/** A slug that may be WRITTEN. `default` does not: the legacy slot belongs to
+    the connector, and a write under that name would move its files. */
+function writableAccountSlug(slug: unknown): string {
+  const safe = accountSlug(slug);
+  if (safe === DEFAULT_TELEGRAM_SLUG) {
+    throw new Error("the default Telegram slot is read-only here");
+  }
+  return safe;
+}
+
+/** Where one named slot's three files live. Pure path arithmetic — it creates
+    nothing, so a caller can name a slot that does not exist yet. */
+export function telegramAccountDir(slug: string): string {
+  return statePath(DIR_NAME, ACCOUNTS_DIR, accountSlug(slug));
+}
+
+/** The same fence as the legacy slot, applied to all three levels: the
+    telegram directory, the accounts directory under it, and the slot itself.
+    A widened directory anywhere on that path fails closed. */
+export function ensureTelegramAccountDir(slug: string, create = true): string | null {
+  const safe = accountSlug(slug);
+  const root = ensureTelegramStateDir(create);
+  if (root === null) return null;
+  const accounts = ensureOwnerOnlyDir(path.join(root, ACCOUNTS_DIR), create, "telegram accounts directory");
+  if (accounts === null) return null;
+  return ensureOwnerOnlyDir(path.join(accounts, safe), create, `telegram account directory ${safe}`);
 }
 
 const INCOMING_FEED_SCOPE_LENGTH = 16;
@@ -185,6 +247,13 @@ function removeIncomingFeeds(): void {
    owner-only write path for everything the connector owns. */
 export function atomicSecretWrite(pathname: string, contents: string): void {
   ensureTelegramStateDir(true);
+  writeOwnerOnly(pathname, contents);
+}
+
+/** The write itself, with the directory already proven owner-only by the
+    caller. Split out so a named account slot can reuse the exact bytes-on-disk
+    guarantees without re-fencing the legacy directory it does not live in. */
+function writeOwnerOnly(pathname: string, contents: string): void {
   try {
     assertSafeSecretFile(pathname);
   } catch (error) {
@@ -343,15 +412,27 @@ function existingSafeSecretContents(pathname: string): string | null {
 /** Persists the enrolled session and returns the opaque reference every other
     surface uses to talk about it. */
 export function saveTelegramSession(sessionString: string): StoredTelegramSession {
-  if (!sessionString) throw new Error("Telegram session string is empty");
   ensureTelegramStateDir(true);
+  return saveSessionFiles(telegramDir(), sessionString);
+}
+
+/**
+ * The session + connector-token pair for ONE slot, in a directory the caller
+ * has already fenced. The legacy slot and every named account slot share this
+ * body, so a phone login gets the same atomicity, the same digest binding and
+ * the same refusal to overwrite an existing unsafe pair.
+ */
+function saveSessionFiles(dir: string, sessionString: string): StoredTelegramSession {
+  if (!sessionString) throw new Error("Telegram session string is empty");
+  const sessionPath = path.join(dir, SESSION_FILE);
+  const tokenPath = path.join(dir, CONNECTOR_TOKEN_FILE);
   /* Validate and read BOTH existing files before committing either new value.
      A refused session overwrite therefore cannot rotate or delete the token
      that its preserved JSON still references. */
-  const previousSession = existingSafeSecretContents(telegramSessionPath());
-  const previousToken = existingSafeSecretContents(telegramConnectorTokenPath());
+  const previousSession = existingSafeSecretContents(sessionPath);
+  const previousToken = existingSafeSecretContents(tokenPath);
   if (previousSession !== null || previousToken !== null) {
-    const existing = readValidatedTelegramSessionFiles(telegramDir());
+    const existing = readValidatedTelegramSessionFiles(dir);
     if (existing.status !== "valid") {
       throw new UnsafeTelegramSessionError(existing.status === "unsafe" ? existing.detail : "existing session pair is incomplete");
     }
@@ -371,17 +452,192 @@ export function saveTelegramSession(sessionString: string): StoredTelegramSessio
     savedAt: stored.savedAt,
     connectorTokenSha256: crypto.createHash("sha256").update(connectorToken).digest("hex"),
   };
-  atomicSecretWrite(telegramConnectorTokenPath(), connectorToken + "\n");
+  writeOwnerOnly(tokenPath, connectorToken + "\n");
   try {
-    atomicSecretWrite(telegramSessionPath(), JSON.stringify(persisted));
+    writeOwnerOnly(sessionPath, JSON.stringify(persisted));
   } catch (error) {
     try {
-      if (previousToken === null) removeSafeFile(telegramConnectorTokenPath());
-      else atomicSecretWrite(telegramConnectorTokenPath(), previousToken);
+      if (previousToken === null) fs.rmSync(tokenPath, { force: true });
+      else writeOwnerOnly(tokenPath, previousToken);
     } catch { /* preserve the original session error; storage remains fail-closed */ }
     throw error;
   }
   return stored;
+}
+
+/**
+ * One named account slot, enrolled by phone (`<state>/telegram/accounts/<slug>/`).
+ *
+ * A second Telegram account is not a second copy of the first: it gets its own
+ * directory, its own credential reference and its own connector token, and it
+ * cannot be written under the `default` name, so the slot the HQ connector
+ * reads is untouched by anything that happens here.
+ */
+export function saveTelegramAccountSession(slug: string, sessionString: string): StoredTelegramSession {
+  const safe = writableAccountSlug(slug);
+  if (!sessionString) throw new Error("Telegram session string is empty");
+  const dir = ensureTelegramAccountDir(safe, true);
+  if (dir === null) throw new UnsafeTelegramSessionError("telegram account directory is unavailable");
+  return saveSessionFiles(dir, sessionString);
+}
+
+/** A slot's stored session, or null when it holds none. `default` reads the
+    legacy slot, which is the whole point of the alias. */
+export function readTelegramAccountSession(slug: string): StoredTelegramSession | null {
+  const safe = accountSlug(slug);
+  if (safe === DEFAULT_TELEGRAM_SLUG) return readTelegramSession();
+  const result = readValidatedTelegramSessionFiles(telegramAccountDir(safe));
+  if (result.status === "missing") return null;
+  if (result.status === "unsafe") throw new UnsafeTelegramSessionError(result.detail);
+  const row = result.sessionFile;
+  return { version: 1, credentialRef: row.credentialRef, connectorToken: result.connectorToken, sessionString: row.sessionString, savedAt: row.savedAt };
+}
+
+/** Removes one slot entirely — credential, token and record together. The
+    account is being forgotten, so nothing of it stays behind. */
+export function deleteTelegramAccountSession(slug: string): void {
+  const safe = writableAccountSlug(slug);
+  const dir = telegramAccountDir(safe);
+  if (!fs.existsSync(dir)) return;
+  /* Each file is checked before it is removed, so a tampered slot is refused
+     rather than swept: the same fail-closed boundary as the legacy slot. */
+  for (const name of [SESSION_FILE, CONNECTOR_TOKEN_FILE, CONNECTION_FILE]) {
+    removeSafeFileIn(dir, path.join(dir, name));
+  }
+  try { fs.rmdirSync(dir); } catch { /* something else lives here; leave it */ }
+}
+
+function removeSafeFileIn(dir: string, pathname: string): void {
+  if (ensureOwnerOnlyDir(dir, false, "telegram account directory") === null || !safeFileExists(pathname)) return;
+  fs.rmSync(pathname);
+}
+
+/**
+ * What a slot records ABOUT its account, next to (never inside) the credential.
+ *
+ * The number and the handle are here because they are what the operator
+ * recognises the account by on a phone screen; `vaultId` is the console record
+ * the session was registered as, and `vaultReason` says why there is none when
+ * there is none. No field here is a secret, and the session string is not one
+ * of them.
+ */
+export type StoredTelegramAccountRecord = {
+  version: 1;
+  slug: string;
+  phone: string | null;
+  username: string | null;
+  name: string | null;
+  connectedAt: string;
+  vaultId: string | null;
+  vaultReason: string | null;
+};
+
+export function writeTelegramAccountRecord(slug: string, record: StoredTelegramAccountRecord): void {
+  const safe = writableAccountSlug(slug);
+  const dir = ensureTelegramAccountDir(safe, true);
+  if (dir === null) throw new UnsafeTelegramSessionError("telegram account directory is unavailable");
+  writeOwnerOnly(path.join(dir, CONNECTION_FILE), JSON.stringify({ ...record, slug: safe }));
+}
+
+export function readTelegramAccountRecord(slug: string): StoredTelegramAccountRecord | null {
+  const safe = accountSlug(slug);
+  const dir = telegramAccountDir(safe);
+  const pathname = path.join(dir, CONNECTION_FILE);
+  if (ensureOwnerOnlyDir(dir, false, "telegram account directory") === null) return null;
+  try {
+    assertSafeSecretFile(pathname);
+  } catch (error) {
+    if (error instanceof UnsafeTelegramSessionError) throw error;
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  let parsed: unknown;
+  try { parsed = JSON.parse(fs.readFileSync(pathname, "utf8")); }
+  catch { return null; }
+  if (!parsed || typeof parsed !== "object") return null;
+  const row = parsed as Partial<StoredTelegramAccountRecord>;
+  const word = (value: unknown): string | null => (typeof value === "string" && value ? value : null);
+  return {
+    version: 1,
+    slug: safe,
+    phone: word(row.phone),
+    username: word(row.username),
+    name: word(row.name),
+    connectedAt: word(row.connectedAt) ?? "",
+    vaultId: word(row.vaultId),
+    vaultReason: word(row.vaultReason),
+  };
+}
+
+/** One row per enrolled account, as the phone lists them. */
+export type TelegramAccountListing = {
+  slug: string;
+  phone: string | null;
+  username: string | null;
+  name: string | null;
+  connectedAt: string | null;
+  vaultId: string | null;
+  /** Why the console holds no record for this account — or why the slot itself
+      cannot be read. Absent reasons mean there is nothing to say. */
+  vaultReason: string | null;
+};
+
+/**
+ * Every account this machine holds: the legacy slot as `default`, then each
+ * named slot.
+ *
+ * A slot with no session is not an account and is left out — a half-written
+ * directory is not something to offer as a login. A slot that fails the safety
+ * fence is NOT hidden, though: it is reported with its reason, because a
+ * credential directory someone widened is exactly the thing the operator needs
+ * to see rather than the thing to quietly drop from a list.
+ */
+export function listTelegramAccounts(): TelegramAccountListing[] {
+  const rows: TelegramAccountListing[] = [];
+  try {
+    const legacy = readTelegramSession();
+    if (legacy) {
+      const connection = readTelegramConnection();
+      rows.push({
+        slug: DEFAULT_TELEGRAM_SLUG,
+        /* The legacy slot was enrolled by QR and never recorded a number.
+           Saying so beats inventing one. */
+        phone: null,
+        username: connection.identity?.username ?? null,
+        name: connection.identity?.name ?? null,
+        connectedAt: legacy.savedAt,
+        vaultId: null,
+        vaultReason: null,
+      });
+    }
+  } catch { /* the panel reports an unsafe default slot in its own words */ }
+
+  const accountsRoot = statePath(DIR_NAME, ACCOUNTS_DIR);
+  let entries: fs.Dirent[];
+  try { entries = fs.readdirSync(accountsRoot, { withFileTypes: true }); }
+  catch { return rows; }
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !TELEGRAM_ACCOUNT_SLUG.test(entry.name)) continue;
+    try {
+      if (readTelegramAccountSession(entry.name) === null) continue;
+      const record = readTelegramAccountRecord(entry.name);
+      rows.push({
+        slug: entry.name,
+        phone: record?.phone ?? null,
+        username: record?.username ?? null,
+        name: record?.name ?? null,
+        connectedAt: record?.connectedAt || null,
+        vaultId: record?.vaultId ?? null,
+        vaultReason: record?.vaultReason ?? null,
+      });
+    } catch (error) {
+      rows.push({
+        slug: entry.name, phone: null, username: null, name: null, connectedAt: null, vaultId: null,
+        vaultReason: error instanceof UnsafeTelegramSessionError ? error.message : "unreadable",
+      });
+    }
+  }
+  return rows;
 }
 
 function readTelegramSessionUnchecked(): StoredTelegramSession | null {

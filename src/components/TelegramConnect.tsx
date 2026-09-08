@@ -11,6 +11,7 @@ import { handleOverlayEscape } from "@/lib/overlay";
 import type { TelegramErrorCode, TelegramPhase, TelegramStatusPayload } from "@/lib/telegram/contracts";
 
 import { Loader2, Trash2, X } from "./icons";
+import { TelegramAccountSheet } from "./mobile/TelegramAccountSheet";
 import { TelegramReportsSection } from "./TelegramReports";
 
 /**
@@ -43,6 +44,9 @@ export function telegramErrKey(code: TelegramErrorCode): Parameters<TFunction>[0
     not_read_only: "telegram.err.not_read_only",
     logout_failed: "telegram.err.logout_failed",
     health_failed: "telegram.err.health_failed",
+    phone_invalid: "telegram.err.phone_invalid",
+    code_invalid: "telegram.err.code_invalid",
+    flood_wait: "telegram.err.flood_wait",
   };
   return known[code] ?? "telegram.err.bridge_failed";
 }
@@ -205,6 +209,10 @@ export function TelegramPanel({ state, reports, onClose }: { state: TelegramConn
   const apiIdRef = useRef<HTMLInputElement>(null);
   const apiHashRef = useRef<HTMLInputElement>(null);
   const needsCredentials = telegramNeedsCredentials(status);
+  /* The other door into the same enrolment. The QR below stays exactly as it
+     was — it is what the HQ's default slot is connected with — and this opens
+     the phone flow, which enrols a NAMED account instead. */
+  const [byPhone, setByPhone] = useState(false);
   useEffect(() => {
     closeRef.current?.focus();
   }, []);
@@ -265,6 +273,8 @@ export function TelegramPanel({ state, reports, onClose }: { state: TelegramConn
         </header>
 
         <p className="sr-only" role="status" aria-live="polite">{announcement(status, t)}</p>
+
+        {byPhone ? <TelegramAccountSheet onClose={() => setByPhone(false)} onConnected={() => void state.refresh()} /> : null}
 
         <div className="flex flex-col gap-2 px-3 py-2.5">
           <div className="flex items-center gap-2">
@@ -332,7 +342,19 @@ export function TelegramPanel({ state, reports, onClose }: { state: TelegramConn
           {phase === "disconnected" && !needsCredentials ? (
             <>
               <p className="text-[10.5px] leading-snug text-muted">{t("telegram.connectHint")}</p>
-              <ActionButton label={t("telegram.connect")} onClick={() => void state.connect()} disabled={busy} />
+              <div className="flex items-center gap-2">
+                <ActionButton label={t("telegram.connect")} onClick={() => void state.connect()} disabled={busy} />
+                {/* A QR shown on the same phone that would have to scan it is
+                    no way in, so the number is offered beside it. */}
+                <button
+                  type="button"
+                  data-telegram-by-phone
+                  onClick={() => setByPhone(true)}
+                  className="min-h-[44px] shrink-0 rounded-[6px] px-1 text-[10.5px] font-semibold text-accent underline decoration-dotted underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 sm:min-h-[28px]"
+                >
+                  {t("telegram.byPhone")}
+                </button>
+              </div>
             </>
           ) : null}
 

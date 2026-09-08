@@ -288,10 +288,15 @@ export function connectorLaunchSpec(input: { credentialRef: string; sessionStrin
 /** Launch spec for one enrollment-bridge invocation (`enroll`/`health`/`logout`).
     The session, when one is needed, is written to the child's stdin by the
     adapter — not put in env or argv here. */
-export function bridgeLaunchSpec(command: "enroll" | "health" | "logout", credentials: TelegramApiCredentials): ProcessSpec {
+/** `extra` carries the phone command's `--phone=+…`. A number is not a
+    credential — it grants nothing without the code Telegram sends to the
+    device — and the client needs it before it can ask for anything, so it is
+    the one login input that cannot travel over stdin. The code and the 2FA
+    password still do. */
+export function bridgeLaunchSpec(command: "enroll" | "health" | "logout" | "phone", credentials: TelegramApiCredentials, extra: readonly string[] = []): ProcessSpec {
   return {
     command: telegramVenvPython(),
-    args: [loginBridgePath(), command],
+    args: [loginBridgePath(), command, ...extra],
     cwd: os.homedir(),
     env: {
       ...minimalChildEnv(),

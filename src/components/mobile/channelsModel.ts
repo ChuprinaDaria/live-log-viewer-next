@@ -124,3 +124,74 @@ export function channelTitle(channel: Channel): string {
 export function channelLine(channel: Channel): string {
   return [channel.kind, channel.chat_id ?? channel.link].filter(Boolean).join(" · ");
 }
+
+/*
+ * The Telegram accounts this machine holds, as the channels page shows them.
+ *
+ * They are the other half of the picker above: an account can only be chosen
+ * to read a chat once it is in the console's vault, and the way it gets there
+ * is the phone login on this page. So the list, the «+ Telegram-акаунт» button
+ * and the picker all read from the same place — and when the vault did NOT
+ * take a session, the row says so rather than quietly failing to appear.
+ */
+
+export interface TelegramAccountRow {
+  slug: string;
+  phone: string | null;
+  username: string | null;
+  name: string | null;
+  connectedAt: string | null;
+  vaultId: string | null;
+  vaultReason: string | null;
+}
+
+export interface TelegramAccountsRead {
+  accounts: TelegramAccountRow[];
+  refresh: () => Promise<void>;
+  /** Remote sign-out for one account. Returns the refusal, or null. */
+  signOut: (slug: string) => Promise<string | null>;
+}
+
+export function useTelegramAccounts(): TelegramAccountsRead {
+  const [accounts, setAccounts] = useState<TelegramAccountRow[]>([]);
+
+  const load = useCallback(async (signal?: AbortSignal) => {
+    try {
+      const options = { cache: "no-store" as const, ...(signal ? { signal } : {}) };
+      const response = await fetch("/api/telegram", options);
+      const body = await response.json() as { accounts?: TelegramAccountRow[] };
+      if (response.ok) setAccounts(body.accounts ?? []);
+    } catch {
+      /* The page's own error line already covers an unreachable Viewer; an
+         empty account list is the honest answer to "which ones do I have". */
+    }
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void load(controller.signal);
+    return () => controller.abort();
+  }, [load]);
+
+  const signOut = useCallback(async (slug: string): Promise<string | null> => {
+    try {
+      const response = await fetch("/api/telegram", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "logout", slug }),
+      });
+      const body = await response.json() as { accounts?: TelegramAccountRow[]; error?: string; logins?: Array<{ slug: string; error?: { code: string } | null }> };
+      if (!response.ok) return body.error ?? `HTTP ${response.status}`;
+      setAccounts(body.accounts ?? []);
+      /* A refused remote logout keeps the credential, and the service says so
+         through the login it leaves behind. Surfacing that beats a silent row
+         that simply did not disappear. */
+      const refused = (body.logins ?? []).find((row) => row.slug === slug)?.error?.code;
+      return refused ?? null;
+    } catch (cause) {
+      return cause instanceof Error ? cause.message : String(cause);
+    }
+  }, []);
+
+  return { accounts, refresh: () => load(), signOut };
+}

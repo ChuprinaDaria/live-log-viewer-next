@@ -254,3 +254,152 @@ test("local deletion preflights both credential files before removing either", (
   expect(fs.existsSync(telegramSessionPath())).toBe(true);
   expect(fs.readFileSync(external, "utf8")).toBe("external");
 });
+
+/* ---------------------------------------------------------------------------
+ * Named account slots (the phone-login flow).
+ *
+ * The HQ's connector reads ONE session — the legacy files at the top of the
+ * telegram directory — and it must keep reading exactly those. Everything a
+ * phone login enrols lands in its own slot under `accounts/<slug>/`, with the
+ * same three files behind the same owner-only fence, so a second account can
+ * never widen or move the first. `default` names the legacy slot in listings
+ * and nowhere else: it is an alias for reading, never a slot to write into.
+ * ------------------------------------------------------------------------ */
+
+const {
+  DEFAULT_TELEGRAM_SLUG,
+  deleteTelegramAccountSession,
+  listTelegramAccounts,
+  readTelegramAccountRecord,
+  readTelegramAccountSession,
+  saveTelegramAccountSession,
+  telegramAccountDir,
+  writeTelegramAccountRecord,
+} = await import("./sessionStore");
+
+const SLOT_SESSION = "1BvWapzMBu4placeholder-not-a-real-session";
+/* The reserved all-zero range: a fixture number, never a real one. */
+const FIXTURE_PHONE = "+10000000000";
+
+test("an account slot keeps its three files owner-only in an owner-only directory", () => {
+  const stored = saveTelegramAccountSession("work", SLOT_SESSION);
+  expect(stored.credentialRef).toMatch(/^[0-9a-f-]{36}$/);
+
+  const dir = telegramAccountDir("work");
+  expect(dir.endsWith(path.join("telegram", "accounts", "work"))).toBe(true);
+  expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
+  expect(fs.statSync(path.dirname(dir)).mode & 0o777).toBe(0o700);
+  for (const name of ["session.json", "connector-token"]) {
+    expect(fs.statSync(path.join(dir, name)).mode & 0o777).toBe(0o600);
+  }
+  expect(fs.readdirSync(dir).filter((name) => name.includes(".tmp"))).toEqual([]);
+  expect(readTelegramAccountSession("work")?.sessionString).toBe(SLOT_SESSION);
+});
+
+test("a slot leaves the legacy default slot exactly where it was", () => {
+  const legacy = saveTelegramSession(PLACEHOLDER_SESSION);
+  const legacyBytes = fs.readFileSync(telegramSessionPath());
+  saveTelegramAccountSession("work", SLOT_SESSION);
+
+  expect(fs.readFileSync(telegramSessionPath())).toEqual(legacyBytes);
+  expect(readTelegramSession()?.credentialRef).toBe(legacy.credentialRef);
+  expect(readTelegramSession()?.sessionString).toBe(PLACEHOLDER_SESSION);
+});
+
+test("two slots hold two different sessions", () => {
+  saveTelegramAccountSession("work", SLOT_SESSION);
+  saveTelegramAccountSession("private", SLOT_SESSION + "-2");
+  expect(readTelegramAccountSession("work")?.sessionString).toBe(SLOT_SESSION);
+  expect(readTelegramAccountSession("private")?.sessionString).toBe(SLOT_SESSION + "-2");
+});
+
+test("only a slug-shaped name is a slot", () => {
+  for (const bad of ["", "a", "Work", "wo rk", "../escape", "work/sub", "w".repeat(33), "-lead"]) {
+    expect(() => saveTelegramAccountSession(bad, SLOT_SESSION)).toThrow();
+    expect(() => telegramAccountDir(bad)).toThrow();
+  }
+});
+
+test("`default` is an alias for reading, never a slot to write into", () => {
+  saveTelegramSession(PLACEHOLDER_SESSION);
+  expect(() => saveTelegramAccountSession(DEFAULT_TELEGRAM_SLUG, SLOT_SESSION)).toThrow();
+  expect(() => deleteTelegramAccountSession(DEFAULT_TELEGRAM_SLUG)).toThrow();
+  /* And the legacy files stayed where the connector reads them. */
+  expect(readTelegramSession()?.sessionString).toBe(PLACEHOLDER_SESSION);
+  expect(fs.existsSync(path.join(telegramAccountDir("work"), ".."))).toBe(false);
+});
+
+test("a slot's record carries the phone and the handle, never the session", () => {
+  saveTelegramAccountSession("work", SLOT_SESSION);
+  writeTelegramAccountRecord("work", {
+    version: 1,
+    slug: "work",
+    phone: FIXTURE_PHONE,
+    username: "example_handle",
+    name: "Example",
+    connectedAt: "2026-08-20T12:00:00.000Z",
+    vaultId: "telegram_session_work",
+    vaultReason: null,
+  });
+
+  const record = readTelegramAccountRecord("work");
+  expect(record?.phone).toBe(FIXTURE_PHONE);
+  expect(record?.username).toBe("example_handle");
+  expect(record?.vaultId).toBe("telegram_session_work");
+  const onDisk = fs.readFileSync(path.join(telegramAccountDir("work"), "connection.json"), "utf8");
+  expect(onDisk).not.toContain(SLOT_SESSION);
+  expect(fs.statSync(path.join(telegramAccountDir("work"), "connection.json")).mode & 0o777).toBe(0o600);
+});
+
+test("the listing reports every slot plus the legacy slot as `default`", () => {
+  saveTelegramSession(PLACEHOLDER_SESSION);
+  writeTelegramConnection({
+    version: 1,
+    status: "connected",
+    credentialRef: "ref-1",
+    identity: { name: "Account A", username: "account_a", id: "770000001" },
+    lastHealthCheckAt: "2026-08-20T10:00:00.000Z",
+    errorCode: null,
+    identityIdUpgradedAt: null,
+  });
+  saveTelegramAccountSession("work", SLOT_SESSION);
+  writeTelegramAccountRecord("work", {
+    version: 1, slug: "work", phone: FIXTURE_PHONE, username: "example_handle",
+    name: "Example", connectedAt: "2026-08-20T12:00:00.000Z", vaultId: "telegram_session_work", vaultReason: null,
+  });
+
+  const accounts = listTelegramAccounts();
+  expect(accounts.map((row) => row.slug).sort()).toEqual(["default", "work"]);
+  const fallback = accounts.find((row) => row.slug === "default")!;
+  expect(fallback.username).toBe("account_a");
+  /* The legacy slot never recorded a number — saying so is better than inventing one. */
+  expect(fallback.phone).toBeNull();
+  const work = accounts.find((row) => row.slug === "work")!;
+  expect(work.phone).toBe(FIXTURE_PHONE);
+  expect(work.connectedAt).toBe("2026-08-20T12:00:00.000Z");
+});
+
+test("the listing is empty when nothing is enrolled, and skips a slot with no session", () => {
+  expect(listTelegramAccounts()).toEqual([]);
+  fs.mkdirSync(telegramAccountDir("halfway"), { recursive: true, mode: 0o700 });
+  expect(listTelegramAccounts()).toEqual([]);
+});
+
+test("a slot with widened permissions is refused rather than read", () => {
+  saveTelegramAccountSession("work", SLOT_SESSION);
+  fs.chmodSync(path.join(telegramAccountDir("work"), "session.json"), 0o644);
+  expect(() => readTelegramAccountSession("work")).toThrow(UnsafeTelegramSessionError);
+});
+
+test("deleting a slot removes it and leaves the others and the legacy slot alone", () => {
+  saveTelegramSession(PLACEHOLDER_SESSION);
+  saveTelegramAccountSession("work", SLOT_SESSION);
+  saveTelegramAccountSession("private", SLOT_SESSION + "-2");
+
+  deleteTelegramAccountSession("work");
+  deleteTelegramAccountSession("work");
+
+  expect(fs.existsSync(telegramAccountDir("work"))).toBe(false);
+  expect(readTelegramAccountSession("private")?.sessionString).toBe(SLOT_SESSION + "-2");
+  expect(readTelegramSession()?.sessionString).toBe(PLACEHOLDER_SESSION);
+});
