@@ -2390,6 +2390,7 @@ export const uk: Record<keyof typeof en, Message> = {
   "mobile2.chat.menuTransfer": "Перенести (бриф)",
   "transfer.ready": "Бриф зібрано — обери рушій і акаунт, запускай",
   "transfer.failed": "Бриф не зібрано: {reason}",
+  "transfer.label": "перенести на іншу машину / акаунт",
   "mobile2.attention.title": "Потребують вас",
   "mobile2.attention.next": "Далі",
   "mobile2.attention.empty": "Нічого не потребує вас.",

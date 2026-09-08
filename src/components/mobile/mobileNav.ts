@@ -61,7 +61,7 @@ export interface MobileNavEntry {
   screen: MobileScreen;
 }
 
-const SCREEN_KINDS: ReadonlySet<string> = new Set(["board", "chat", "pipelines", "pipeline", "accounts", "orchestrator", "secrets", "mcp", "settings", "roles", "firms"]);
+const SCREEN_KINDS: ReadonlySet<string> = new Set(["board", "chat", "pipelines", "pipeline", "accounts", "orchestrator", "secrets", "mcp", "settings", "roles", "firms", "permissions", "channels", "machines"]);
 const WITH_ID: ReadonlySet<string> = new Set(["chat", "pipeline"]);
 
 function isScreen(value: unknown): value is MobileScreen {

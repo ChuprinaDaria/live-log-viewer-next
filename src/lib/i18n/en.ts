@@ -2461,6 +2461,7 @@ export const en = {
   "mobile2.chat.menuTransfer": "Transfer (brief)",
   "transfer.ready": "Brief ready — pick the engine and account, launch",
   "transfer.failed": "No brief: {reason}",
+  "transfer.label": "move to another machine / account",
   "mobile2.attention.title": "Needs you",
   "mobile2.attention.next": "Next",
   "mobile2.attention.empty": "Nothing needs you.",

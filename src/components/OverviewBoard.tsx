@@ -245,6 +245,18 @@ export function OverviewBoard({ files, projectCatalog, projectDisplayNames = {},
         searchTestId="overview-search"
         renderSheet={renderSheet}
       >
+        {/* One tap into the shared launch form (Task 7): the phone had no way
+            to start a session outside a project's own board. `machines` is
+            the same screen MobileMachinesScreen already serves off the tab
+            bar's root row. */}
+        <button
+          type="button"
+          data-mobile2-launch
+          className="mx-3 mt-3 inline-flex min-h-11 w-full items-center justify-center rounded-control border border-accent px-4 text-body font-semibold text-accent active:bg-accent-soft disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+          onClick={() => mobileNav.push({ kind: "machines" })}
+        >
+          {t("desktop.launchTitle")}
+        </button>
         {grid}
       </MobileShell>
     );

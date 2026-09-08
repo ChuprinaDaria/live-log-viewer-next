@@ -965,6 +965,7 @@ const NodeShell = memo(function NodeShell({
   onClose,
   onFocusRound,
   onHandoff,
+  onTransfer,
   onSpawnRetry,
   onExpand,
   onPipelineCreated,
@@ -1017,6 +1018,9 @@ const NodeShell = memo(function NodeShell({
   onClose: (path: string) => void;
   onFocusRound: (flowId: string, round: number) => void;
   onHandoff?: (file: FileEntry) => void;
+  /** «Перенести» (Task 7): sessionmem brief into a fresh draft, same gating
+      as onHandoff — absent in map mode. */
+  onTransfer?: (file: FileEntry) => void;
   onSpawnRetry?: (file: FileEntry) => void;
   /** Header control: open this conversation as the full-window overlay. */
   onExpand: (path: string) => void;
@@ -1190,7 +1194,9 @@ const NodeShell = memo(function NodeShell({
       <FarLabel file={node.file} />
       {/* The handoff handle pinned outside the card's bottom-left corner —
           where child arrows start; a click hangs a draft conversation below. */}
-      {onHandoff && canHandoff(node.file) ? <HandoffHandle file={node.file} onHandoff={() => onHandoff(node.file)} /> : null}
+      {onHandoff && canHandoff(node.file) ? (
+        <HandoffHandle file={node.file} onHandoff={() => onHandoff(node.file)} onTransfer={onTransfer ? () => onTransfer(node.file) : undefined} />
+      ) : null}
       {node.under.length ? (
         <button
           className="absolute -bottom-11 left-1/2 z-[2] inline-flex h-7 -translate-x-1/2 items-center gap-1.5 whitespace-nowrap rounded-full border border-border bg-card px-2.5 text-[11px] font-semibold text-muted shadow-1 hover:border-accent/40 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
@@ -1512,6 +1518,7 @@ export const NodesLayer = memo(function NodesLayer({
   onDraftClose,
   onDraftSpawned,
   onHandoff,
+  onTransfer,
   onSpawnRetry,
   onOpenTask,
   onExpand,
@@ -1553,6 +1560,8 @@ export const NodesLayer = memo(function NodesLayer({
   onDraftClose: (id: string) => void;
   onDraftSpawned: (id: string, file: FileEntry) => void;
   onHandoff?: (file: FileEntry) => void;
+  /** «Перенести» (Task 7), threaded alongside onHandoff the same way. */
+  onTransfer?: (file: FileEntry) => void;
   onSpawnRetry?: (file: FileEntry) => void;
   onOpenTask?: (task: BoardTask) => void;
   /** Opens a conversation as the full-window overlay (desktop panes only). */
@@ -1714,6 +1723,7 @@ export const NodesLayer = memo(function NodesLayer({
             onClose={onClose}
             onFocusRound={onFocusRound}
             onHandoff={onHandoff}
+            onTransfer={onTransfer}
             onSpawnRetry={onSpawnRetry}
             onExpand={onExpand}
             onPipelineCreated={onPipelineCreated}

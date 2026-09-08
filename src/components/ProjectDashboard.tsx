@@ -2331,6 +2331,7 @@ function ProjectDashboardView({
                 onDraftClose={removeDraft}
                 onDraftSpawned={draftSpawned}
                 onHandoff={addHandoffDraft}
+                onTransfer={(file) => { void addTransferDraft(file); }}
                 onSpawnRetry={retryLaunch}
                 onTaskDraft={openTaskDraft}
                 onOpenTask={openTask}

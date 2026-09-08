@@ -237,6 +237,10 @@ describe("history entries", () => {
     expect(readMobileNavEntry({ [MOBILE_NAV_STATE_KEY]: { d: 2, screen: { kind: "chat", id: "c1", extra: 1 } } })).toEqual({ d: 2, screen: { kind: "chat", id: "c1" } });
   });
 
+  test("a machines entry round-trips: SCREEN_KINDS accepts it on reload, same as the tab bar's other roots", () => {
+    expect(readMobileNavEntry({ [MOBILE_NAV_STATE_KEY]: { d: 2, screen: { kind: "machines" } } })).toEqual({ d: 2, screen: { kind: "machines" } });
+  });
+
   test("attach is ref-counted: the listener stays until the last screen detaches", () => {
     const b = browser();
     const nav = createMobileNav(b.host);

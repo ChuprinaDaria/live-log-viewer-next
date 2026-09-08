@@ -128,6 +128,9 @@ interface Props {
   /** The handoff handle under a pane: drop a draft that continues this
       conversation. Absent in map mode — the handle stays hidden there. */
   onHandoff?: (file: FileEntry) => void;
+  /** «Перенести» (Task 7): the transfer button beside the handoff handle.
+      Threaded the same way as onHandoff — absent in map mode. */
+  onTransfer?: (file: FileEntry) => void;
   /** Retry a terminal structured launch as a fresh editable draft. */
   onSpawnRetry?: (file: FileEntry) => void;
   /** «Send» on a task card with no aimed agent: seed a fresh draft conversation
@@ -220,6 +223,7 @@ export function SchemeBoard({
   onDraftClose,
   onDraftSpawned,
   onHandoff,
+  onTransfer,
   onSpawnRetry,
   onTaskDraft,
   onOpenTask,
@@ -471,6 +475,7 @@ export function SchemeBoard({
   const draftSpawnedRef = useRef(onDraftSpawned);
   const conversationOpenedRef = useRef(onConversationOpened);
   const handoffRef = useRef(onHandoff);
+  const transferRef = useRef(onTransfer);
   const spawnRetryRef = useRef(onSpawnRetry);
   const taskDraftRef = useRef(onTaskDraft);
   const openTaskRef = useRef(onOpenTask);
@@ -483,6 +488,7 @@ export function SchemeBoard({
     draftSpawnedRef.current = onDraftSpawned;
     conversationOpenedRef.current = onConversationOpened;
     handoffRef.current = onHandoff;
+    transferRef.current = onTransfer;
     spawnRetryRef.current = onSpawnRetry;
     taskDraftRef.current = onTaskDraft;
     openTaskRef.current = onOpenTask;
@@ -500,10 +506,12 @@ export function SchemeBoard({
   const stableDraftClose = useCallback((id: string) => draftCloseRef.current(id), []);
   const stableDraftSpawned = useCallback((id: string, file: FileEntry) => draftSpawnedRef.current(id, file), []);
   const stableHandoff = useCallback((file: FileEntry) => handoffRef.current?.(file), []);
+  const stableTransfer = useCallback((file: FileEntry) => transferRef.current?.(file), []);
   const stableSpawnRetry = useCallback((file: FileEntry) => spawnRetryRef.current?.(file), []);
   const stableOpenTask = useCallback((task: BoardTask) => openTaskRef.current?.(task), []);
   /* The handle renders only when the opener wired a handler (not in map mode). */
   const handoffForNodes = onHandoff ? stableHandoff : undefined;
+  const transferForNodes = onTransfer ? stableTransfer : undefined;
   const stableExpand = useCallback((path: string) => {
     setExpanded(path);
     conversationOpenedRef.current?.(path);
@@ -1243,6 +1251,7 @@ export function SchemeBoard({
           onDraftClose={stableDraftClose}
           onDraftSpawned={stableDraftSpawned}
           onHandoff={handoffForNodes}
+          onTransfer={transferForNodes}
           onSpawnRetry={onSpawnRetry ? stableSpawnRetry : undefined}
           onOpenTask={onOpenTask ? stableOpenTask : undefined}
           onExpand={stableExpand}
