@@ -282,7 +282,10 @@ test("no docked task rows on the phone: a background process is host data in the
   expect(await waitFor(() => boardReady(root))).toBe(true);
   const strip = (scope: HTMLElement | null) => Array.from(scope?.querySelectorAll("button") ?? []).find((el) => label(el).includes("background task")) ?? null;
   expect(strip(q(root, '[data-mobile2-screen="board"]'))).toBeNull();
-  await openMenu(root);
+  /* Host details is a row of the Settings tab now (TZ-UI.md: app pages as
+     buttons, project actions behind ⋯). */
+  click(q(root, '[data-mobile2-tab="settings"]'));
+  await settle();
   const hostRow = q(root, '[data-mobile2-open="host"]')!;
   expect(hostRow.textContent).toContain(translate("en", "mobile2.menu.host"));
   expect(hostRow.textContent).toContain(translate("en", "mobile2.menu.hostTasks", { count: 1 }));
@@ -304,15 +307,22 @@ test("⋯ opens the board menu over the board with every former header control a
   await openMenu(root);
   expect(boardReady(root)).toBe(true);
   const rows = Array.from(root.querySelectorAll("[data-mobile2-menu-row]")).map((el) => el.getAttribute("data-mobile2-menu-row"));
-  expect(rows).toEqual(["new-agent", "new-task", "new-pipeline", "tasks", "view-board", "view-catalog", "accounts", "host", "undo", "archive"]);
+  expect(rows).toEqual(["new-agent", "new-task", "new-pipeline", "tasks", "view-board", "view-catalog", "undo", "archive"]);
   for (const row of root.querySelectorAll("[data-mobile2-menu-row]")) expect((row as unknown as HTMLElement).className).toContain("min-h-11");
-  expect(q(root, '[data-mobile2-go="accounts"]')).not.toBeNull();
-  expect(q(root, '[data-mobile2-open="host"]')).not.toBeNull();
-  /* The device-local settings ride as rows too. */
-  expect(q(root, '[data-mobile2-sheet="menu"]')!.textContent).toContain(translate("en", "mobile2.menu.sound"));
+  /* The app-level rows left the project menu for the Settings tab. */
+  expect(q(root, '[data-mobile2-go="accounts"]')).toBeNull();
+  expect(q(root, '[data-mobile2-open="host"]')).toBeNull();
+  expect(q(root, '[data-mobile2-sheet="menu"]')!.textContent).not.toContain(translate("en", "mobile2.menu.sound"));
   /* Delete project is cut on the phone (README §6): nothing in the menu is
      in danger colour. */
   expect(q(root, '[data-mobile2-sheet="menu"]')!.querySelector(".text-danger")).toBeNull();
+  click(q(root, '[data-mobile2-tab="settings"]'));
+  await settle();
+  expect(q(root, '[data-mobile2-screen="settings"]')).not.toBeNull();
+  expect(q(root, '[data-mobile2-go="accounts"]')).not.toBeNull();
+  expect(q(root, '[data-mobile2-open="host"]')).not.toBeNull();
+  /* The device-local settings ride as rows there too. */
+  expect(q(root, "[data-mobile2-settings]")!.textContent).toContain(translate("en", "mobile2.menu.sound"));
 });
 
 test("both board faces stay one tap away inside the menu, announced as radio rows, and still switch the board", async () => {
@@ -348,7 +358,8 @@ test("board undo folded into the menu is still one tap and still undoes (#1054)"
 test("Accounts & limits pushes the shell's accounts screen; ‹ returns to the board", async () => {
   const root = mount();
   expect(await waitFor(() => boardReady(root))).toBe(true);
-  await openMenu(root);
+  click(q(root, '[data-mobile2-tab="settings"]'));
+  await settle();
   click(q(root, '[data-mobile2-go="accounts"]'));
   await settle();
   expect(q(root, '[data-mobile2-screen="accounts"]')).not.toBeNull();
@@ -367,8 +378,12 @@ test("Accounts & limits pushes the shell's accounts screen; ‹ returns to the b
   expect(q(bar, '[data-testid="dash-search"]')).toBeNull();
   click(q(root, "[data-mobile2-back]"));
   await settle();
-  expect(await waitFor(() => q(root, '[data-mobile2-screen="board"]') !== null)).toBe(true);
+  /* ‹ returns to Settings, where the row was; the Sessions tab is the board. */
+  expect(await waitFor(() => q(root, '[data-mobile2-screen="settings"]') !== null)).toBe(true);
   expect(q(root, '[data-mobile2-screen="accounts"]')).toBeNull();
+  click(q(root, '[data-mobile2-tab="sessions"]'));
+  await settle();
+  expect(await waitFor(() => q(root, '[data-mobile2-screen="board"]') !== null)).toBe(true);
 });
 
 test("Archive project acts on the tap and answers with a receipt whose Restore unarchives", async () => {

@@ -25,7 +25,12 @@ export type MobileScreen =
   | { kind: "chat"; id: string }
   | { kind: "pipelines" }
   | { kind: "pipeline"; id: string }
-  | { kind: "accounts" };
+  | { kind: "accounts" }
+  /* The tab bar's roots (TZ-UI.md pages): siblings of the board at depth 1. */
+  | { kind: "orchestrator" }
+  | { kind: "secrets" }
+  | { kind: "mcp" }
+  | { kind: "settings" };
 export type MobileScreenKind = MobileScreen["kind"];
 export type MobileSheetName = "projects" | "attention" | "menu" | "host" | "search" | "seat" | "rotate" | "switch" | "model" | "stage";
 /** How the current state was reached; the shell picks its transition from it. */
@@ -51,7 +56,7 @@ export interface MobileNavEntry {
   screen: MobileScreen;
 }
 
-const SCREEN_KINDS: ReadonlySet<string> = new Set(["board", "chat", "pipelines", "pipeline", "accounts"]);
+const SCREEN_KINDS: ReadonlySet<string> = new Set(["board", "chat", "pipelines", "pipeline", "accounts", "orchestrator", "secrets", "mcp", "settings"]);
 const WITH_ID: ReadonlySet<string> = new Set(["chat", "pipeline"]);
 
 function isScreen(value: unknown): value is MobileScreen {

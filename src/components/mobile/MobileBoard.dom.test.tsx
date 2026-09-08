@@ -324,7 +324,7 @@ test("the board has no Host section: background processes are rows in the host s
   /* Nor a docked strip above the board, which is what the phone used to show. */
   expect(q(root, "[data-mobile2-host-tasks]")).toBeNull();
 
-  click(q(root, '[data-mobile2-open="menu"]'));
+  click(q(root, '[data-mobile2-tab="settings"]'));
   await settle();
   click(q(root, '[data-mobile2-open="host"]'));
   await settle();

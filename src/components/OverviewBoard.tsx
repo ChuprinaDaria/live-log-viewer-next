@@ -12,11 +12,9 @@ import type { Workflow } from "@/lib/workflows/types";
 
 import { CatalogFailureNotice } from "./CatalogFailureNotice";
 import { FolderPlus, Search } from "./icons";
-import { KeepAwakeMenuRow } from "./KeepAwakeControl";
-import { MobileMenuSheet, type MobileMenuEntry } from "./mobile/MobileMenuSheet";
+import { renderMobileRootScreen } from "./mobile/MobileRootScreen";
 import { MobileAccountsScreen, MobileBarTitle, MobileShell, type MobileShellHost } from "./mobile/MobileShell";
 import { topScreen, useMobileNav, useMobileNavStore, type MobileSheetName } from "./mobile/mobileNav";
-import { SoundToggle } from "./SoundToggle";
 import { buildBranchGroups, buildProjectSummaries, projectKey } from "./projectModel";
 import { CREATE_PROJECT_FORM_EVENT } from "./ProjectRail";
 import { activityDot, cleanTitle, engineBadge, fmtAge } from "./utils";
@@ -228,27 +226,13 @@ export function OverviewBoard({ files, projectCatalog, projectDisplayNames = {},
 
   if (isMobile) {
     /* The phone (mobile v2 lane 1): the shell's bar with «Overview» as the
-       title cell (it opens the project switcher), the badge, search and ⋯; the
-       menu holds the device-local settings. */
-    const renderSheet = (name: MobileSheetName, close: () => void) => {
-      if (name === "menu") {
-        const entries: MobileMenuEntry[] = [
-          {
-            kind: "custom",
-            key: "sound",
-            node: (
-              <div className="flex min-h-11 items-center gap-2 px-4">
-                <span className="min-w-0 flex-1 text-body font-semibold text-primary">{t("mobile2.menu.sound")}</span>
-                <SoundToggle />
-              </div>
-            ),
-          },
-          { kind: "custom", key: "awake", node: <div className="px-2.5"><KeepAwakeMenuRow /></div> },
-        ];
-        return <MobileMenuSheet title={t("rail.overview")} entries={entries} onClose={close} />;
-      }
-      return mobileShell?.renderSheet(name, close) ?? null;
-    };
+       title cell (it opens the project switcher), the badge and search; the
+       device settings live on the tab bar's settings screen. */
+    const renderSheet = (name: MobileSheetName, close: () => void) => mobileShell?.renderSheet(name, close) ?? null;
+    /* The tab bar's roots (settings, the pages not built yet); the overview
+       has no host sheet of its own. */
+    const rootScreen = renderMobileRootScreen(topScreen(mobileNavState).kind, { host: mobileShell, renderSheet, hostSheet: false });
+    if (rootScreen) return rootScreen;
     if (topScreen(mobileNavState).kind === "accounts") return <MobileAccountsScreen host={mobileShell} renderSheet={renderSheet} />;
     return (
       <MobileShell

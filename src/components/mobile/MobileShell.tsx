@@ -9,6 +9,7 @@ import { useLocale } from "@/lib/i18n";
 
 import { MobileAccountsPanel } from "../AccountsPanel";
 import { MobileReceipt } from "./MobileReceipt";
+import { MobileTabBar } from "./MobileTabBar";
 import { screenKey, topScreen, useMobileNav, useMobileNavStore, type MobileScreenKind, type MobileSheetName } from "./mobileNav";
 
 /*
@@ -316,10 +317,13 @@ export function MobileShell({
           sheet shows it inside itself instead. */}
       {claimed || state.sheet ? null : <MobileReceipt placement="flow" />}
       {!claimed && dock ? (
-        <footer data-mobile2-dock className="shrink-0 border-t border-border bg-card px-3 pb-[calc(6px+env(safe-area-inset-bottom))] pt-1.5">
+        <footer data-mobile2-dock className="shrink-0 border-t border-border bg-card px-3 pb-1.5 pt-1.5">
           {dock}
         </footer>
       ) : null}
+      {/* The tab bar pays the safe-area inset once, for itself and the dock;
+          it renders nothing above the bottom of the stack or under a keyboard. */}
+      {claimed ? null : <MobileTabBar />}
       {sheet}
     </div>
     </MobileShellChromeContext.Provider>

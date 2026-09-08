@@ -1,6 +1,6 @@
 "use client";
 
-import { Archive, Bot, Info, LayoutGrid, List, ListTodo, ListTree, MessageSquarePlus, Network, Redo2, Search, Undo2, UserRound } from "lucide-react";
+import { Archive, Bot, LayoutGrid, List, ListTodo, ListTree, MessageSquarePlus, Network, Redo2, Search, Undo2 } from "lucide-react";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 
 import { useBoardActionHistory } from "@/hooks/useBoardActionHistory";
@@ -60,6 +60,7 @@ import { MobileHostSheet } from "./mobile/MobileHostSheet";
 import { MobileSeatCard } from "./mobile/MobileSeatCard";
 import { MobileMenuSheet, type MobileMenuEntry } from "./mobile/MobileMenuSheet";
 import { showReceipt } from "./mobile/MobileReceipt";
+import { renderMobileRootScreen } from "./mobile/MobileRootScreen";
 import { MobileAccountsScreen, MobileBarTitle, MobileShell, type MobileShellHost } from "./mobile/MobileShell";
 import { MobilePipelineScreen } from "./mobile/MobilePipelineScreen";
 import { MobilePipelinesScreen } from "./mobile/MobilePipelinesScreen";
@@ -88,7 +89,6 @@ import {
 } from "./projectModel";
 import { boundFlowExpansions } from "./scheme/placementHorizon";
 import { ArchiveRestore } from "./icons";
-import { KeepAwakeMenuRow } from "./KeepAwakeControl";
 import { ArchiveProjectButton, DeleteProjectButton } from "./ProjectTrash";
 import { SoundToggle } from "./SoundToggle";
 import { ResidualStrip } from "./TreeAside";
@@ -1872,46 +1872,12 @@ function ProjectDashboardView({
         { kind: "row", key: "view-catalog", icon: <LayoutGrid className="h-[18px] w-[18px]" aria-hidden />, label: t("mobile2.menu.catalog"), trailing: inlineCatalog.catalog.known ? t("mobile.catalog.count", { count: inlineCatalog.catalog.total }) : undefined, checked: projectView === "list", onSelect: () => { mobileNav.closeSheet(); chooseEmptyView("list"); } },
       );
     }
-    entries.push(
-      { kind: "row", key: "accounts", icon: <UserRound className="h-[18px] w-[18px]" aria-hidden />, label: t("mobile2.menu.accounts"), go: "accounts", onSelect: () => mobileNav.push({ kind: "accounts" }) },
-      {
-        kind: "row",
-        key: "host",
-        icon: <Info className="h-[18px] w-[18px]" aria-hidden />,
-        label: t("mobile2.menu.host"),
-        opens: "host",
-        trailing: (
-          <>
-            {mobileRuntime !== "live" ? <Badge tone={mobileRuntime === "offline" ? "danger" : "warning"} data-connection={mobileRuntime}>{t(`runtime.${mobileRuntime}`)}</Badge> : null}
-            {t("mobile2.menu.hostTasks", { count: dockedTasks.length })}
-          </>
-        ),
-        onSelect: () => mobileNav.openSheet("host"),
-      },
-      { kind: "divider", key: "d2" },
-    );
     if (history.canUndo || history.canRedo) {
       /* Board history stays here until the receipts of later lanes carry the
          inverse of a close on the phone (issue #184, #1054 review). */
       if (history.canUndo) entries.push({ kind: "row", key: "undo", icon: <Undo2 className="h-[18px] w-[18px]" aria-hidden />, label: t("board.undo"), onSelect: () => { mobileNav.closeSheet(); onUndo(); } });
       if (history.canRedo) entries.push({ kind: "row", key: "redo", icon: <Redo2 className="h-[18px] w-[18px]" aria-hidden />, label: t("board.redo"), onSelect: () => { mobileNav.closeSheet(); onRedo(); } });
-      entries.push({ kind: "divider", key: "d3" });
     }
-    entries.push(
-      {
-        kind: "custom",
-        key: "sound",
-        node: (
-          <div className="flex min-h-11 items-center gap-2 px-4">
-            <span className="min-w-0 flex-1 text-body font-semibold text-primary">{t("mobile2.menu.sound")}</span>
-            <SoundToggle />
-          </div>
-        ),
-      },
-      /* «Keep screen awake» (issue #712) reads the Viewer-level controller that
-         outlives this sheet; it renders nothing without one. */
-      { kind: "custom", key: "awake", node: <div className="px-2.5"><KeepAwakeMenuRow /></div> },
-    );
     if (archived) {
       entries.push({ kind: "divider", key: "d4" }, {
         kind: "row",
@@ -2001,6 +1967,27 @@ function ProjectDashboardView({
     return mobileShell?.renderSheet(name, close) ?? null;
   };
 
+  /* The tab bar's own roots (settings, and the pages not built yet) replace
+     the board at the bottom of the stack; the chat page's one button opens the
+     orchestrator exactly as the board dock does. */
+  const mobileRootScreen = isMobile
+    ? renderMobileRootScreen(mobileTop.kind, {
+        host: mobileShell,
+        renderSheet: renderMobileSheet,
+        hostSheet: true,
+        hostTrailing: (
+          <>
+            {mobileRuntime !== "live" ? <Badge tone={mobileRuntime === "offline" ? "danger" : "warning"} data-connection={mobileRuntime}>{t(`runtime.${mobileRuntime}`)}</Badge> : null}
+            {t("mobile2.menu.hostTasks", { count: dockedTasks.length })}
+          </>
+        ),
+        onOpenOrchestrator: !boardReady
+          ? undefined
+          : seatState.kind === "live" && seatFile
+            ? () => openBoardRow(seatFile)
+            : () => mobileNav.openSheet(seatState.kind === "draft" ? "rotate" : "seat"),
+      })
+    : null;
   return (
     <FavoritesProvider value={favoritesApi}>
     <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
@@ -2111,7 +2098,7 @@ function ProjectDashboardView({
         <div className="shrink-0 border-b border-border bg-sunken">{dockedTaskStrips}</div>
       ) : null}
 
-      {isMobile ? (
+      {mobileRootScreen ? mobileRootScreen : isMobile ? (
         /* The phone (mobile v2 lanes 1–2): the shell's bar, banner slot and
            receipt around the leaf, and the leaf is the BOARD until a
            conversation is on top of the navigation stack. The strip inside the

@@ -38,6 +38,7 @@ mock.module("@/hooks/useConversationCatalog", () => ({
 }));
 
 const { ProjectDashboard } = await import("@/components/ProjectDashboard");
+const { getMobileNav } = await import("@/components/mobile/mobileNav");
 
 const dom = new Window({ url: "http://localhost/" });
 const G = globalThis as Record<string, unknown>;
@@ -99,7 +100,7 @@ afterAll(async () => {
 
 let roots: Root[] = [];
 beforeEach(() => { mobile = true; roots = []; dom.document.body.replaceChildren(); dom.document.body.style.overflow = ""; });
-afterEach(() => { for (const root of roots) flushSync(() => root.unmount()); roots = []; dom.document.body.style.overflow = ""; });
+afterEach(() => { for (const root of roots) flushSync(() => root.unmount()); roots = []; dom.document.body.style.overflow = ""; getMobileNav().home(); });
 
 const task: BoardTask = {
   id: "t-shelf", project: "atlas", status: "inbox", text: "Wire the shelf",
@@ -124,9 +125,9 @@ function mount(): HTMLElement {
 }
 
 const q = (host: HTMLElement, sel: string) => host.querySelector(sel) as unknown as HTMLElement | null;
-/* The host sheet opens from the board menu's «Host details» row (mobile v2
-   lane 1): ⋯ on the bar, then the row. */
-const menuTrigger = (host: HTMLElement) => q(host, '[data-mobile2-open="menu"]');
+/* The host sheet opens from the Settings tab's «Host details» row (TZ-UI.md:
+   app pages as buttons): the tab, then the row. */
+const menuTrigger = (host: HTMLElement) => q(host, '[data-mobile2-tab="settings"]');
 const hostRow = (host: HTMLElement) => q(host, '[data-mobile2-open="host"]');
 /* The host sheet itself (mobile v2 lane 2): the shelf modal it replaced kept
    the same modal semantics — body lock, focus return, Escape. */
@@ -140,14 +141,13 @@ const boardReady = (host: HTMLElement) => q(host, '[data-testid="mobile-orchestr
 async function openShelf(host: HTMLElement): Promise<HTMLElement> {
   const ready = await waitFor(() => boardReady(host));
   expect(ready).toBe(true);
-  const more = menuTrigger(host)!;
-  more.focus();
-  flushSync(() => more.click());
+  flushSync(() => menuTrigger(host)!.click());
   const row = hostRow(host)!;
   expect(row).not.toBeNull();
+  row.focus();
   flushSync(() => row.click());
   expect(shelf(host)).not.toBeNull();
-  return more;
+  return row;
 }
 
 const pressEscape = () => flushSync(() => {
@@ -180,8 +180,8 @@ test("mobile: a terminal shelf action closes the modal, unlocks the body, and re
   expect(openBtn).toBeTruthy();
   flushSync(() => openBtn.click());
   expect(shelf(host)).toBeNull();
-  /* Body scroll unlocked. The menu row that opened the sheet left with its
-     menu, so focus has no opener to return to; the bar's ⋯ is still there. */
+  /* Body scroll unlocked. The Settings row that opened the sheet is still
+     there under it. */
   expect(dom.document.body.style.overflow).toBe("");
   expect(opener.isConnected).toBe(true);
   await settle();
@@ -209,7 +209,7 @@ test("mobile: the project name is the bar's title cell and the host sheet stays 
   expect(title.className).toContain("min-w-0");
   expect(title.className).toContain("flex-1");
   expect(q(host, "[data-mobile2-title-text]")!.className).toContain("truncate");
-  /* Host access is one row behind the bar's ⋯: a 44px row, exactly one. */
+  /* Host access is one row on the Settings tab: a 44px row, exactly one. */
   flushSync(() => menuTrigger(host)!.click());
   const rows = host.querySelectorAll('[data-mobile2-open="host"]');
   expect(rows.length).toBe(1);
