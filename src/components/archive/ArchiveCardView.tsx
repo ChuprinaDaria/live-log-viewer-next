@@ -13,7 +13,13 @@ import type { ArchiveCard } from "@/lib/archive/sessionmemArchive";
  * Split out of ArchiveScreen so the screen stays about grouping and fetching.
  */
 
-export function ArchiveCardView({ card }: { card: ArchiveCard }) {
+export function ArchiveCardView({ card, onOpenTranscript }: {
+  card: ArchiveCard;
+  /** The Viewer's own resolver, threaded down from `DesktopHome`. Absent on
+      the phone, where this screen is mounted straight off the tab bar with no
+      Viewer above it — there the `#f=` assignment is still the way in. */
+  onOpenTranscript?: (path: string) => void;
+}) {
   const { t } = useLocale();
   const lists = [
     { label: t("archive.did"), items: card.did },
@@ -42,7 +48,10 @@ export function ArchiveCardView({ card }: { card: ArchiveCard }) {
         <div key={row.label} className="pt-1">
           <p className="text-label font-semibold text-muted">{row.label}</p>
           <ul className="list-disc pl-4 text-body text-secondary">
-            {row.items.map((item) => <li key={item}>{item}</li>)}
+            {/* Position, not text: sessionmem repeats a bullet often enough
+                («переписали SQL» twice in one session) that keying by the
+                string collapses the duplicates out of the list. */}
+            {row.items.map((item, index) => <li key={index}>{item}</li>)}
           </ul>
         </div>
       ))}
@@ -50,14 +59,21 @@ export function ArchiveCardView({ card }: { card: ArchiveCard }) {
       {/* Always live. `/api/files` is a recency-capped BOARD budget, so most
           archived transcripts are absent from it while sitting right here on
           disk — gating the button on that feed disabled it for nearly every
-          card. The `#f=` deep link goes to the Viewer's own resolver, whose pin
+          card. Either way the path reaches the Viewer's own resolver, whose pin
           ride-along fetches a transcript outside the feed; one that is really
           gone gets the Viewer's stale-focus notice, which is its job, not
-          this button's guess. */}
+          this button's guess. The callback also handles the case the bare hash
+          cannot: a tab already standing on that exact `#f=` fires no
+          hashchange, so the assignment would open nothing. */}
       <button
         type="button"
         data-archive-transcript={card.sessionId}
-        onClick={() => { if (card.transcriptPath) window.location.hash = transcriptFocusHash(card.transcriptPath); }}
+        onClick={() => {
+          const path = card.transcriptPath;
+          if (!path) return;
+          if (onOpenTranscript) onOpenTranscript(path);
+          else window.location.hash = transcriptFocusHash(path);
+        }}
         className="mt-1.5 inline-flex h-8 items-center rounded-[8px] border border-border px-2 text-label font-semibold text-secondary hover:border-accent/45 hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
       >
         {t("archive.transcript")}

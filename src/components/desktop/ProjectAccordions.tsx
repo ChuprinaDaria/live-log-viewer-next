@@ -2,10 +2,10 @@
 
 import { useCallback, useState } from "react";
 
+import { archiveFailure, type ArchiveFailure } from "@/components/archive/ArchiveScreen";
 import type { ProjectDetail } from "@/components/mobile/firmsModel";
 import { useMcpRegistry, type McpRegistryRead } from "@/components/mobile/mcpModel";
 import { shareSecret, useSecretsInventory, type SecretsRead } from "@/components/mobile/secretsModel";
-import { transcriptFocusHash } from "@/components/search/GlobalSearch";
 import { fmtAge } from "@/components/utils";
 import { useLocale } from "@/lib/i18n";
 
@@ -25,6 +25,10 @@ export interface ProjectAccordionsProps {
   project: string;
   detail: ProjectDetail | null;
   onChanged: () => void;
+  /** The Viewer's own resolver for a transcript path. Not `location.hash =`:
+      the tab can already be standing on that exact `#f=` with the conversation
+      nowhere on screen, and an unchanged hash fires no hashchange. */
+  onOpenTranscript: (path: string) => void;
 }
 
 /** One host's checkout, as `project_code` answers it. */
@@ -59,11 +63,13 @@ type Kind = "mcp" | "skills" | "secrets";
 const SUMMARY = "flex min-h-8 cursor-pointer list-none items-center px-2 text-[11.5px] font-semibold text-secondary hover:text-accent";
 const CHIP = "inline-flex h-6 shrink-0 items-center rounded-[6px] border border-border px-1.5 text-[11px] text-secondary hover:border-accent/45 hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40";
 
-export function ProjectAccordions({ project, detail, onChanged }: ProjectAccordionsProps) {
+export function ProjectAccordions({ project, detail, onChanged, onOpenTranscript }: ProjectAccordionsProps) {
   const { t } = useLocale();
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [archive, setArchive] = useState<ArchiveCard[] | null>(null);
-  const [archiveFailed, setArchiveFailed] = useState(false);
+  /* Same rule as the archive screen: «Архів ще не підключено.» belongs to a
+     503 NOT_INSTALLED and nothing else. */
+  const [archiveFailed, setArchiveFailed] = useState<ArchiveFailure | null>(null);
   const [code, setCode] = useState<CodeHost[] | null>(null);
   const [codeFailed, setCodeFailed] = useState<string | null>(null);
   /* One read of each registry for all three lists: three copies of the same
@@ -76,12 +82,12 @@ export function ProjectAccordions({ project, detail, onChanged }: ProjectAccordi
   const loadArchive = useCallback(async () => {
     try {
       const response = await fetch(`/api/archive?project=${encodeURIComponent(project)}`, { cache: "no-store" });
-      if (!response.ok) { setArchiveFailed(true); return; }
-      const body = await response.json() as { cards?: ArchiveCard[] };
-      setArchive(body.cards ?? []);
-      setArchiveFailed(false);
-    } catch {
-      setArchiveFailed(true);
+      const body = await response.json().catch(() => null) as { cards?: ArchiveCard[]; error?: string } | null;
+      if (!response.ok) { setArchiveFailed(archiveFailure(response.status, body?.error)); return; }
+      setArchive(body?.cards ?? []);
+      setArchiveFailed(null);
+    } catch (cause) {
+      setArchiveFailed({ notInstalled: false, text: cause instanceof Error ? cause.message : String(cause) });
     }
   }, [project]);
 
@@ -99,19 +105,23 @@ export function ProjectAccordions({ project, detail, onChanged }: ProjectAccordi
 
   const toggle = (name: string, onFirstOpen?: () => void) => {
     const next = open[name] !== true;
-    setOpen({ ...open, [name]: next });
+    /* Functional: two panels opened in one batch off a stale `open` would each
+       spread the same snapshot and the second would erase the first. */
+    setOpen((current) => ({ ...current, [name]: next }));
     if (next && onFirstOpen) onFirstOpen();
   };
 
   return (
     <div className="flex flex-col gap-1">
       <Accordion name="old" label={t("desktop.sectionArchive")} open={open.old === true}
-        onToggle={() => toggle("old", () => { if (archive === null && !archiveFailed) void loadArchive(); })}>
-        {archiveFailed ? <p className="text-[11.5px] text-muted">{t("archive.unavailable")}</p>
+        onToggle={() => toggle("old", () => { if (archive === null && archiveFailed === null) void loadArchive(); })}>
+        {archiveFailed ? <p data-console-archive-failure className="text-[11.5px] text-muted">
+            {archiveFailed.notInstalled ? t("archive.unavailable") : archiveFailed.text}
+          </p>
           : archive === null ? <p className="text-[11.5px] text-muted">{t("common.loading")}</p>
           : archive.length === 0 ? <p className="text-[11.5px] text-muted">{t("archive.empty")}</p>
           : <ul className="flex flex-col gap-1">{archive.map((card) => (
-              <li key={card.sessionId}><ArchiveEntry card={card} /></li>
+              <li key={card.sessionId}><ArchiveEntry card={card} onOpenTranscript={onOpenTranscript} /></li>
             ))}</ul>}
       </Accordion>
 
@@ -153,7 +163,7 @@ function Accordion({ name, label, open, onToggle, children }: {
   );
 }
 
-function ArchiveEntry({ card }: { card: ArchiveCard }) {
+function ArchiveEntry({ card, onOpenTranscript }: { card: ArchiveCard; onOpenTranscript: (path: string) => void }) {
   const { t } = useLocale();
   const lists: { label: string; items: string[] }[] = [
     { label: t("archive.did"), items: card.did },
@@ -176,16 +186,19 @@ function ArchiveEntry({ card }: { card: ArchiveCard }) {
         <div key={row.label} className="pt-1">
           <p className="text-[11px] font-semibold text-muted">{row.label}</p>
           <ul className="list-disc pl-4 text-[11.5px] text-secondary">
-            {row.items.map((item) => <li key={item}>{item}</li>)}
+            {/* Position, not text: sessionmem repeats a bullet often enough
+                that keying by the string collapses the duplicates away. */}
+            {row.items.map((item, index) => <li key={index}>{item}</li>)}
           </ul>
         </div>
       ))}
       {/* `/api/files` is a recency-capped board budget, so an archived
           transcript is usually absent from it while sitting right here on
-          disk. The deep link goes to the Viewer's own resolver, which fetches
-          a transcript outside the feed and says so itself when there is none. */}
+          disk. The path goes to the Viewer's own resolver, which fetches a
+          transcript outside the feed and says so itself when there is none —
+          and which opens it even when the tab already sits on that hash. */}
       <button type="button" data-console-transcript={card.sessionId} className={`${CHIP} mt-1`}
-        onClick={() => { if (card.transcriptPath) window.location.hash = transcriptFocusHash(card.transcriptPath); }}>
+        onClick={() => { if (card.transcriptPath) onOpenTranscript(card.transcriptPath); }}>
         {t("archive.transcript")}
       </button>
     </details>
@@ -236,7 +249,11 @@ function GrantSection({ kind, label, project, detail, registry, secrets, open, o
             <li key={row.item} data-console-row={`${kind}:${row.item}`} className="flex items-center gap-1.5 px-1">
               <span className="min-w-0 flex-1 truncate text-[12px] text-primary">{row.item}</span>
               <span className="shrink-0 text-[11px] text-muted">
-                {row.own ? t("desktop.own") : `${t("desktop.fromFirm")} ${row.from.split(":")[1] ?? row.from}`}
+                {/* A parent PROJECT can grant too (`project:<parent>`), and
+                    calling that «від фірми» named the wrong owner — the place
+                    to drop it is the parent project, not the firm. */}
+                {row.own ? t("desktop.own")
+                  : `${row.from.startsWith("project:") ? t("desktop.fromProject") : t("desktop.fromFirm")} ${row.from.split(":")[1] ?? row.from}`}
               </span>
               {row.own ? (
                 <button type="button" data-console-revoke={`${kind}:${row.item}`} disabled={busy}

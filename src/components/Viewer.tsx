@@ -279,7 +279,15 @@ export function Viewer() {
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     const initial = readHash();
-    if (initial.filePath || initial.conversationId) setPendingHash(initial);
+    if (initial.filePath || initial.conversationId) {
+      setPendingHash(initial);
+      /* A conversation deep link is a request for the BOARD: the intent is only
+         ever resolved into `shell`, and the HQ home returns before `shell`
+         renders — so a pasted `#f=`/`#c=` on an HQ-home tab opened nothing at
+         all. Session-only, exactly like `onOpenFile`: following a link is not
+         the operator choosing the board as their home. */
+      setHomeMode("board");
+    }
     const savedProject = initial.project ?? localStorage.getItem(PROJECT_KEY);
     /* The restored project answers for its own dock through the same
        per-project read a later switch uses — see `orchestratorOpenProject`. */
@@ -311,6 +319,9 @@ export function Viewer() {
         dispatchCatalogPin({ kind: "release" });
         setFocusRequest(null);
         setPendingHash(next);
+        /* Same reason as the initial read above: resolution lives in `shell`.
+           Not written to storage — this is a link, not a preference. */
+        setHomeMode("board");
       }
       else {
         /* Navigation moved off the conversation link: the old target must
@@ -494,6 +505,15 @@ export function Viewer() {
     setFocusRequest(null);
     setPendingHash(parseConversationHash(hash));
   }, []);
+
+  /* The HQ home's way into a transcript — the archive panel, the project
+     console's archive rows, and a search selection made from the home. Same
+     resolver as the board's; the home just has to hand the board back first,
+     session-only, exactly like `onOpenFile`. */
+  const openTranscriptFromHome = useCallback((transcriptPath: string) => {
+    setHomeMode("board");
+    openSearchResult(transcriptPath);
+  }, [openSearchResult]);
 
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
@@ -1198,6 +1218,8 @@ export function Viewer() {
           onSelectProject={setConsoleProject}
           onOpenBoard={openBoard}
           onOpenFile={(file) => { setHomeMode("board"); openFile(file); }}
+          onOpenSearch={openSearch}
+          onOpenTranscript={openTranscriptFromHome}
         />
         <AttentionHost mobile={false} />
         <ArtifactPreviewHost mobile={false} />
@@ -1205,6 +1227,10 @@ export function Viewer() {
         <VoiceBridgeRelayHost />
         <VoiceComposerHost />
         <StagingBadge />
+        {/* The one global palette again: it is mounted inside `shell`, which
+            this branch returns before, so without it the home's search button
+            and `/` opened nothing. */}
+        {searchOpen ? <GlobalSearch mobile={false} onClose={closeSearch} onOpen={openTranscriptFromHome} /> : null}
       </KeepAwakeProvider>
     );
   }

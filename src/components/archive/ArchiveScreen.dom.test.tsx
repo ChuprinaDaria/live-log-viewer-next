@@ -107,7 +107,9 @@ test("groups by machine and project, badges what can be resumed, and opens any t
   expect((el.querySelector('[data-archive-card="s2"]') as HTMLElement).textContent).toContain("самарі ще не зроблено");
 
   /* Nothing in the catalog was mocked, and both buttons are still live: the
-     archive does not ask the board feed for permission to open a transcript. */
+     archive does not ask the board feed for permission to open a transcript.
+     No `onOpenTranscript` here — this is the PHONE's mounting, straight off the
+     tab bar with no Viewer above it, where the `#f=` assignment is the way in. */
   const local = el.querySelector('[data-archive-transcript="s1"]') as HTMLButtonElement;
   const pulled = el.querySelector('[data-archive-transcript="s2"]') as HTMLButtonElement;
   expect(local.disabled).toBe(false);
@@ -159,4 +161,39 @@ test("a reader that failed does not pretend the archive is empty", async () => {
   await act(flush); await act(flush);
   expect(el.textContent).toContain("Архів ще не підключено.");
   expect(el.textContent).not.toContain("Архів порожній.");
+});
+
+test("«ще не підключено» is the answer to a missing sessionmem and to nothing else", async () => {
+  /* Every other failure told the operator to go install what is already
+     installed. A 500 from a locked database is not a missing reader. */
+  setLocale("uk");
+  serve({ error: "sessionmem.db is locked" }, 500);
+  const el = mount(<ArchiveScreen host={null} />);
+  await act(flush); await act(flush);
+  expect(el.querySelector("[data-archive-failure]")?.textContent?.trim()).toBe("sessionmem.db is locked");
+  expect(el.textContent).not.toContain("Архів ще не підключено.");
+});
+
+test("a failure with no error text of its own is named by its status", async () => {
+  setLocale("uk");
+  serve({}, 502);
+  const el = mount(<ArchiveScreen host={null} />);
+  await act(flush); await act(flush);
+  expect(el.querySelector("[data-archive-failure]")?.textContent?.trim()).toBe("HTTP 502");
+});
+
+test("with a Viewer above it, a card hands the path to the resolver instead of the hash", async () => {
+  setLocale("uk");
+  serve({ cards: CARDS, total: CARDS.length });
+  const opened: string[] = [];
+  dom.location.hash = "";
+  const el = mount(<ArchiveScreen host={null} onOpenTranscript={(path) => { opened.push(path); }} />);
+  await act(flush); await act(flush);
+
+  act(() => { (el.querySelector('[data-archive-transcript="s1"]') as HTMLButtonElement).click(); });
+  expect(opened).toEqual(["/w/.claude/projects/-w-fleet/s1.jsonl"]);
+  /* The callback handles the case the assignment cannot — a tab already
+     standing on that fragment fires no hashchange — so it must not also
+     navigate. */
+  expect(dom.location.hash).toBe("");
 });

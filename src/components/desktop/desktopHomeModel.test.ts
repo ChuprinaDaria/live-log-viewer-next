@@ -1,23 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import type { FileEntry } from "@/lib/types";
 import type { ProjectDetail } from "@/components/mobile/firmsModel";
-import { effectiveRows, effectiveSecretRows, machineOf, projectAgents, unassignedFiles } from "./desktopHomeModel";
+import { effectiveRows, effectiveSecretRows, machineOf, projectAgents } from "./desktopHomeModel";
 
 function entry(over: Partial<FileEntry>): FileEntry {
   return { path: "/x/a.jsonl", root: "claude-projects", name: "a.jsonl", project: "dir-1", title: "A", engine: "claude", kind: "session", fmt: "jsonl", parent: null, mtime: 100, size: 1, activity: "idle", proc: null, pid: null, model: null, pendingQuestion: null, ...over } as FileEntry;
 }
 const org = (project: string) => ({ firm: "noologic", firmName: "Noologic", project, projectName: project, via: "path" as const });
-
-describe("unassignedFiles", () => {
-  test("keeps conversations without org, drops subagents and attributed ones", () => {
-    const files = [
-      entry({ path: "/1", org: org("bot") }),
-      entry({ path: "/2" }),
-      entry({ path: "/3", kind: "agent" }),
-    ];
-    expect(unassignedFiles(files).map((f) => f.path)).toEqual(["/2"]);
-  });
-});
 
 describe("projectAgents", () => {
   test("filters by org.project, live first then newest", () => {

@@ -27,11 +27,6 @@ export function writeHomeMode(mode: HomeMode): void {
   }
 }
 
-/** Conversations no console project claims — the «Без проєкту» bucket. */
-export function unassignedFiles(files: readonly FileEntry[]): FileEntry[] {
-  return files.filter((file) => isConversation(file) && !file.org);
-}
-
 /** The project's own conversations: live first, then newest. */
 export function projectAgents(files: readonly FileEntry[], project: string): FileEntry[] {
   return files

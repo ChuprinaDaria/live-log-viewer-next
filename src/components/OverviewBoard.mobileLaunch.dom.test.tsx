@@ -113,13 +113,17 @@ function renderBoard(extra: Partial<React.ComponentProps<typeof OverviewBoard>> 
 const launchButton = (host: HTMLElement) => host.querySelector('[data-mobile2-launch]') as unknown as HTMLElement | null;
 const click = () => new dom.MouseEvent("click", { bubbles: true }) as unknown as Event;
 
-test("the phone board offers a full-width launch button above the card grid", () => {
+test("the phone board offers a launch button, stretched by the column, above the card grid", () => {
   const host = renderBoard();
   const button = launchButton(host);
   expect(button).not.toBeNull();
   expect(button!.textContent).toContain(en["desktop.launchTitle"]);
   expect(button!.className).toContain("min-h-11");
-  expect(button!.className).toContain("w-full");
+  /* Width comes from the flex column plus the margins. `w-full` on top of
+     `mx-3` made the button 24px wider than the space it was given, so it hung
+     off the right edge of the screen. */
+  expect(button!.className).toContain("mx-3");
+  expect(button!.className).not.toContain("w-full");
 });
 
 test("a tap pushes the shared machines screen", () => {

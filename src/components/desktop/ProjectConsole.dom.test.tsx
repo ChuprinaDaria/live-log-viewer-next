@@ -58,7 +58,7 @@ const DETAIL = {
   id: "bot", name: "bot", firm: "noologic", path: "/w/bot", parent: null,
   grants: { mcp: [], skills: [] }, secrets: [], rules: 0,
   effective: {
-    mcp: [{ item: "viewer", from: "project:bot" }, { item: "obsidian", from: "firm:noologic" }],
+    mcp: [{ item: "viewer", from: "project:bot" }, { item: "obsidian", from: "firm:noologic" }, { item: "qdrant", from: "project:parent" }],
     skills: [], rules: [],
     secrets: [{ secret: "tg_bot", from: "firm:noologic" }],
   },
@@ -77,12 +77,12 @@ const gets: string[] = [];
 /** What `/api/tmux` answers, so a refused delivery can be exercised. */
 let tmuxAnswer: { status: number; body: unknown } = { status: 200, body: { ok: true } };
 
-/** The archive answer for the next mount: `null` makes the route fail, which
-    is the branch the first test asserts. */
-let archiveAnswer: unknown = null;
+/** The archive answer for the next mount. The default is the route that is
+    not there yet — 503 NOT_INSTALLED — which is the branch the first test
+    asserts; a test that wants cards or another failure sets it. */
+let archiveAnswer: { status: number; body: unknown } = { status: 503, body: { error: "NOT_INSTALLED" } };
 
 function get(url: string): unknown {
-  if (url.startsWith("/api/archive")) return archiveAnswer;
   if (url.startsWith("/api/projects") && url.includes("code=1")) return CODE;
   if (url.startsWith("/api/projects?project=")) return DETAIL;
   if (url.startsWith("/api/projects")) return { projects: [{ id: "bot", name: "bot", firm: "noologic", parent: null, grants: { mcp: [], skills: [] }, secrets: [], rules: 0 }] };
@@ -105,14 +105,15 @@ const fakeFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     return new Response(JSON.stringify(url.startsWith("/api/mcp-registry") ? REGISTRY : { ok: true }), { status: 200, headers: JSON_HEADERS });
   }
   gets.push(url);
-  const body = get(url);
-  if (body === null) return new Response(JSON.stringify({ error: "no archive route yet" }), { status: 404, headers: JSON_HEADERS });
-  return new Response(JSON.stringify(body), { status: 200, headers: JSON_HEADERS });
+  if (url.startsWith("/api/archive")) {
+    return new Response(JSON.stringify(archiveAnswer.body), { status: archiveAnswer.status, headers: JSON_HEADERS });
+  }
+  return new Response(JSON.stringify(get(url)), { status: 200, headers: JSON_HEADERS });
 }) as typeof fetch;
 /* Re-installed per test: restoring the real fetch once and never putting the
    fake back left every test after the first talking to the host. */
 beforeEach(() => { globalThis.fetch = fakeFetch; });
-afterEach(() => { posts.length = 0; gets.length = 0; tmuxAnswer = { status: 200, body: { ok: true } }; archiveAnswer = null; });
+afterEach(() => { posts.length = 0; gets.length = 0; tmuxAnswer = { status: 200, body: { ok: true } }; archiveAnswer = { status: 503, body: { error: "NOT_INSTALLED" } }; });
 afterAll(() => { globalThis.fetch = realFetch; });
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -129,7 +130,7 @@ function openAccordion(el: HTMLElement, name: string) {
 test("project console: launch first, live sessions with «перенести», the rest in accordions", async () => {
   setLocale("uk");
   const opened: FileEntry[] = [];
-  const el = mount(<ProjectConsole project="bot" files={FILES} onOpenFile={(file) => { opened.push(file); }} />);
+  const el = mount(<ProjectConsole project="bot" files={FILES} onOpenFile={(file) => { opened.push(file); }} onOpenTranscript={() => {}} />);
   await settle();
 
   /* 1. the launch form is the first thing, open, with the project preselected */
@@ -145,14 +146,21 @@ test("project console: launch first, live sessions with «перенести», 
   act(() => { liveRow.click(); });
   expect(opened.map((file) => file.path)).toEqual(["/pulled/walter/bot-live.jsonl"]);
 
-  /* «перенести» re-renders the launch form in move mode on that machine */
+  /* «перенести» re-renders the launch form in move mode, with the SOURCE read
+     off the transcript's own path and the destination still unanswered — the
+     form must not offer «walter → walter» as a move. */
   act(() => { (el.querySelector('[data-console-move="/pulled/walter/bot-live.jsonl"]') as HTMLButtonElement).click(); });
   await settle();
   const moveMode = Array.from(el.querySelectorAll("[data-machines-mode] button"))
     .find((button) => button.textContent?.trim() === "Перенести") as HTMLButtonElement;
   expect(moveMode.getAttribute("aria-pressed")).toBe("true");
+  const pressed = (label: string) => Array.from(el.querySelectorAll(`[role="group"][aria-label="${label}"] button`))
+    .filter((button) => button.getAttribute("aria-pressed") === "true")
+    .map((button) => button.textContent?.trim());
+  expect(pressed("Зараз працює на")).toEqual(["walter"]);
+  expect(pressed("Машина")).toEqual([]);
 
-  /* 3. the archive accordion asks the (not yet wired) archive route and says so */
+  /* 3. the archive accordion asks the route; sessionmem is not installed here */
   openAccordion(el, "old");
   await settle();
   expect(gets.some((url) => url.startsWith("/api/archive?project=bot"))).toBe(true);
@@ -173,6 +181,12 @@ test("project console: launch first, live sessions with «перенести», 
   expect(ownRow.textContent).toContain("власний");
   expect(firmRow.textContent).toContain("від фірми");
   expect(firmRow.querySelector("[data-console-revoke]")).toBeNull();
+  /* A parent PROJECT is not the firm: calling its grant «від фірми» sent the
+     operator to the wrong place to drop it. */
+  const parentRow = mcp.querySelector('[data-console-row="mcp:qdrant"]') as HTMLElement;
+  expect(parentRow.textContent).toContain("від проєкту parent");
+  expect(parentRow.textContent).not.toContain("від фірми");
+  expect(parentRow.querySelector("[data-console-revoke]")).toBeNull();
 
   act(() => { (mcp.querySelector('[data-console-revoke="mcp:viewer"]') as HTMLButtonElement).click(); });
   await settle();
@@ -188,7 +202,7 @@ test("project console: launch first, live sessions with «перенести», 
 
 test("switching project shuts the accordions: no machine's git state under another project's name", async () => {
   setLocale("uk");
-  const el = mount(<ProjectConsole project="bot" files={FILES} onOpenFile={() => {}} />);
+  const el = mount(<ProjectConsole project="bot" files={FILES} onOpenFile={() => {}} onOpenTranscript={() => {}} />);
   await settle();
 
   openAccordion(el, "code");
@@ -199,7 +213,7 @@ test("switching project shuts the accordions: no machine's git state under anoth
 
   /* The tree selects one project after another without ever passing through
      null, so the column is never unmounted between them. */
-  act(() => { root!.render(<ProjectConsole project="money" files={FILES} onOpenFile={() => {}} />); });
+  act(() => { root!.render(<ProjectConsole project="money" files={FILES} onOpenFile={() => {}} onOpenTranscript={() => {}} />); });
   await settle();
   expect(code().open).toBe(false);
   expect(code().textContent).not.toContain("main @ abc1234");
@@ -208,7 +222,7 @@ test("switching project shuts the accordions: no machine's git state under anoth
 test("«Сказати HQ» does not claim success when the delivery is refused", async () => {
   setLocale("uk");
   tmuxAnswer = { status: 503, body: { error: "HQ не тримає сеанс" } };
-  const el = mount(<ProjectConsole project="bot" files={FILES} onOpenFile={() => {}} />);
+  const el = mount(<ProjectConsole project="bot" files={FILES} onOpenFile={() => {}} onOpenTranscript={() => {}} />);
   await settle();
 
   act(() => { (el.querySelector("[data-console-tell-hq]") as HTMLButtonElement).click(); });
@@ -221,22 +235,26 @@ test("«Сказати HQ» does not claim success when the delivery is refused"
 
 test("«Сказати HQ» stays disabled until the project has been read", async () => {
   setLocale("uk");
-  const el = mount(<ProjectConsole project="bot" files={FILES} onOpenFile={() => {}} />);
+  const el = mount(<ProjectConsole project="bot" files={FILES} onOpenFile={() => {}} onOpenTranscript={() => {}} />);
   expect((el.querySelector("[data-console-tell-hq]") as HTMLButtonElement).disabled).toBe(true);
   await settle();
   expect((el.querySelector("[data-console-tell-hq]") as HTMLButtonElement).disabled).toBe(false);
 });
 
-test("an archived card opens its transcript through the app's own deep link", async () => {
+test("an archived card hands its transcript to the Viewer's own resolver", async () => {
   setLocale("uk");
   /* The board feed is capped, so an archived transcript is usually not in it.
-     The button is live anyway and hands the path to the Viewer's resolver. */
-  archiveAnswer = { total: 1, cards: [{
+     The button is live anyway and hands the path to the Viewer's resolver —
+     NOT to `location.hash`, which fires nothing when the tab already sits on
+     that exact fragment. */
+  archiveAnswer = { status: 200, body: { total: 1, cards: [{
     sessionId: "s1", title: "Індексатор", host: "walter", endedAt: 1_700_000_000, resumable: false,
     transcriptPath: "/pulled/walter/bot-old.jsonl",
     summary: "Полагодили лічильник.", did: [], broke: [], decided: [], left: [],
-  }] };
-  const el = mount(<ProjectConsole project="bot" files={FILES} onOpenFile={() => {}} />);
+  }] } };
+  const opened: string[] = [];
+  dom.location.hash = "";
+  const el = mount(<ProjectConsole project="bot" files={FILES} onOpenFile={() => {}} onOpenTranscript={(path) => { opened.push(path); }} />);
   await settle();
   openAccordion(el, "old");
   await settle();
@@ -246,5 +264,23 @@ test("an archived card opens its transcript through the app's own deep link", as
   const transcript = el.querySelector('[data-console-transcript="s1"]') as HTMLButtonElement;
   expect(transcript.disabled).toBe(false);
   act(() => { transcript.click(); });
-  expect(dom.location.hash).toBe("#f=" + encodeURIComponent("/pulled/walter/bot-old.jsonl"));
+  expect(opened).toEqual(["/pulled/walter/bot-old.jsonl"]);
+  expect(dom.location.hash).toBe("");
+});
+
+test("the archive panel names the failure it got, and «ще не підключено» only for a missing sessionmem", async () => {
+  setLocale("uk");
+  archiveAnswer = { status: 500, body: { error: "sessionmem.db is locked" } };
+  const el = mount(<ProjectConsole project="bot" files={FILES} onOpenFile={() => {}} onOpenTranscript={() => {}} />);
+  await settle();
+  openAccordion(el, "old");
+  await settle();
+  expect(el.querySelector("[data-console-archive-failure]")?.textContent?.trim()).toBe("sessionmem.db is locked");
+
+  act(() => { root!.render(<ProjectConsole project="money" files={FILES} onOpenFile={() => {}} onOpenTranscript={() => {}} />); });
+  archiveAnswer = { status: 503, body: { error: "NOT_INSTALLED" } };
+  await settle();
+  openAccordion(el, "old");
+  await settle();
+  expect(el.querySelector("[data-console-archive-failure]")?.textContent?.trim()).toBe("Архів ще не підключено.");
 });

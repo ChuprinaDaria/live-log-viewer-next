@@ -31,13 +31,18 @@ export interface ProjectConsoleProps {
   project: string;
   files: readonly FileEntry[];
   onOpenFile: (file: FileEntry) => void;
+  /** The Viewer's resolver for an archived transcript's path. */
+  onOpenTranscript: (path: string) => void;
 }
 
 /** «перенести» remounts the form: `LaunchForm` reads its `initial*` props
-    once, at mount, so a new source machine needs a new instance. */
+    once, at mount, so a new source machine needs a new instance. `host` is
+    whatever the transcript's path says and nothing else — `|| "walter"` named a
+    machine the session may never have run on, and the operator would have moved
+    it FROM there. Empty leaves the source picker open, which is the truth. */
 interface MoveRequest { host: string; tmux: string; nonce: number }
 
-export function ProjectConsole({ project, files, onOpenFile }: ProjectConsoleProps) {
+export function ProjectConsole({ project, files, onOpenFile, onOpenTranscript }: ProjectConsoleProps) {
   const { t } = useLocale();
   const [detail, setDetail] = useState<ProjectDetail | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
@@ -131,7 +136,7 @@ export function ProjectConsole({ project, files, onOpenFile }: ProjectConsolePro
         ) : (
           <ul className="flex flex-col gap-1">
             {live.map((file) => <AgentRow key={file.path} file={file} onOpenFile={onOpenFile}
-              onMove={() => setMove({ host: machineOf(file) || "walter", tmux: "", nonce: Date.now() })} />)}
+              onMove={() => setMove({ host: machineOf(file), tmux: "", nonce: Date.now() })} />)}
           </ul>
         )}
       </div>
@@ -140,7 +145,8 @@ export function ProjectConsole({ project, files, onOpenFile }: ProjectConsolePro
           branch sits on which machine, which cards the archive returned — and
           the tree switches A→B without unmounting this column, so without the
           key B renders A's git state under B's name. */}
-      <ProjectAccordions key={project} project={project} detail={detail} onChanged={() => void reload()} />
+      <ProjectAccordions key={project} project={project} detail={detail} onChanged={() => void reload()}
+        onOpenTranscript={onOpenTranscript} />
     </section>
   );
 }

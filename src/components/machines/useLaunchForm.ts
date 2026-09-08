@@ -95,7 +95,10 @@ export function useLaunchForm(options: UseLaunchFormOptions = {}): LaunchFormSta
   const machines = useMachines();
   const org = useOrg();
 
-  const [target, setTarget] = useState(options.initialSession?.host ?? "");
+  /* The DESTINATION starts empty even for a move: seeding it from the session's
+     current machine offered «перенести walter → walter», which is not a move.
+     `initialSession` answers where the session IS, not where it should go. */
+  const [target, setTarget] = useState("");
   const [project, setProject] = useState(options.initialProject ?? "");
   const [engine, setEngineRaw] = useState("claude");
   const [model, setModel] = useState(defaultModelFor("claude"));
