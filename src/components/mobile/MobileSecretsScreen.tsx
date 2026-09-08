@@ -5,8 +5,10 @@ import { useState } from "react";
 import { ChevronDown, Loader2 } from "@/components/icons";
 import { useLocale, type TFunction } from "@/lib/i18n";
 
+import { MobileSecretAddSheet } from "./MobileSecretAddSheet";
 import { MobileBarTitle, MobileShell, type MobileShellHost, type SheetRenderer } from "./MobileShell";
 import {
+  addSecret,
   groupByProvider,
   lastCheckedAt,
   secretTitle,
@@ -62,6 +64,7 @@ export function MobileSecretsScreen({ host, renderSheet }: { host: MobileShellHo
      not a list any more. */
   const [expanded, setExpanded] = useState<string | null>(null);
   const [shareFailure, setShareFailure] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
 
   const share = async (secret: string, scope: string, revoke: boolean) => {
     const problem = await shareSecret(secret, scope, revoke);
@@ -112,12 +115,24 @@ export function MobileSecretsScreen({ host, renderSheet }: { host: MobileShellHo
               </div>
             ) : null}
 
-            {totals.total ? (
-              <>
-                <h2 className="px-1 pb-1.5 pt-3 text-label font-semibold text-muted">{t("secrets.sectionKeys")}</h2>
-                <Filter value={filter} totals={totals} onChange={setFilter} />
-              </>
-            ) : null}
+            {/* The header and its «+ Секрет» are NOT conditional on there
+                being keys. An empty vault is exactly the state a fresh machine
+                starts in, and hanging the only way to fill it off the count of
+                what is already in it locked out the one operator who needed
+                it. The filter stays conditional — three state cells over zero
+                rows filter nothing. */}
+            <div className="flex items-center gap-2 px-1 pb-1.5 pt-3">
+              <h2 className="text-label font-semibold text-muted">{t("secrets.sectionKeys")}</h2>
+              <button
+                type="button"
+                data-secret-add-open
+                onClick={() => { setShareFailure(null); setAdding(true); }}
+                className="ml-auto min-h-11 rounded-[12px] px-2 text-label font-semibold text-accent"
+              >
+                {t("secrets.add")}
+              </button>
+            </div>
+            {totals.total ? <Filter value={filter} totals={totals} onChange={setFilter} /> : null}
 
             {shareFailure ? (
               <p role="status" data-secret-share-failure className="px-1 pt-2 text-label text-danger">{shareFailure}</p>
@@ -150,6 +165,19 @@ export function MobileSecretsScreen({ host, renderSheet }: { host: MobileShellHo
 
             <Accounts accounts={inventory.accounts} />
             <Clis clis={inventory.clis} />
+            {adding ? (
+              <MobileSecretAddSheet
+                /* The providers already on the page, so a second key for a
+                   provider she has is picked rather than retyped. */
+                providers={[...new Set(secrets.map((row) => row.provider))].sort()}
+                onClose={() => setAdding(false)}
+                onSubmit={async (input) => {
+                  const problem = await addSecret(input);
+                  if (!problem) await refresh();
+                  return problem;
+                }}
+              />
+            ) : null}
           </>
         )}
       </div>

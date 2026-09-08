@@ -278,11 +278,17 @@ function readInventory(): SecretsInventoryView | null {
  *   { secret, share: "global" | "firm:<id>" | "project:<id>" }   share it
  *   { secret, unshare: "…" }                                      take it back
  *   { secret, label?, purpose?, owner?, firm?, project?, tags? }  annotate
+ *   { action: "add", secret, value, provider, … }                 add one
  *
- * A VALUE is never accepted here and never returned. The console does not
- * read one either: the vault holds an address (`host:/path/.env:NAME`), and
- * a key reaches an agent by being sourced on that machine at launch, not by
- * travelling through this route.
+ * `add` is the ONE action that carries a value, and it carries it exactly as
+ * far as the console's stdin: the console writes it into a private 0600 file
+ * and puts only the ADDRESS of that file into the vault. It never becomes a
+ * command-line flag, because argv is public to every process on the machine
+ * (`ps`), it is never logged here, and it never comes back — the answer is
+ * the inventory row, which has no value to return.
+ *
+ * For every OTHER action a value is still refused outright: quietly dropping
+ * the field would leave the caller believing it was stored.
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const rejection = rejectCrossOrigin(request);
@@ -303,6 +309,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const secret = typeof body.secret === "string" ? body.secret.trim() : "";
   if (!secret) return NextResponse.json({ error: "secret is required" }, { status: 400, headers });
+
+  if (body.action === "add") return addSecret(secret, body);
 
   /* A value must never arrive here even by accident — refusing loudly is
      better than quietly dropping the field and leaving the caller to believe
@@ -350,12 +358,123 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     /* Answer with the row as the console now holds it, so the page cannot
        disagree with the store about who a key is shared with. */
-    const updated = await fleetctl<{ secrets: ConsoleSecret[] }>({
-      fn: "secrets_list", params: { query: secret },
-    });
-    const row = (updated.secrets ?? []).find((record) => record.id === secret);
-    return NextResponse.json({ secret: row ? fromConsole(row) : null }, { headers });
+    return NextResponse.json({ secret: await refreshed(secret) }, { headers });
   } catch (error) {
     return NextResponse.json({ error: fleetctlMessage(error) }, { status: fleetctlStatus(error), headers });
   }
+}
+
+/** The record's id, and the name of the variable the value answers to. Both
+    are checked here as well as in the console: the console is the authority,
+    but a typo answering in Ukrainian from a subprocess is a worse answer than
+    a 400 that names the field. */
+const SECRET_SLUG = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+/* Exactly what the console's `parse_ref` reads back. A wider shape here (a
+   leading underscore, say) is accepted, written into `ref`, and then reported
+   by `secrets_list` as `env_name: null` — after which spawn skips the key
+   without a word. Two shapes for one thing is a silently lost secret. */
+const SECRET_ENV_NAME = /^[A-Z][A-Z0-9_]*$/;
+/* The four the console documents; anything else is refused here rather than
+   by a subprocess answering in Ukrainian. */
+const SECRET_KINDS = new Set(["token", "oauth", "password", "subscription"]);
+/* eslint-disable-next-line no-control-regex -- the point is the control range */
+const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/;
+
+/** A value bigger than this is a file, not a key — a pasted PEM bundle or a
+    mis-picked upload. The console would write it happily; the limit is here so
+    that it is refused by size rather than stored by accident. */
+const MAX_VALUE_BYTES = 8 * 1024;
+
+/** A refusal the page can act on: the sentence for a person, the code for the
+    screen, which turns it into its own language. */
+const bad = (code: string, error: string): NextResponse =>
+  NextResponse.json({ error, code }, { status: 400, headers });
+
+/** The console's own words for "that key is already in the vault". Matched
+    here, where the console's wording lives, so the phone can answer with its
+    own sentence instead of quoting a CLI flag at the operator. */
+function refusalCode(said: string): string | undefined {
+  return /уже є/.test(said) && /--replace/.test(said) ? "secret_exists" : undefined;
+}
+
+/**
+ * Add a secret: the metadata as flags, the value over stdin.
+ *
+ * Nothing in here logs the body, and nothing echoes the value back. The one
+ * transformation applied to it is dropping a single trailing newline — the
+ * shape a terminal pipe adds — because everything else the operator typed is
+ * part of the key, and silently trimming spaces would corrupt a valid one.
+ */
+async function addSecret(secret: string, body: Record<string, unknown>): Promise<NextResponse> {
+  if (!SECRET_SLUG.test(secret)) return bad("slug_invalid", "secret must be a slug: [a-z0-9][a-z0-9_-] up to 64 characters");
+
+  if (typeof body.value !== "string") return bad("value_required", "value is required");
+  const value = body.value.replace(/\r?\n$/, "");
+  if (!value.trim()) return bad("value_empty", "value is empty");
+  /* The console writes this value into a file that the target machine SOURCES
+     (`. file`). A newline in it is a second command, a tab and a carriage
+     return are silent corruption. The console refuses them too; refusing here
+     means the operator is told by the form rather than by a subprocess. */
+  if (CONTROL_CHARACTER.test(value)) {
+    return bad("value_invalid", "value contains a control character; a sourced .env line cannot carry one");
+  }
+  if (new TextEncoder().encode(value).length > MAX_VALUE_BYTES) {
+    return bad("value_too_large", `value is longer than ${MAX_VALUE_BYTES} bytes — that is a file, not a key`);
+  }
+
+  const word = (input: unknown): string | undefined => {
+    const trimmed = typeof input === "string" ? input.trim() : "";
+    return trimmed ? trimmed : undefined;
+  };
+  const provider = word(body.provider);
+  if (!provider) return bad("provider_required", "provider is required");
+  const envName = word(body.envName);
+  if (envName !== undefined && !SECRET_ENV_NAME.test(envName)) {
+    return bad("env_name_invalid", "envName must be an environment variable name: [A-Z][A-Z0-9_]*");
+  }
+  const kind = word(body.kind);
+  if (kind !== undefined && !SECRET_KINDS.has(kind)) {
+    return bad("kind_invalid", `kind must be one of ${[...SECRET_KINDS].join(", ")}`);
+  }
+  const tags = Array.isArray(body.tags)
+    ? body.tags.filter((tag): tag is string => typeof tag === "string" && tag.trim().length > 0)
+    : undefined;
+
+  try {
+    await fleetctl({
+      fn: "secret_add",
+      params: {
+        secret,
+        provider,
+        label: word(body.label),
+        /* camelCase, because the client turns it into the console's own
+           `--env-name`; an underscore here would reach argparse as a flag it
+           does not know. */
+        envName,
+        kind,
+        owner: word(body.owner),
+        firm: word(body.firm),
+        project: word(body.project),
+        purposeShort: word(body.purpose),
+        ...(tags?.length ? { tags } : {}),
+        ...(body.replace === true ? { replace: true } : {}),
+      },
+      stdinParam: "value",
+      stdinValue: value,
+    });
+    return NextResponse.json({ secret: await refreshed(secret) }, { headers });
+  } catch (error) {
+    const said = fleetctlMessage(error);
+    const code = refusalCode(said);
+    return NextResponse.json({ error: said, ...(code ? { code } : {}) },
+      { status: fleetctlStatus(error), headers });
+  }
+}
+
+/** The row as the console now holds it, so the page cannot disagree with the
+    store about a key it just changed. */
+async function refreshed(secret: string): Promise<SecretView | null> {
+  const updated = await fleetctl<{ secrets: ConsoleSecret[] }>({ fn: "secrets_list", params: { query: secret } });
+  const row = (updated.secrets ?? []).find((record) => record.id === secret);
+  return row ? fromConsole(row) : null;
 }
