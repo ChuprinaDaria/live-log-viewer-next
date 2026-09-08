@@ -1,17 +1,33 @@
 import crypto from "node:crypto";
 
-import { processTelegramAdapter, type TelegramAdapter, type TelegramEnrollmentEvent, type TelegramEnrollmentHandle } from "./adapter";
+import { fleetctl, fleetctlInstalled, fleetctlMessage } from "@/lib/fleetctl/client";
+
+import { processTelegramAdapter, type TelegramAdapter, type TelegramEnrollmentEvent, type TelegramEnrollmentHandle, type TelegramPhoneEnrollmentHandle } from "./adapter";
 import { ensureTelegramConnector, stopTelegramConnector, stopTelegramConnectorForSession, telegramConnectorOwnsSession, type ConnectorEnsureResult } from "./connector";
-import type { TelegramAccountIdentity, TelegramErrorCode, TelegramStatusPayload } from "./contracts";
+import type {
+  TelegramAccountIdentity,
+  TelegramAccountsPayload,
+  TelegramErrorCode,
+  TelegramPhoneLoginPhase,
+  TelegramPhoneLoginView,
+  TelegramStatusPayload,
+} from "./contracts";
 import { registerTelegramHosts, unregisterTelegramHosts, type TelegramHostRegistrationResult } from "./hostRegistration";
 import { telegramApiCredentials } from "./packaging";
 import { connectorReadPort } from "./reportSources";
 import {
+  deleteTelegramAccountSession,
   deleteTelegramSession,
+  listTelegramAccounts,
+  readTelegramAccountSession,
   readTelegramConnection,
   readTelegramSession,
+  saveTelegramAccountSession,
   saveTelegramSession,
+  writeTelegramAccountRecord,
   writeTelegramConnection,
+  DEFAULT_TELEGRAM_SLUG,
+  TELEGRAM_ACCOUNT_SLUG,
   UnsafeTelegramSessionError,
   type StoredTelegramConnection,
   type StoredTelegramSession,
@@ -40,7 +56,84 @@ export interface TelegramServicePorts {
   /** Whether host API credentials exist (env or telegram.json) — surfaced to
       the browser as a boolean only (#1070). */
   credentialsConfigured(): boolean;
+  /** Puts a finished phone-login session into the operator console's vault, so
+      the channels page can offer it as an account that can actually read a
+      chat. Optional: a harness that is not testing registration leaves it out
+      and gets an honest "no console" answer. */
+  registerAccountSecret?(input: VaultAccountSecret): Promise<VaultRegistration>;
 }
+
+export type VaultAccountSecret = {
+  slug: string;
+  phone: string;
+  username: string | null;
+  sessionString: string;
+};
+
+/** The console record the session was stored as, or why there is none. */
+export type VaultRegistration = { id: string | null; reason: string | null };
+
+/**
+ * Registers one user session in the operator console's vault.
+ *
+ * The session string is a secret and travels like every other secret the
+ * dashboard writes: over the console's STDIN, never as a flag. argv is public
+ * to every process on the machine, so a session string in it would be readable
+ * by anything that can run `ps` — and unlike a password it cannot be rotated
+ * by typing a new one, because it IS the authorization.
+ *
+ * The label carries the word «сесія» deliberately: `channel_accounts` reads it
+ * to tell a user session from a bot token, and a bot token cannot read a chat
+ * it does not administer. Getting that word wrong would put the account in the
+ * picker's "cannot be used" half.
+ */
+export async function registerAccountSecret(input: VaultAccountSecret): Promise<VaultRegistration> {
+  if (!fleetctlInstalled()) return { id: null, reason: "console_missing" };
+  /* Named `record`, not `secret`: what this holds is the vault's ADDRESS for
+     the session, and the value it addresses never touches this variable. */
+  const record = `telegram_session_${input.slug}`;
+  try {
+    await fleetctl({
+      fn: "secret_add",
+      params: {
+        secret: record,
+        provider: "telegram",
+        kind: "session",
+        label: `Telegram user-сесія ${input.username ? `@${input.username}` : input.phone}`,
+        envName: `TELEGRAM_SESSION_${input.slug.toUpperCase().replace(/[^A-Z0-9_]/g, "_")}`,
+        owner: "dashboard",
+        replace: true,
+      },
+      stdinParam: "value",
+      stdinValue: input.sessionString,
+    });
+    return { id: record, reason: null };
+  } catch (error) {
+    /* The console's own last line, which is about the operator's own config.
+       Kept as the reason so the sheet can say what actually refused. */
+    return { id: null, reason: fleetctlMessage(error) };
+  }
+}
+
+/* E.164 as Telegram accepts it. Checked before a code request is spent, and
+   before the number reaches the bridge's argv. */
+const E164 = /^\+[1-9]\d{6,14}$/;
+
+type PhoneLogin = {
+  operationId: string;
+  slug: string;
+  phone: string;
+  phase: TelegramPhoneLoginPhase;
+  codeError: boolean;
+  passwordError: boolean;
+  error: { code: TelegramErrorCode; seconds: number | null } | null;
+  identity: TelegramAccountIdentity | null;
+  handle: TelegramPhoneEnrollmentHandle | null;
+};
+
+const LIVE_PHONE_PHASES: ReadonlySet<TelegramPhoneLoginPhase> = new Set([
+  "starting", "awaiting_code", "awaiting_password", "verifying",
+]);
 
 const productionPorts: TelegramServicePorts = {
   adapter: processTelegramAdapter,
@@ -51,6 +144,7 @@ const productionPorts: TelegramServicePorts = {
   unregisterHosts: () => unregisterTelegramHosts(),
   now: Date.now,
   credentialsConfigured: () => telegramApiCredentials() !== null,
+  registerAccountSecret,
 };
 
 type LiveLogin = {
@@ -612,6 +706,250 @@ export class TelegramConnectionService {
     const connectorStopped = await this.teardownConnectorAndHosts();
     this.deleteCredentialsAndPublishDisconnected(connectorStopped);
   }
+
+  /* ------------------------------------------------------------------ *
+   * Named accounts, enrolled by phone number.
+   *
+   * A QR code drawn on the operator's phone cannot be scanned by that same
+   * phone, so this is the other door into the same credential store. It is
+   * deliberately NOT wired through the lifecycle queue above: that queue exists
+   * to serialise the ONE connector and the ONE host registration the default
+   * slot owns, and a named account has neither. It is a session in its own
+   * owner-only slot plus a record in the console's vault — nothing a phone
+   * login does can move, stop or invalidate what the HQ is already using.
+   * ------------------------------------------------------------------ */
+
+  private readonly phoneLogins = new Map<string, PhoneLogin>();
+
+  accounts(): TelegramAccountsPayload {
+    return {
+      accounts: listTelegramAccounts(),
+      logins: [...this.phoneLogins.values()].map(phoneLoginView),
+    };
+  }
+
+  /** The slug a WRITE may name: never the legacy slot, always in shape. */
+  private writableSlug(slug: unknown): string {
+    if (typeof slug !== "string" || !TELEGRAM_ACCOUNT_SLUG.test(slug)) {
+      throw new Error("Telegram account slug is invalid");
+    }
+    if (slug === DEFAULT_TELEGRAM_SLUG) throw new Error("the default Telegram slot is read-only here");
+    return slug;
+  }
+
+  startPhoneLogin(input: { slug: string; phone: string; apiId?: string; apiHash?: string }): Promise<TelegramAccountsPayload> {
+    return Promise.resolve().then(() => {
+      const slug = this.writableSlug(input.slug);
+      if (typeof input.phone !== "string" || !E164.test(input.phone)) {
+        throw new Error("Telegram phone number is invalid");
+      }
+      const running = this.phoneLogins.get(slug);
+      if (running && LIVE_PHONE_PHASES.has(running.phase)) {
+        throw new Error("a Telegram login operation is already running");
+      }
+      const operationId = crypto.randomUUID();
+      const login: PhoneLogin = {
+        operationId, slug, phone: input.phone, phase: "starting",
+        codeError: false, passwordError: false, error: null, identity: null, handle: null,
+      };
+      this.phoneLogins.set(slug, login);
+      const start = this.ports.adapter.startPhoneEnrollment?.bind(this.ports.adapter);
+      if (!start) {
+        /* No phone door on this adapter. Failing loudly beats a sheet that
+           waits forever for a code that will never be asked for. */
+        this.failPhoneLogin(login, "start_failed", null);
+        return this.accounts();
+      }
+      login.handle = start(
+        { phone: input.phone, apiId: input.apiId, apiHash: input.apiHash },
+        (event) => { void this.applyPhoneEvent(operationId, event); },
+      );
+      return this.accounts();
+    });
+  }
+
+  private phoneLoginBy(operationId: string): PhoneLogin | null {
+    for (const login of this.phoneLogins.values()) {
+      if (login.operationId === operationId) return login;
+    }
+    return null;
+  }
+
+  submitCode(operationId: string, code: string): Promise<TelegramAccountsPayload> {
+    return Promise.resolve().then(() => {
+      const login = this.phoneLoginBy(operationId);
+      if (!login) throw new Error("Telegram login operation is unavailable");
+      if (login.phase !== "awaiting_code") throw new Error("Telegram login is not awaiting a code");
+      if (typeof code !== "string" || !/^\d{4,8}$/.test(code)) throw new Error("Telegram code is invalid");
+      /* Cleared before the attempt, so the screen never shows last time's
+         refusal beside this time's spinner. */
+      login.codeError = false;
+      login.phase = "verifying";
+      login.handle?.submitCode(code);
+      return this.accounts();
+    });
+  }
+
+  submitPhonePassword(operationId: string, password: string): Promise<TelegramAccountsPayload> {
+    return Promise.resolve().then(() => {
+      const login = this.phoneLoginBy(operationId);
+      if (!login) throw new Error("Telegram login operation is unavailable");
+      if (login.phase !== "awaiting_password") throw new Error("Telegram login is not awaiting a password");
+      if (typeof password !== "string" || password.length === 0 || password.length > 4096) {
+        throw new Error("Telegram password is invalid");
+      }
+      login.passwordError = false;
+      login.phase = "verifying";
+      login.handle?.submitPassword(password);
+      return this.accounts();
+    });
+  }
+
+  /** Ends a phone login and leaves nothing behind: the bridge is terminated,
+      and a slot that a half-finished authorization already wrote is removed. */
+  cancelPhoneLogin(operationId: string): Promise<TelegramAccountsPayload> {
+    return Promise.resolve().then(() => {
+      const login = this.phoneLoginBy(operationId);
+      if (!login) return this.accounts();
+      login.handle?.cancel();
+      this.phoneLogins.delete(login.slug);
+      return this.accounts();
+    });
+  }
+
+  private failPhoneLogin(login: PhoneLogin, code: TelegramErrorCode, seconds: number | null): void {
+    login.phase = "failed";
+    login.handle = null;
+    login.error = { code, seconds };
+  }
+
+  private async applyPhoneEvent(operationId: string, event: TelegramEnrollmentEvent): Promise<void> {
+    const login = this.phoneLoginBy(operationId);
+    if (!login || login.phase === "connected") return;
+    switch (event.type) {
+      case "code_required":
+        login.phase = "awaiting_code";
+        return;
+      case "code_invalid":
+        login.phase = "awaiting_code";
+        login.codeError = true;
+        return;
+      case "flood_wait":
+        this.failPhoneLogin(login, "flood_wait", event.seconds);
+        return;
+      case "password_required":
+        login.phase = "awaiting_password";
+        return;
+      case "password_invalid":
+        login.phase = "awaiting_password";
+        login.passwordError = true;
+        return;
+      case "verifying":
+        login.phase = "verifying";
+        return;
+      case "authorized":
+        login.phase = "verifying";
+        await this.storePhoneAccount(login, event.sessionString, event.identity);
+        return;
+      case "failed":
+        /* A cancelled bridge has no login left to mark, and `qr` cannot reach
+           a phone flow — everything else is a refusal worth showing. */
+        if (event.code !== "canceled") this.failPhoneLogin(login, event.code, null);
+        return;
+      case "qr":
+        return;
+    }
+  }
+
+  /**
+   * Credential first, vault second, record third.
+   *
+   * Telegram has already authorized this session by the time it arrives, so
+   * losing it would cost the operator another code; it is written to its slot
+   * before anything else can fail. The console's vault is what makes it an
+   * account the channels page can pick, and a console that cannot take it is a
+   * missing REGISTRATION, not a missing login — the slot stays, and the record
+   * says why there is no vault id.
+   */
+  private async storePhoneAccount(login: PhoneLogin, sessionString: string, identity: TelegramAccountIdentity): Promise<void> {
+    try {
+      saveTelegramAccountSession(login.slug, sessionString);
+    } catch {
+      this.failPhoneLogin(login, "session_unsafe", null);
+      return;
+    }
+    let vault: VaultRegistration = { id: null, reason: "console_missing" };
+    const register = this.ports.registerAccountSecret;
+    if (register) {
+      try {
+        vault = await register({ slug: login.slug, phone: login.phone, username: identity.username, sessionString });
+      } catch (error) {
+        vault = { id: null, reason: error instanceof Error ? error.message : "vault_failed" };
+      }
+    }
+    try {
+      writeTelegramAccountRecord(login.slug, {
+        version: 1,
+        slug: login.slug,
+        phone: login.phone,
+        username: identity.username,
+        name: identity.name,
+        connectedAt: new Date(this.ports.now()).toISOString(),
+        vaultId: vault.id,
+        vaultReason: vault.reason,
+      });
+    } catch { /* the credential is stored; a missing record only costs a label */ }
+    login.phase = "connected";
+    login.handle = null;
+    login.identity = identity;
+  }
+
+  /**
+   * Remote logout for one named account. Success removes the slot; a refusal
+   * PRESERVES it — the operator can retry, or delete it locally — and says
+   * which refusal it was.
+   */
+  async logoutAccount(slug: string): Promise<TelegramAccountsPayload> {
+    const safe = this.writableSlug(slug);
+    let session: StoredTelegramSession | null;
+    try { session = readTelegramAccountSession(safe); }
+    catch { session = null; }
+    if (session) {
+      const result = await this.ports.adapter.logout(session.sessionString);
+      if (!result.ok) {
+        this.phoneLogins.set(safe, {
+          operationId: crypto.randomUUID(), slug: safe, phone: "", phase: "failed",
+          codeError: false, passwordError: false,
+          error: { code: result.code ?? "logout_failed", seconds: null }, identity: null, handle: null,
+        });
+        return this.accounts();
+      }
+    }
+    return this.deleteAccount(safe);
+  }
+
+  /** Local-only removal. The remote Telegram authorization may remain — the
+      screen says so, exactly as it does for the default slot. */
+  deleteAccount(slug: string): Promise<TelegramAccountsPayload> {
+    return Promise.resolve().then(() => {
+      const safe = this.writableSlug(slug);
+      deleteTelegramAccountSession(safe);
+      this.phoneLogins.delete(safe);
+      return this.accounts();
+    });
+  }
+}
+
+function phoneLoginView(login: PhoneLogin): TelegramPhoneLoginView {
+  return {
+    operationId: login.operationId,
+    slug: login.slug,
+    phase: login.phase,
+    codeError: login.codeError,
+    passwordError: login.passwordError,
+    error: login.error,
+    identity: login.identity ? { name: login.identity.name, username: login.identity.username } : null,
+  };
 }
 
 /**

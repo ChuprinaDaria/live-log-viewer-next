@@ -84,3 +84,4 @@ install.log
 package-lock.json
 .run-env.sh
 TZ-UI*.md
+__pycache__/

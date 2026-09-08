@@ -7,15 +7,26 @@ import path from "node:path";
  * shared by the Viewer session store and the packaged tmux token reader so
  * both paths enforce the same directory, file, schema, and digest fence.
  *
+ * A `slug` selects one NAMED account slot under the same directory
+ * (`<directory>/accounts/<slug>`) instead of the default one at its top. It is
+ * optional and the default is unchanged, so the HQ spawn path keeps reading
+ * exactly the files it always did. The slug shape is checked here rather than
+ * trusted, because it is being spliced into a path.
+ *
  * @param {string} directory
+ * @param {string} [slug]
  * @returns {
  *   | { status: "missing" }
  *   | { status: "unsafe"; detail: string }
  *   | { status: "valid"; sessionFile: { version: 1; credentialRef: string; sessionString: string; savedAt: string; connectorTokenSha256: string }; connectorToken: string }
  * }
  */
-export function readValidatedTelegramSessionFiles(directory) {
+export function readValidatedTelegramSessionFiles(directory, slug) {
   const expectedUid = typeof process.getuid === "function" ? process.getuid() : null;
+  if (slug !== undefined && slug !== null && slug !== "" && slug !== "default") {
+    if (!/^[a-z0-9][a-z0-9_-]{1,31}$/.test(slug)) return { status: "unsafe", detail: "telegram account slug is invalid" };
+    directory = path.join(directory, "accounts", slug);
+  }
   let directoryStat;
   try { directoryStat = fs.lstatSync(directory); }
   catch (error) {

@@ -392,10 +392,20 @@ test("the entrypoint withholds the burst consumers the feed must own alone (#109
   expect(renamed.stderr.toString()).toContain("wait_for_settled_burst");
 });
 
-test("health and logout bridges acquire the vendored session lock before connecting", () => {
+/**
+ * A stand-in Telethon + telegram_mcp on PYTHONPATH, so the REAL bridge file
+ * can be run end to end without a network and without an account.
+ *
+ * `lockBeforeConnect` is what the health and logout commands promise: they
+ * take the vendored per-session lock BEFORE they touch the network, because
+ * they operate on a session the connector may already hold. Enrolment — QR or
+ * phone — has no session to collide with until Telegram has authorized one, so
+ * it connects first and locks after, and its fixture says so.
+ */
+function bridgeFixtureModules(name: string, lockBeforeConnect = true): string {
   const python = Bun.which("python3");
   expect(python).not.toBeNull();
-  const modules = path.join(SANDBOX, "bridge-lock-modules");
+  const modules = path.join(SANDBOX, name);
   for (const directory of ["telegram_mcp", "telethon"]) {
     fs.mkdirSync(path.join(modules, directory), { recursive: true });
     fs.writeFileSync(path.join(modules, directory, "__init__.py"), "");
@@ -426,6 +436,16 @@ test("health and logout bridges acquire the vendored session lock before connect
     "class PasswordHashInvalidError(Exception): pass",
     "class SessionPasswordNeededError(Exception): pass",
     "class SessionRevokedError(Exception): pass",
+    /* The phone door's errors. Real Telethon has always carried them; the
+       bridge imports the whole set at once and refuses to run on a partial
+       one, so the fixture has to model the real module rather than the subset
+       the QR flow happened to need. */
+    "class PhoneCodeInvalidError(Exception): pass",
+    "class PhoneNumberInvalidError(Exception): pass",
+    "class FloodWaitError(Exception):",
+    "    def __init__(self, seconds=0):",
+    "        super().__init__(seconds)",
+    "        self.seconds = seconds",
     "",
   ].join("\n"));
   fs.writeFileSync(path.join(modules, "telethon", "__init__.py"), [
@@ -437,15 +457,26 @@ test("health and logout bridges acquire the vendored session lock before connect
     "    def __init__(self, session, *args, **kwargs): self.session = session",
     "    async def connect(self):",
     "        from telegram_mcp import singleton",
-    "        if not singleton.LOCKED: raise RuntimeError('session lock missing')",
+    ...(lockBeforeConnect ? ["        if not singleton.LOCKED: raise RuntimeError('session lock missing')"] : ["        pass"]),
     "    async def is_user_authorized(self): return True",
+    "    async def send_code_request(self, phone): self.phone = phone",
+    "    async def sign_in(self, phone=None, code=None, password=None): return User()",
     "    async def get_me(self): return User()",
     "    async def log_out(self): return True",
     "    async def disconnect(self): pass",
     "",
   ].join("\n"));
+  return modules;
+}
+
+const BRIDGE = path.resolve(import.meta.dir, "..", "..", "..", "bin", "telegram-login-bridge.py");
+
+test("health and logout bridges acquire the vendored session lock before connecting", () => {
+  const python = Bun.which("python3");
+  expect(python).not.toBeNull();
+  const modules = bridgeFixtureModules("bridge-lock-modules");
   const result = Bun.spawnSync({
-    cmd: [python!, path.resolve(import.meta.dir, "..", "..", "..", "bin", "telegram-login-bridge.py"), "health"],
+    cmd: [python!, BRIDGE, "health"],
     env: {
       ...process.env,
       PYTHONPATH: modules,
@@ -513,4 +544,49 @@ test("API credentials come from host configuration, not hardcoded values", () =>
     if (oldHash === undefined) delete process.env.LLV_TELEGRAM_API_HASH; else process.env.LLV_TELEGRAM_API_HASH = oldHash;
     if (oldConfig === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = oldConfig;
   }
+});
+
+test("the phone bridge reads the number off argv and answers on stdin", () => {
+  const python = Bun.which("python3");
+  const modules = bridgeFixtureModules("bridge-phone-modules", false);
+  /* The reserved all-zero range, never a real number. */
+  const result = Bun.spawnSync({
+    cmd: [python!, BRIDGE, "phone", "--phone=+10000000000"],
+    env: {
+      ...process.env,
+      PYTHONPATH: modules,
+      TELEGRAM_API_ID: "12345",
+      TELEGRAM_API_HASH: "0123456789abcdef0123456789abcdef",
+    },
+    stdin: Buffer.from(`${JSON.stringify({ code: "12345" })}\n`),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(result.exitCode).toBe(0);
+  const events = result.stdout.toString().trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
+  expect(events.map((event) => event.event)).toEqual(["code_required", "verifying", "authorized"]);
+  const authorized = events[events.length - 1];
+  expect(authorized.identity).toMatchObject({ name: "Account A", id: "770000001" });
+  /* The number reached the process as an argument and the code over stdin —
+     and neither is echoed back into any event. */
+  expect(JSON.stringify(events)).not.toContain("+10000000000");
+  expect(JSON.stringify(events)).not.toContain("12345\"");
+});
+
+test("a number that is not E.164 never reaches Telegram", () => {
+  const python = Bun.which("python3");
+  const modules = bridgeFixtureModules("bridge-phone-bad-modules", false);
+  const result = Bun.spawnSync({
+    cmd: [python!, BRIDGE, "phone", "--phone=not-a-number"],
+    env: {
+      ...process.env,
+      PYTHONPATH: modules,
+      TELEGRAM_API_ID: "12345",
+      TELEGRAM_API_HASH: "0123456789abcdef0123456789abcdef",
+    },
+    stdin: Buffer.from(""),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(JSON.parse(result.stdout.toString().trim())).toEqual({ event: "failed", code: "phone_invalid" });
 });

@@ -6,7 +6,9 @@ import { X } from "@/components/icons";
 import { useLocale } from "@/lib/i18n";
 
 import { MobileBarTitle, MobileShell, type MobileShellHost, type SheetRenderer } from "./MobileShell";
-import { channelLine, channelTitle, useChannels, type Channel } from "./channelsModel";
+import { channelLine, channelTitle, useChannels, useTelegramAccounts, type Channel, type TelegramAccountRow } from "./channelsModel";
+import { showReceipt } from "./MobileReceipt";
+import { TelegramAccountSheet } from "./TelegramAccountSheet";
 
 /*
  * Which chats each project listens to.
@@ -48,9 +50,41 @@ function ChannelRow({ channel, onRemove }: { channel: Channel; onRemove: () => v
   );
 }
 
+/**
+ * One connected Telegram account, and the way out of it.
+ *
+ * «Вийти» acts on the first tap: no confirmation dialog (mobile README §2
+ * rule 9), and the receipt is the answer. The remote authorization is revoked
+ * and the local credential removed together — a refusal keeps both and says
+ * which refusal it was.
+ */
+function AccountRow({ account, onSignOut }: { account: TelegramAccountRow; onSignOut: () => void }) {
+  const { t } = useLocale();
+  const who = account.username ? `@${account.username}` : account.name || account.phone || account.slug;
+  return (
+    <div data-telegram-account={account.slug} className="flex min-h-14 items-center gap-2 px-4 py-2">
+      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="truncate text-body font-semibold text-primary">{who}</span>
+        <span className="truncate text-label text-muted">{account.slug}{account.phone ? ` · ${account.phone}` : ""}</span>
+        {/* The account exists locally but the picker above will not offer it:
+            say why, here, rather than leave the absence unexplained. */}
+        {account.vaultId === null && account.vaultReason ? (
+          <span className="truncate text-caption text-warning">{t("telegram.vaultMissing", { reason: account.vaultReason })}</span>
+        ) : null}
+      </span>
+      <button type="button" onClick={onSignOut} data-telegram-signout={account.slug}
+        className="min-h-11 shrink-0 rounded-[12px] px-3 text-label font-semibold text-danger">
+        {t("telegram.logout")}
+      </button>
+    </div>
+  );
+}
+
 export function MobileChannelsScreen({ host, renderSheet }: { host: MobileShellHost | null; renderSheet?: SheetRenderer }) {
   const { t } = useLocale();
   const channels = useChannels();
+  const telegram = useTelegramAccounts();
+  const [adding, setAdding] = useState(false);
   const [target, setTarget] = useState("");
   const [link, setLink] = useState("");
   const [account, setAccount] = useState("");
@@ -127,6 +161,30 @@ export function MobileChannelsScreen({ host, renderSheet }: { host: MobileShellH
               ) : null}
             </section>
 
+            <section className="flex flex-col gap-1.5">
+              <div className="flex items-center gap-1.5 px-1">
+                <h2 className="text-label font-semibold text-secondary">{t("telegram.accounts")}</h2>
+                <button type="button" data-telegram-add onClick={() => setAdding(true)}
+                  className="ml-auto min-h-11 rounded-[12px] px-2 text-label font-semibold text-accent">
+                  {t("telegram.addAccount")}
+                </button>
+              </div>
+              {telegram.accounts.length ? (
+                <div className={CARD}>
+                  {telegram.accounts.map((account) => (
+                    <AccountRow key={account.slug} account={account}
+                      onSignOut={() => void telegram.signOut(account.slug).then((refused) => {
+                        setProblem(refused);
+                        if (!refused) {
+                          showReceipt(t("channels.disconnect", { name: account.username ? `@${account.username}` : account.slug }));
+                          void channels.refresh();
+                        }
+                      })} />
+                  ))}
+                </div>
+              ) : null}
+            </section>
+
             {channels.channels.length === 0 ? (
               <p role="status" className="px-1 text-label text-muted">{t("channels.none")}</p>
             ) : (
@@ -147,6 +205,18 @@ export function MobileChannelsScreen({ host, renderSheet }: { host: MobileShellH
                 </div>
               </section>
             )}
+            {adding ? (
+              <TelegramAccountSheet
+                onClose={() => setAdding(false)}
+                onConnected={() => {
+                  /* Both lists move: the new account appears here, and the
+                     picker above re-reads `channel_accounts` so it can be
+                     chosen for a chat without a page reload. */
+                  void telegram.refresh();
+                  void channels.refresh();
+                }}
+              />
+            ) : null}
           </>
         )}
       </div>

@@ -18,6 +18,12 @@ import { bridgeLaunchSpec, ensureConnectorProvisioned, telegramApiCredentials } 
 
 export type TelegramEnrollmentEvent =
   | { type: "qr"; url: string; expiresAt: string }
+  /* The phone door's three extra states. The code itself never appears in an
+     event — only whether Telegram is waiting for one and whether the last one
+     was wrong. */
+  | { type: "code_required" }
+  | { type: "code_invalid" }
+  | { type: "flood_wait"; seconds: number }
   | { type: "password_required" }
   | { type: "password_invalid" }
   | { type: "verifying" }
@@ -28,6 +34,18 @@ export interface TelegramEnrollmentHandle {
   submitPassword(password: string): void;
   /** Terminates the enrollment process. Idempotent. */
   cancel(): void;
+}
+
+/** The number a phone login starts from, and the credentials it runs under
+    when the operator supplied a pair of her own for this account. */
+export type TelegramPhoneStart = {
+  phone: string;
+  apiId?: string;
+  apiHash?: string;
+};
+
+export interface TelegramPhoneEnrollmentHandle extends TelegramEnrollmentHandle {
+  submitCode(code: string): void;
 }
 
 export type TelegramHealthResult =
@@ -41,6 +59,10 @@ export interface TelegramAdapter {
   startEnrollment(onEvent: (event: TelegramEnrollmentEvent) => void): TelegramEnrollmentHandle;
   checkSession(sessionString: string): Promise<TelegramHealthResult>;
   logout(sessionString: string): Promise<{ ok: boolean; code: TelegramErrorCode | null }>;
+  /** Optional so an adapter that predates the phone door — a fake in an older
+      test, a host whose bridge cannot do it — is a missing door rather than a
+      broken interface. The service answers `start_failed` when it is absent. */
+  startPhoneEnrollment?(input: TelegramPhoneStart, onEvent: (event: TelegramEnrollmentEvent) => void): TelegramPhoneEnrollmentHandle;
 }
 
 const BRIDGE_CALL_TIMEOUT_MS = 60_000;
@@ -61,15 +83,106 @@ function sanitizedCode(value: unknown, fallback: TelegramErrorCode = "bridge_fai
   return typeof value === "string" && /^[a-z_]{1,40}$/.test(value) ? value as TelegramErrorCode : fallback;
 }
 
-function bridgeChild(command: "enroll" | "health" | "logout"): ChildProcessWithoutNullStreams | null {
-  const credentials = telegramApiCredentials();
+function bridgeChild(
+  command: "enroll" | "health" | "logout" | "phone",
+  extra: readonly string[] = [],
+  /* An account may be enrolled under its own api_id/api_hash pair rather than
+     the host's — Telegram counts logins per application, and one pair used for
+     several accounts is the thing that earns a flood wait. */
+  override?: { apiId?: string; apiHash?: string },
+): ChildProcessWithoutNullStreams | null {
+  const host = telegramApiCredentials();
+  const credentials = override?.apiId && override?.apiHash
+    ? { apiId: override.apiId, apiHash: override.apiHash }
+    : host;
   if (!credentials) return null;
-  const spec = bridgeLaunchSpec(command, credentials);
+  const spec = bridgeLaunchSpec(command, credentials, extra);
   try {
     return spawn(spec.command, spec.args, { cwd: spec.cwd, env: spec.env, stdio: ["pipe", "pipe", "pipe"] });
   } catch {
     return null;
   }
+}
+
+/** One bridge line as an enrollment event, or null for a line that says
+    nothing this side understands. Shared by both doors so a state the QR flow
+    already handles cannot drift away from the phone flow's copy of it. */
+function enrollmentEvent(raw: Record<string, unknown>): TelegramEnrollmentEvent | null {
+  switch (raw.event) {
+    case "qr":
+      return typeof raw.url === "string" && raw.url.startsWith("tg://login")
+        ? { type: "qr", url: raw.url, expiresAt: typeof raw.expiresAt === "string" ? raw.expiresAt : new Date(Date.now() + 30_000).toISOString() }
+        : null;
+    case "code_required": return { type: "code_required" };
+    case "code_invalid": return { type: "code_invalid" };
+    case "flood_wait":
+      return { type: "flood_wait", seconds: typeof raw.seconds === "number" && Number.isFinite(raw.seconds) ? Math.max(0, Math.trunc(raw.seconds)) : 0 };
+    case "password_required": return { type: "password_required" };
+    case "password_invalid": return { type: "password_invalid" };
+    case "verifying": return { type: "verifying" };
+    case "authorized":
+      return typeof raw.session === "string" && raw.session
+        ? { type: "authorized", sessionString: raw.session, identity: identityOf(raw.identity) }
+        : { type: "failed", code: "bridge_failed" };
+    case "failed": return { type: "failed", code: sanitizedCode(raw.code) };
+    default: return null;
+  }
+}
+
+/**
+ * The enrollment process both doors share: provision, spawn, read one event
+ * per line, and hand back a control surface that writes code and password
+ * lines into its stdin. The session string crosses here exactly once, in the
+ * `authorized` event; nothing in this function logs a line.
+ */
+function runEnrollment(
+  spawnChild: () => ChildProcessWithoutNullStreams | null,
+  onEvent: (event: TelegramEnrollmentEvent) => void,
+): TelegramPhoneEnrollmentHandle {
+  let done = false;
+  let canceled = false;
+  let child: ChildProcessWithoutNullStreams | null = null;
+  const emit = (event: TelegramEnrollmentEvent) => {
+    if (done) return;
+    if (event.type === "authorized" || event.type === "failed") done = true;
+    onEvent(event);
+  };
+  void ensureConnectorProvisioned().then((provisioned) => {
+    if (canceled || done) return;
+    if (!provisioned) {
+      emit({ type: "failed", code: "start_failed" });
+      return;
+    }
+    child = spawnChild();
+    if (!child) {
+      emit({ type: "failed", code: "start_failed" });
+      return;
+    }
+    const lines = readline.createInterface({ input: child.stdout });
+    lines.on("line", (line) => {
+      const raw = parseEvent(line);
+      const event = raw ? enrollmentEvent(raw) : null;
+      if (event) emit(event);
+    });
+    child.stderr.on("data", () => undefined);
+    child.once("error", () => emit({ type: "failed", code: "start_failed" }));
+    child.once("close", () => emit({ type: "failed", code: "bridge_failed" }));
+  }).catch(() => emit({ type: "failed", code: "start_failed" }));
+
+  const send = (payload: Record<string, string>) => {
+    try { child?.stdin.write(JSON.stringify(payload) + "\n"); }
+    catch { emit({ type: "failed", code: "bridge_failed" }); }
+  };
+  return {
+    submitCode(code: string) { send({ code }); },
+    submitPassword(password: string) { send({ password }); },
+    cancel() {
+      canceled = true;
+      done = true;
+      try { child?.kill("SIGTERM"); } catch { /* already gone */ }
+      setTimeout(() => { try { child?.kill("SIGKILL"); } catch { /* already gone */ } }, 2_000).unref?.();
+    },
+  };
 }
 
 function parseEvent(line: string): Record<string, unknown> | null {
@@ -124,64 +237,14 @@ export const processTelegramAdapter: TelegramAdapter = {
   },
 
   startEnrollment(onEvent) {
-    let done = false;
-    let canceled = false;
-    let child: ChildProcessWithoutNullStreams | null = null;
-    const emit = (event: TelegramEnrollmentEvent) => {
-      if (done) return;
-      if (event.type === "authorized" || event.type === "failed") done = true;
-      onEvent(event);
-    };
-    void ensureConnectorProvisioned().then((provisioned) => {
-      if (canceled || done) return;
-      if (!provisioned) {
-        emit({ type: "failed", code: "start_failed" });
-        return;
-      }
-      child = bridgeChild("enroll");
-      if (!child) {
-        emit({ type: "failed", code: "start_failed" });
-        return;
-      }
-      const lines = readline.createInterface({ input: child.stdout });
-      lines.on("line", (line) => {
-        const raw = parseEvent(line);
-        if (!raw) return;
-        switch (raw.event) {
-          case "qr":
-            if (typeof raw.url === "string" && raw.url.startsWith("tg://login")) {
-              emit({ type: "qr", url: raw.url, expiresAt: typeof raw.expiresAt === "string" ? raw.expiresAt : new Date(Date.now() + 30_000).toISOString() });
-            }
-            return;
-          case "password_required": emit({ type: "password_required" }); return;
-          case "password_invalid": emit({ type: "password_invalid" }); return;
-          case "verifying": emit({ type: "verifying" }); return;
-          case "authorized":
-            if (typeof raw.session === "string" && raw.session) {
-              emit({ type: "authorized", sessionString: raw.session, identity: identityOf(raw.identity) });
-            } else {
-              emit({ type: "failed", code: "bridge_failed" });
-            }
-            return;
-          case "failed": emit({ type: "failed", code: sanitizedCode(raw.code) }); return;
-        }
-      });
-      child.stderr.on("data", () => undefined);
-      child.once("error", () => emit({ type: "failed", code: "start_failed" }));
-      child.once("close", () => emit({ type: "failed", code: "bridge_failed" }));
-    }).catch(() => emit({ type: "failed", code: "start_failed" }));
-    return {
-      submitPassword(password: string) {
-        try { child?.stdin.write(JSON.stringify({ password }) + "\n"); }
-        catch { emit({ type: "failed", code: "bridge_failed" }); }
-      },
-      cancel() {
-        canceled = true;
-        done = true;
-        try { child?.kill("SIGTERM"); } catch { /* already gone */ }
-        setTimeout(() => { try { child?.kill("SIGKILL"); } catch { /* already gone */ } }, 2_000).unref?.();
-      },
-    };
+    return runEnrollment(() => bridgeChild("enroll"), onEvent);
+  },
+
+  startPhoneEnrollment(input, onEvent) {
+    return runEnrollment(
+      () => bridgeChild("phone", [`--phone=${input.phone}`], { apiId: input.apiId, apiHash: input.apiHash }),
+      onEvent,
+    );
   },
 
   async checkSession(sessionString) {

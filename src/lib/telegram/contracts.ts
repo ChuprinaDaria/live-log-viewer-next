@@ -33,7 +33,12 @@ export type TelegramErrorCode =
   | "host_registration_failed"
   | "not_read_only"
   | "logout_failed"
-  | "health_failed";
+  | "health_failed"
+  /* The phone door's own refusals. They are separate codes because each one
+     has a different answer: fix the number, retype the code, or wait. */
+  | "phone_invalid"
+  | "code_invalid"
+  | "flood_wait";
 
 /** Sanitized account identity: display name and public username only. This is
     the shape that crosses the browser boundary. */
@@ -101,3 +106,50 @@ export const NONTERMINAL_TELEGRAM_LOGIN_PHASES: ReadonlySet<TelegramPhase> = new
   "awaiting_password",
   "verifying",
 ]);
+
+/**
+ * A phone login as the browser sees it (the number → code → 2FA door).
+ *
+ * Nothing here is a secret: not the phase, not the two error marks, not the
+ * identity Telegram returned. The number itself is deliberately absent — the
+ * sheet already knows what was typed into it, and a status poll that echoed
+ * it back would put it in every response body for no gain.
+ */
+export type TelegramPhoneLoginPhase =
+  | "starting"
+  | "awaiting_code"
+  | "awaiting_password"
+  | "verifying"
+  | "connected"
+  | "failed";
+
+export type TelegramPhoneLoginView = {
+  operationId: string;
+  slug: string;
+  phase: TelegramPhoneLoginPhase;
+  /** Set after a rejected code, cleared the moment another one is sent. */
+  codeError: boolean;
+  passwordError: boolean;
+  /** How long Telegram asked to wait, on a `flood_wait` and nothing else. */
+  error: { code: TelegramErrorCode; seconds: number | null } | null;
+  /** Who connected, once someone did. */
+  identity: TelegramIdentity | null;
+};
+
+/** One enrolled account, as the phone lists it. */
+export type TelegramAccountView = {
+  slug: string;
+  phone: string | null;
+  username: string | null;
+  name: string | null;
+  connectedAt: string | null;
+  /** The console record this session was registered as, when it was. */
+  vaultId: string | null;
+  /** Why it was not, when it was not. */
+  vaultReason: string | null;
+};
+
+export type TelegramAccountsPayload = {
+  accounts: TelegramAccountView[];
+  logins: TelegramPhoneLoginView[];
+};
