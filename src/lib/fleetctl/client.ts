@@ -103,6 +103,12 @@ export async function fleetctl<T>(call: FleetctlCall): Promise<T> {
         }
       },
     );
+    /* A console that refuses a flag exits before it reads, and the write then
+       fails with EPIPE. An unhandled `error` on a stream is a PROCESS event —
+       it would take the Viewer down over one bad call (AGENTS.md). The child's
+       exit is already the answer, so the write failure is absorbed here and
+       the execFile callback above does the rejecting. */
+    child.stdin?.on("error", () => {});
     if (call.stdinParam) {
       child.stdin?.end(call.stdinValue ?? "");
     } else if (call.stdinJson) {

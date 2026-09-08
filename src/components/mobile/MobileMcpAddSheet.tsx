@@ -37,13 +37,15 @@ function lines(text: string): string[] {
   return text.split("\n").map((line) => line.trim()).filter(Boolean);
 }
 
-/** Names to an object, paired with the values still standing in the DOM.
-    Empty names are dropped — a half-typed row is not an entry. */
+/** Names to an object, paired with the values still standing in the DOM. A row
+    missing either half is dropped: a name with no value would write an empty
+    variable, which the server reads as «set, and empty» — not what was meant. */
 function collect(names: readonly string[], values: readonly string[]): Record<string, string> | undefined {
   const out: Record<string, string> = {};
   names.forEach((name, index) => {
     const key = name.trim();
-    if (key) out[key] = values[index] ?? "";
+    const value = values[index] ?? "";
+    if (key && value) out[key] = value;
   });
   return Object.keys(out).length ? out : undefined;
 }
@@ -72,12 +74,15 @@ function Field({ label, field, value, onChange, placeholder, multiline = false }
 /** KEY + value rows. The value is a password field, and an uncontrolled one:
     this page gets opened in a café, and a token neither standing in plain text
     on the screen nor sitting in a React state tree is the whole point. */
-function Pairs({ label, hook, names, onChange }: {
-  label: string; hook: "env" | "header"; names: string[]; onChange: (next: string[]) => void;
+function Pairs({ label, hook, names, onChange, hidden }: {
+  label: string; hook: "env" | "header"; names: string[]; hidden: boolean;
+  onChange: (next: string[]) => void;
 }) {
   const { t } = useLocale();
+  /* Hidden, not unmounted: the values are uncontrolled, so unmounting the rows
+     would silently throw away a typed token the moment the type is switched. */
   return (
-    <div className="flex flex-col gap-1.5 px-4 pt-2">
+    <div hidden={hidden} className="flex flex-col gap-1.5 px-4 pt-2">
       <span className="text-label font-semibold text-secondary">{label}</span>
       {names.map((name, index) => (
         <div key={index} className="flex gap-2">
@@ -147,6 +152,7 @@ export function MobileMcpAddSheet({
     setBusy(true);
     setFailure(null);
     const argv = lines(args);
+    const pairs = stdio ? collect(env, values("env")) : collect(headers, values("header"));
     const input: McpServerInput = {
       name: name.trim(),
       type: kind,
@@ -155,11 +161,11 @@ export function MobileMcpAddSheet({
             command: command.trim(),
             ...(argv.length ? { args: argv } : {}),
             ...(cwd.trim() ? { cwd: cwd.trim() } : {}),
-            ...(collect(env, values("env")) ? { env: collect(env, values("env")) } : {}),
+            ...(pairs ? { env: pairs } : {}),
           }
         : {
             url: url.trim(),
-            ...(collect(headers, values("header")) ? { headers: collect(headers, values("header")) } : {}),
+            ...(pairs ? { headers: pairs } : {}),
           }),
       ...(replace ? { replace: true } : {}),
     };
@@ -218,14 +224,12 @@ export function MobileMcpAddSheet({
             <Field label={t("mcp.command")} field="command" value={command} onChange={setCommand} placeholder="/opt/venv/bin/cohere-mcp" />
             <Field label={t("mcp.args")} field="args" value={args} onChange={setArgs} multiline />
             <Field label={t("mcp.cwd")} field="cwd" value={cwd} onChange={setCwd} />
-            <Pairs label={t("mcp.env")} hook="env" names={env} onChange={setEnv} />
           </>
         ) : (
-          <>
-            <Field label={t("mcp.url")} field="url" value={url} onChange={setUrl} placeholder="https://127.0.0.1:27124/mcp/" />
-            <Pairs label={t("mcp.headers")} hook="header" names={headers} onChange={setHeaders} />
-          </>
+          <Field label={t("mcp.url")} field="url" value={url} onChange={setUrl} placeholder="https://127.0.0.1:27124/mcp/" />
         )}
+        <Pairs label={t("mcp.env")} hook="env" names={env} onChange={setEnv} hidden={!stdio} />
+        <Pairs label={t("mcp.headers")} hook="header" names={headers} onChange={setHeaders} hidden={stdio} />
         <button type="button" data-mcp-replace role="switch" aria-checked={replace}
           onClick={() => setReplace((was) => !was)}
           className="mx-4 mt-2 flex min-h-11 items-center gap-2.5 text-left text-label font-semibold text-primary">

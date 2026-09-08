@@ -9,6 +9,11 @@ import { useLocale } from "@/lib/i18n";
 import { MobileReceipt, type ReceiptStore } from "./MobileReceipt";
 import type { MobileSheetName } from "./mobileNav";
 
+/* Every sheet the navigation can open, plus the ones a screen owns in its own
+   state and history never sees (the MCP add form). The distinction matters:
+   `MobileSheetName` is what a URL-visible sheet may be called. */
+export type MobileSheetSurface = MobileSheetName | "mcpAdd";
+
 /*
  * The one sheet (docs/design/mobile-v2/README.md §2 rule 1, §3.3, §5): a
  * secondary surface opens over the current screen, takes at most 88 % of the
@@ -54,7 +59,7 @@ export function MobileSheet({
   children,
   receiptStore,
 }: {
-  name: MobileSheetName;
+  name: MobileSheetSurface;
   title: string;
   /** A header control beside the title (the queue's «Next ›», the switcher's «Board ›»). */
   extra?: ReactNode;

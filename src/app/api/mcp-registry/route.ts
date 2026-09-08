@@ -44,20 +44,49 @@ const MAX_VALUE_BYTES = 4 * 1024;
 const MAX_ENTRIES = 32;
 const MAX_ARGS = 64;
 
+/** Servers the dashboard and the console are themselves reached through: the
+    phone would be removing the hand that holds it. */
+const FLEET_OWN = ["viewer", "fleetctl"];
+/** The fleet's seats live in the run environment, not the org store, and the
+    console's purge does not read them — so a removal would leave a grant
+    pointing at a server that is gone. Refuse instead, and name the variable. */
+const FLEET_ENV_VARS = ["LLV_MCP_GRANT", "LLV_HQ_MCP_GRANT"] as const;
+
 /** A refusal the page can act on: the sentence for the operator, the field for
     the form. Both halves are free of anything the caller sent as a value. */
 class BadInput extends Error {
   readonly code: string;
-  constructor(code: string, message: string) {
+  readonly status: number;
+  constructor(code: string, message: string, status = 400) {
     super(message);
     this.code = code;
+    this.status = status;
   }
 }
 
 function text(value: unknown, code: string, what: string): string {
   if (value === undefined || value === null) return "";
   if (typeof value !== "string") throw new BadInput(code, `${what} must be a string`);
-  return value.trim();
+  const trimmed = value.trim();
+  if (Buffer.byteLength(trimmed, "utf8") > MAX_VALUE_BYTES) {
+    throw new BadInput(code, `${what} is longer than ${MAX_VALUE_BYTES / 1024} KiB`);
+  }
+  return trimmed;
+}
+
+/** Whether this server may be taken out at all. Read at request time: the run
+    environment is edited by hand and reloaded with the fleet, not with us. */
+function inUse(name: string): string | null {
+  if (FLEET_OWN.includes(name)) {
+    return `«${name}» is one of the fleet's own servers — removing it from here would cut the dashboard off from the console`;
+  }
+  for (const variable of FLEET_ENV_VARS) {
+    const granted = (process.env[variable] ?? "").split(",").map((item) => item.trim()).filter(Boolean);
+    if (granted.includes(name)) {
+      return `«${name}» is granted to the fleet through ${variable}; take it out of the run environment first`;
+    }
+  }
+  return null;
 }
 
 /** env / headers: names checked against their own alphabet, values weighed but
@@ -170,13 +199,24 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
 /** The list the page should now render, so a write and the view of it cannot
     disagree. The probe is skipped: nothing here changes whether a server is
-    up, and adding one asks the console to answer, not to dial out. */
-async function refreshed(result: unknown): Promise<NextResponse> {
-  const [servers, skills] = await Promise.all([
-    fleetctl<Record<string, unknown>>({ fn: "mcp_list", params: { probe: false } }),
-    fleetctl<Record<string, unknown>>({ fn: "skills_list" }),
-  ]);
-  return NextResponse.json({ result, ...servers, ...skills }, { headers });
+    up, and adding one asks the console to answer, not to dial out.
+ *
+ * `done` is what already happened on disk. If the re-read fails after a write
+ * went through, the write still went through — answering with a failure would
+ * send the operator back to repeat an action that is already done, and the
+ * second attempt would meet «уже є». So the answer says what happened and
+ * hands back a null list, which the page reads as «ask again». */
+async function refreshed(result: unknown, done: Record<string, unknown> = {}): Promise<NextResponse> {
+  try {
+    const [servers, skills] = await Promise.all([
+      fleetctl<Record<string, unknown>>({ fn: "mcp_list", params: { probe: false } }),
+      fleetctl<Record<string, unknown>>({ fn: "skills_list" }),
+    ]);
+    return NextResponse.json({ result, ...done, ...servers, ...skills }, { headers });
+  } catch (error) {
+    if (Object.keys(done).length === 0) throw error;
+    return NextResponse.json({ result, ...done, servers: null, skills: null }, { headers });
+  }
 }
 
 /**
@@ -216,18 +256,20 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       if (body.action === "add") {
         const call = addCall(body);
         const result = await fleetctl({ fn: "mcp_add", ...call });
-        return await refreshed(result);
+        return await refreshed(result, { added: true });
       }
       if (body.action === "remove") {
         const name = text(body.name, "name", "name");
         if (!SERVER_NAME.test(name)) throw new BadInput("name", "name is not an MCP server name");
+        const held = inUse(name);
+        if (held) throw new BadInput("mcp_in_use", held, 409);
         const result = await fleetctl({ fn: "mcp_remove", params: { name } });
-        return await refreshed(result);
+        return await refreshed(result, { removed: true });
       }
       throw new BadInput("action", "action must be add or remove");
     } catch (error) {
       if (error instanceof BadInput) {
-        return NextResponse.json({ error: error.message, code: error.code }, { status: 400, headers });
+        return NextResponse.json({ error: error.message, code: error.code }, { status: error.status, headers });
       }
       /* The console's own sentence — it is secret-free by design, and it is
          the half of a failure the operator can act on. */

@@ -63,7 +63,7 @@ afterAll(async () => {
 });
 
 const { MobileMcpAddSheet } = await import("./MobileMcpAddSheet");
-const { McpGrantSheet } = await import("./MobileMcpScreen");
+const { McpGrantSheet, MobileMcpScreen } = await import("./MobileMcpScreen");
 const { useMcpRegistry } = await import("./mcpModel");
 const { receipts } = await import("./MobileReceipt");
 
@@ -97,11 +97,12 @@ function RemoveHarness() {
   );
 }
 
-async function mount(what: "add" | "remove"): Promise<HTMLElement> {
+async function mount(what: "add" | "remove" | "screen"): Promise<HTMLElement> {
   const container = dom.document.createElement("div");
   dom.document.body.appendChild(container);
   const root = createRoot(container as unknown as Element);
-  flushSync(() => root.render(what === "add" ? <AddHarness /> : <RemoveHarness />));
+  const tree = what === "add" ? <AddHarness /> : what === "remove" ? <RemoveHarness /> : <MobileMcpScreen host={null} />;
+  flushSync(() => root.render(tree));
   roots.push(root);
   await settle();
   posts = [];
@@ -198,7 +199,11 @@ test("a refusal from the console stands on the form, and nothing is closed", asy
 });
 
 test("removing a server acts on the tap that names it, and answers with a receipt", async () => {
+  answer = { ok: true, status: 200, body: { servers: [], skills: [], result: { grants_cleaned: ["firm:bluebird", "agent:reviewer"] } } };
   const root = await mount("remove");
+  /* The caution stands next to the control, not after the fact: the values
+     are gone with the server and this page never held them to put back. */
+  expect(root.textContent).toContain(translate("en", "mcp.removeHint"));
   const remove = q(root, '[data-mcp-remove="cohere"]')!;
   expect(remove).not.toBeNull();
   expect(remove.textContent).toContain(translate("en", "mcp.removeServer"));
@@ -209,5 +214,41 @@ test("removing a server acts on the tap that names it, and answers with a receip
   await settle();
   expect(posts).toEqual([{ url: "/api/mcp-registry", body: { action: "remove", name: "cohere" } }]);
   expect(closed).toBe(1);
-  expect(receipts.getState()?.text).toBe(translate("en", "mcp.removed", { name: "cohere" }));
+  expect(receipts.getState()?.text).toBe(translate("en", "mcp.removedDetail", { name: "cohere", count: 2 }));
+});
+
+test("the add button is there when there is nothing in the registry to look at", async () => {
+  /* The empty registry is exactly when the button is needed; hanging it off
+     the server rows put it out of reach of whoever had just emptied them. */
+  answer = { ok: true, status: 200, body: { servers: [], skills: [], registry: "/srv/claude.json" } };
+  const root = await mount("screen");
+  expect(root.textContent).toContain(translate("en", "mcp.noServers"));
+  const open = q(root, "[data-mcp-add-open]");
+  expect(open).not.toBeNull();
+  expect(open!.textContent).toContain(translate("en", "mcp.add"));
+  click(open);
+  expect(q(root, '[data-mobile2-sheet="mcpAdd"]')).not.toBeNull();
+});
+
+test("switching the transport keeps a value that was already typed", async () => {
+  const root = await mount("add");
+  type(q(root, '[data-mcp-env-key="0"]'), "COHERE_API_KEY");
+  type(q(root, '[data-mcp-env-value="0"]'), TOKEN);
+  click(q(root, '[data-mcp-type="http"]'));
+  click(q(root, '[data-mcp-type="stdio"]'));
+  type(q(root, '[data-mcp-field="name"]'), "cohere");
+  type(q(root, '[data-mcp-field="command"]'), "x");
+  click(q(root, "[data-mcp-submit]"));
+  await settle();
+  expect((posts[0]!.body as { env?: unknown }).env).toEqual({ COHERE_API_KEY: TOKEN });
+});
+
+test("a name with no value beside it is not an entry", async () => {
+  const root = await mount("add");
+  type(q(root, '[data-mcp-field="name"]'), "plain");
+  type(q(root, '[data-mcp-field="command"]'), "x");
+  type(q(root, '[data-mcp-env-key="0"]'), "HALF_TYPED");
+  click(q(root, "[data-mcp-submit]"));
+  await settle();
+  expect(posts[0]!.body).toEqual({ action: "add", name: "plain", type: "stdio", command: "x" });
 });

@@ -8,7 +8,7 @@ import { useLocale } from "@/lib/i18n";
 import { MobileMcpAddSheet } from "./MobileMcpAddSheet";
 import { showReceipt } from "./MobileReceipt";
 import { MobileBarTitle, MobileShell, type MobileShellHost, type SheetRenderer } from "./MobileShell";
-import { serverLine, useMcpRegistry, type McpServerRow, type SkillRow } from "./mcpModel";
+import { serverLine, useMcpRegistry, type McpRemoveOutcome, type McpServerRow, type SkillRow } from "./mcpModel";
 
 /*
  * MCP servers and skills, and who they are granted to (TZ-UI §3: the same
@@ -138,26 +138,29 @@ export function MobileMcpScreen({ host, renderSheet }: { host: MobileShellHost |
     return (
       <>
         {failure ? <p role="status" className="px-1 text-label text-danger">{failure}</p> : null}
-        {registry.servers?.length ? (
-          <Group
-            label={t("firms.rowMcp")}
-            count={registry.servers.length}
-            action={
-              <button
-                type="button"
-                data-mcp-add-open
-                onClick={() => { setFailure(null); setAdding(true); }}
-                className="min-h-11 rounded-[12px] px-2 text-label font-semibold text-accent"
-              >
-                {t("mcp.add")}
-              </button>
-            }
-          >
-            {registry.servers.map((server) => (
+        {/* Always rendered, list or no list: an empty registry is exactly when
+            «+ Сервер» is needed, and hanging the button off the rows put it
+            out of reach of the operator who had just removed the last one. */}
+        <Group
+          label={t("firms.rowMcp")}
+          count={registry.servers?.length ?? 0}
+          action={
+            <button
+              type="button"
+              data-mcp-add-open
+              onClick={() => { setFailure(null); setAdding(true); }}
+              className="min-h-11 rounded-[12px] px-2 text-label font-semibold text-accent"
+            >
+              {t("mcp.add")}
+            </button>
+          }
+        >
+          {registry.servers?.length
+            ? registry.servers.map((server) => (
               <ServerRow key={server.name} server={server} onGrant={(row) => { setFailure(null); setPending({ kind: "mcp", item: row.name }); }} />
-            ))}
-          </Group>
-        ) : null}
+            ))
+            : <p className="px-4 py-3 text-label text-muted">{t("mcp.noServers")}</p>}
+        </Group>
         {registry.skills?.length ? (
           <Group label={t("firms.rowSkills")} count={registry.skills.length}>
             {registry.skills.map((skill) => (
@@ -211,7 +214,7 @@ export function McpGrantSheet({
   onClose: () => void;
   onApply: (target: string, revoke: boolean) => Promise<void>;
   /** Present for a server: take it out of the registry entirely. */
-  onRemove?: () => Promise<string | null>;
+  onRemove?: () => Promise<McpRemoveOutcome>;
 }) {
   const { t } = useLocale();
   const [target, setTarget] = useState("");
@@ -231,10 +234,13 @@ export function McpGrantSheet({
   const remove = async () => {
     if (!onRemove || busy) return;
     setBusy(true);
-    const problem = await onRemove();
+    const outcome = await onRemove();
     setBusy(false);
-    if (problem) { setFailure(problem); return; }
-    showReceipt(t("mcp.removed", { name: subject.item }));
+    if (outcome.error) { setFailure(outcome.error); return; }
+    /* The receipt says what it cost. Removal has no inverse here: the console
+       purged the grants and the env and header values went with the server —
+       this page never held them, so there is nothing to put back. */
+    showReceipt(t("mcp.removedDetail", { name: subject.item, count: outcome.grantsCleaned }));
     onClose();
   };
 
@@ -263,6 +269,9 @@ export function McpGrantSheet({
         </button>
       </div>
       {failure ? <p role="status" data-mcp-failure className="pt-2 text-label text-danger">{failure}</p> : null}
+      {onRemove ? (
+        <p className="pt-2 text-caption text-muted">{t("mcp.removeHint")}</p>
+      ) : null}
       {onRemove ? (
         <button
           type="button"
