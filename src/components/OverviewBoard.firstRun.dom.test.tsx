@@ -11,6 +11,7 @@ import type { FileEntry } from "@/lib/types";
 import { setRuntimeUiEnabledForTests } from "@/hooks/runtimeBus";
 import { MOBILE_LAYOUT_QUERY, mobileLayoutViewport } from "@/lib/attention/eligibility";
 
+import { writeMobileHome } from "./mobile/mobileHomeModel";
 import { getMobileNav } from "./mobile/mobileNav";
 import { OverviewBoard } from "./OverviewBoard";
 import { CREATE_PROJECT_FORM_EVENT } from "./ProjectRail";
@@ -153,6 +154,9 @@ test("the create button asks the mounted rail to open the form it already owns",
 
 test("on a phone the same button opens the project switcher sheet, where the create form lives", () => {
   viewportWidth = 390;
+  /* The phone's «Сесії» tab is the console now; the first-run panel is the
+     card board's, so this test stands on the board face. */
+  writeMobileHome("board");
   const requests: string[] = [];
   const listener = () => requests.push("open");
   dom.addEventListener(CREATE_PROJECT_FORM_EVENT, listener);
@@ -178,6 +182,7 @@ test("on a phone the same button opens the project switcher sheet, where the cre
      would hear it. */
   expect(requests).toEqual([]);
   getMobileNav().home();
+  writeMobileHome("console");
 });
 
 test("a board with projects on it renders cards, never the first-run panel", () => {

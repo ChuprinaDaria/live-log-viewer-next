@@ -26,6 +26,9 @@ import { ProjectAccordions } from "./ProjectAccordions";
  *
  * The form is Task 5's `LaunchForm`, mounted `compact`. There is no second
  * "start an agent" form here on purpose: two would drift apart in a week.
+ *
+ * The phone mounts this same console under `compact={false}`: identical
+ * sections, 44px rows. The difference is the finger, not the feature.
  */
 
 export interface ProjectConsoleProps {
@@ -34,6 +37,8 @@ export interface ProjectConsoleProps {
   onOpenFile: (file: FileEntry) => void;
   /** The Viewer's resolver for an archived transcript's path. */
   onOpenTranscript: (path: string) => void;
+  /** Desktop column (32px rows) by default; the phone passes false for 44px. */
+  compact?: boolean;
 }
 
 /** «перенести» remounts the form: `LaunchForm` reads its `initial*` props
@@ -43,7 +48,7 @@ export interface ProjectConsoleProps {
     it FROM there. Empty leaves the source picker open, which is the truth. */
 interface MoveRequest { host: string; tmux: string; nonce: number }
 
-export function ProjectConsole({ project, files, onOpenFile, onOpenTranscript }: ProjectConsoleProps) {
+export function ProjectConsole({ project, files, onOpenFile, onOpenTranscript, compact = true }: ProjectConsoleProps) {
   const { t } = useLocale();
   const [detail, setDetail] = useState<ProjectDetail | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
@@ -74,6 +79,10 @@ export function ProjectConsole({ project, files, onOpenFile, onOpenTranscript }:
   /* One registry read for every row: the mailbox behind each session's
      account id, so «default» never reaches the screen when the address is known. */
   const claudeAccounts = useEngineAccounts("claude");
+  /* The two heights this column sets itself; everything else it renders is
+     either text or a component that takes `compact` and answers for itself. */
+  const rowH = compact ? "min-h-8" : "min-h-11";
+  const buttonH = compact ? "h-7" : "min-h-11";
   const live = projectAgents(files, project).filter((file) => file.activity === "live");
   const hqFile = hqFileOf(files, hq.status);
 
@@ -111,7 +120,7 @@ export function ProjectConsole({ project, files, onOpenFile, onOpenTranscript }:
         <div className="flex items-center gap-2">
           <span className="min-w-0 flex-1 truncate text-[13px] font-bold text-primary">{detail?.name || project}</span>
           <button type="button" data-console-tell-hq disabled={!detail} onClick={() => void tellHq()}
-            className="inline-flex h-7 shrink-0 items-center rounded-[8px] border border-border px-2 text-[11.5px] font-semibold text-secondary hover:border-accent/45 hover:text-accent disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40">
+            className={`inline-flex ${buttonH} shrink-0 items-center rounded-[8px] border border-border px-2 text-[11.5px] font-semibold text-secondary hover:border-accent/45 hover:text-accent disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40`}>
             {t("desktop.tellHq")}
           </button>
         </div>
@@ -126,7 +135,7 @@ export function ProjectConsole({ project, files, onOpenFile, onOpenTranscript }:
         <h3 className="px-1 text-[11px] font-bold uppercase tracking-wide text-muted">{t("desktop.launchTitle")}</h3>
         <LaunchForm
           key={move ? `move-${move.nonce}` : "start"}
-          compact
+          compact={compact}
           initialProject={project}
           initialMode={move ? "move" : "start"}
           {...(move ? { initialSession: { host: move.host, tmux: move.tmux } } : {})}
@@ -139,7 +148,7 @@ export function ProjectConsole({ project, files, onOpenFile, onOpenTranscript }:
           <p className="px-1 text-[11.5px] text-muted">{t("desktop.noAgents")}</p>
         ) : (
           <ul className="flex flex-col gap-1">
-            {live.map((file) => <AgentRow key={file.path} file={file} onOpenFile={onOpenFile}
+            {live.map((file) => <AgentRow key={file.path} file={file} onOpenFile={onOpenFile} rowH={rowH} buttonH={buttonH}
               accountName={accountDisplayName(claudeAccounts.accounts, accountIdFromPath(file.path))}
               onMove={() => setMove({ host: machineOf(file), tmux: "", nonce: Date.now() })} />)}
           </ul>
@@ -151,26 +160,26 @@ export function ProjectConsole({ project, files, onOpenFile, onOpenTranscript }:
           the tree switches A→B without unmounting this column, so without the
           key B renders A's git state under B's name. */}
       <ProjectAccordions key={project} project={project} detail={detail} onChanged={() => void reload()}
-        onOpenTranscript={onOpenTranscript} />
+        onOpenTranscript={onOpenTranscript} compact={compact} />
     </section>
   );
 }
 
-function AgentRow({ file, accountName, onOpenFile, onMove }: { file: FileEntry; accountName: string; onOpenFile: (file: FileEntry) => void; onMove: () => void }) {
+function AgentRow({ file, accountName, onOpenFile, onMove, rowH, buttonH }: { file: FileEntry; accountName: string; onOpenFile: (file: FileEntry) => void; onMove: () => void; rowH: string; buttonH: string }) {
   const { t } = useLocale();
   const machine = machineOf(file);
   const meta = [engineLabel(file.engine), file.model].filter(Boolean).join(" · ");
   return (
     <li className="flex items-center gap-1">
       <button type="button" data-console-agent={file.path} onClick={() => onOpenFile(file)}
-        className="flex min-h-8 min-w-0 flex-1 flex-col items-start rounded-[8px] px-2 py-1 text-left hover:bg-quiet focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40">
+        className={`flex ${rowH} min-w-0 flex-1 flex-col items-start justify-center rounded-[8px] px-2 py-1 text-left hover:bg-quiet focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40`}>
         <span className="w-full truncate text-[12.5px] text-primary">{cleanTitle(file.title)}</span>
         <span className="w-full truncate text-[11px] text-muted">
           {[meta, accountName === DEFAULT_ACCOUNT_ID ? "" : accountName, machine, fmtAge(file.mtime)].filter(Boolean).join(" · ")}
         </span>
       </button>
       <button type="button" data-console-move={file.path} onClick={onMove}
-        className="inline-flex h-7 shrink-0 items-center rounded-[8px] border border-border px-2 text-[11px] text-secondary hover:border-accent/45 hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40">
+        className={`inline-flex ${buttonH} shrink-0 items-center rounded-[8px] border border-border px-2 text-[11px] text-secondary hover:border-accent/45 hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40`}>
         {t("desktop.move")}
       </button>
     </li>

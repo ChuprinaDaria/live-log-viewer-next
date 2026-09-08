@@ -1096,6 +1096,7 @@ export function Viewer() {
             onSelectProject={selectProject}
             onSelectFile={openFile}
             onOpenSearch={openSearch}
+            onOpenTranscript={openTranscriptFromHome}
             mobileShell={mobileShell}
           />
         ) : (

@@ -11,6 +11,7 @@ import type { FileEntry } from "@/lib/types";
 import { setRuntimeUiEnabledForTests } from "@/hooks/runtimeBus";
 import { MOBILE_LAYOUT_QUERY, mobileLayoutViewport } from "@/lib/attention/eligibility";
 
+import { writeMobileHome } from "./mobile/mobileHomeModel";
 import { getMobileNav } from "./mobile/mobileNav";
 import { MobileProjectSheet } from "./mobile/MobileProjectSheet";
 import type { MobileShellHost } from "./mobile/MobileShell";
@@ -234,6 +235,9 @@ test("on a phone one tap on the overview's button reaches the open form", () => 
      renders, and that sheet arrives with its create form already open on a
      first run. */
   viewportWidth = 390;
+  /* The overview's first-run panel belongs to the card board, one of the tab's
+     two faces since the console landed. */
+  writeMobileHome("board");
   const container = dom.document.createElement("div");
   dom.document.body.appendChild(container);
   root = createRoot(container as unknown as Element);
@@ -281,6 +285,7 @@ test("on a phone one tap on the overview's button reaches the open form", () => 
   click(page.querySelector('[data-mobile2-project-create="open"]') as unknown as HTMLElement);
   expect(page.querySelector("[data-mobile2-project-form]")).toBeNull();
   act(() => getMobileNav().home());
+  writeMobileHome("console");
 });
 
 test("a desktop rail does not open the form until it is asked", () => {
