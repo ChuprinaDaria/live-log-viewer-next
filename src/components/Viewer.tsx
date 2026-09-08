@@ -186,7 +186,7 @@ export function Viewer() {
     return stable;
   }, [files, project]);
   useEffect(() => {
-    publishConversationAvailability(new Set(allFiles.flatMap((file) => file.conversationId ? [file.conversationId] : [])));
+    publishConversationAvailability(new Set(allFiles.flatMap((file) => file.conversationId ? [file.conversationId] : [])), allFiles);
   }, [allFiles]);
   /* This tab's optimistic flow closes apply before anything renders: the X
      on a flow strip clears the reviewer side of the scheme instantly. */

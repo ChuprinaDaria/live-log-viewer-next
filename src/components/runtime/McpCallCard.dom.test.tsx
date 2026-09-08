@@ -72,7 +72,8 @@ test("renders a pending MCP call with a live CSS progress treatment", () => {
   const container = render(toolEvent(), new Set());
   const card = container.querySelector('[data-testid="mcp-call-card"]');
   expect(card?.getAttribute("data-state")).toBe("pending");
-  expect(card?.textContent).toContain("Creating agent: gpt-5.6-sol xhigh reviewer · Review PR #431");
+  expect(card?.textContent).toContain("Create agent:");
+  expect(card?.textContent).toContain("Review PR #431");
   expect(container.querySelector('[data-testid="mcp-call-progress"]')?.className).toContain("animate-pulse");
 });
 
@@ -99,7 +100,7 @@ test("renders success and upgrades a disabled conversation chip when scanning ca
   const ready = container.querySelector('[data-testid="mcp-link-conversation"]');
   expect(ready?.getAttribute("href")).toBe("#c=conversation-431");
   expect(ready?.getAttribute("aria-disabled")).toBeNull();
-  expect(container.textContent).toContain("Open agent");
+  expect(container.textContent).toContain("Open conversation");
   expect(container.textContent).toContain("750ms");
 });
 
@@ -128,7 +129,7 @@ test("renders structured MCP failures with their error text", () => {
   const card = container.querySelector('[data-testid="mcp-call-card"]');
   expect(card?.getAttribute("data-state")).toBe("error");
   expect(card?.textContent).toContain("MCP process restarted during the call");
-  expect(card?.textContent).toContain("Retryable");
+  expect(card?.querySelector('[role="alert"]')?.textContent).toContain("MCP process restarted during the call");
 });
 
 test("marks an idempotent replay in the completed card", () => {

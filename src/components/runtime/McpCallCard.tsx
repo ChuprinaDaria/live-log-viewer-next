@@ -29,6 +29,10 @@ import {
   type McpCallLink,
 } from "@/lib/mcp/presentation";
 
+import { agentAction } from "@/lib/mcp/agentAction";
+import { useLocale } from "@/lib/i18n";
+import { AgentActionCard } from "./AgentActionCard";
+
 import type { ToolEvent } from "../feed/parse";
 import { formatDuration, toolDurationMs } from "../feed/toolBlocks";
 import { hhmm } from "../utils";
@@ -127,6 +131,7 @@ export function McpCallCard({
   event: ToolEvent;
   availableConversationIds?: ReadonlySet<string>;
 }) {
+  const { t } = useLocale();
   const mcp = event.mcp;
   const result = mcp?.result;
   const description = useMemo(
@@ -140,8 +145,24 @@ export function McpCallCard({
   const retryable = record(result).retryable === true;
   const error = state === "error" ? resultError(result, event.outputPreview) : "";
   const payload = useMemo(() => prettyPayload(mcp?.args ?? {}, result), [mcp?.args, result]);
+  const action = agentAction(mcp?.toolName ?? event.tool, mcp?.args, result, event.status);
+  const target = action ? conversationAvailability.targets?.get(action.target || action.path) : undefined;
   const durationMs = toolDurationMs(event);
   const duration = durationMs === undefined ? "" : formatDuration(durationMs);
+
+  if (action) {
+    const id = action.target || target?.id;
+    const link: McpCallLink | null = id ? { kind: "conversation", id, label: t("agentAction.open"), href: `#c=${encodeURIComponent(id)}` } : null;
+    return <AgentActionCard
+      action={action}
+      event={event}
+      name={target?.name || action.title || action.project || (action.target ? `${t("agentAction.agent")} · ${action.target.slice(-8)}` : t("agentAction.agent"))}
+      links={link ? <LinkChip link={link} conversationAvailability={conversationAvailability} /> : null}
+      payload={payload}
+      metadata={<>{replayed ? <span data-testid="mcp-replay">{t("agentAction.replay")}</span> : null}{duration ? <span className="ml-2">{duration}</span> : null}</>}
+      error={action.state === "failed" ? resultError(result, event.outputPreview) : ""}
+    />;
+  }
 
   /* Compact contract: one dense row — action meaning first, chrome last.
      The title (which already carries the useful payload, e.g. the message text
@@ -152,7 +173,7 @@ export function McpCallCard({
   return (
     <article data-testid="mcp-call-card" data-state={state} className="group/mcp relative my-1 ml-9">
       {state === "pending" ? (
-        <div data-testid="mcp-call-progress" className="absolute inset-x-0 top-0 h-0.5 animate-pulse bg-gradient-to-r from-transparent via-accent to-transparent" />
+        <div data-testid="mcp-call-progress" className="absolute inset-x-0 top-0 h-0.5 animate-pulse bg-accent/30" />
       ) : null}
       <details className="min-w-0">
         <summary className="flex min-w-0 cursor-pointer list-none flex-wrap items-center gap-x-2 gap-y-0.5 rounded-control py-0.5 text-ui hover:bg-sunken [@media(pointer:coarse)]:min-h-11 [&::-webkit-details-marker]:hidden">
