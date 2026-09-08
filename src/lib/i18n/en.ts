@@ -2893,7 +2893,7 @@ export const en = {
   "archive.noCard": "no summary yet",
   "archive.resumable": "can be resumed",
   "archive.transcript": "full transcript",
-  "archive.transcriptElsewhere": "transcript is on another machine",
+  "archive.showing": "showing {shown} of {total}",
   "archive.did": "Did",
   "archive.broke": "Broke",
   "archive.decided": "Decided",

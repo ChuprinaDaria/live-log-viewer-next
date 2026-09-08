@@ -1,4 +1,4 @@
-import { afterEach, expect, mock, test } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
 import { Window } from "happy-dom";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -38,24 +38,15 @@ afterEach(() => {
   root = null; container = null;
 });
 
-import type { FileEntry } from "@/lib/types";
 import { setLocale } from "@/lib/i18n";
+import { ArchiveScreen } from "./ArchiveScreen";
 
 /*
  * The archive screen (task 9): sessionmem's cards grouped machine → project.
- * Only the local transcript can be opened here — a card pulled from another
- * machine says so instead of offering a button that would resolve to nothing.
+ * Every card's transcript button is live — `/api/files` is a recency-capped
+ * board budget, so gating it on that feed disabled it for nearly every
+ * archived session that is right here on disk.
  */
-
-function entry(over: Partial<FileEntry>): FileEntry {
-  return { path: "/w/.claude/projects/-w-fleet/s1.jsonl", root: "claude-projects", name: "s1.jsonl", project: "fleet", title: "A", engine: "claude", kind: "session", fmt: "jsonl", parent: null, mtime: 100, size: 1, activity: "idle", proc: null, pid: null, model: null, pendingQuestion: null, ...over } as FileEntry;
-}
-
-const actualUseFiles = await import("@/hooks/useFiles");
-let mountedFiles: FileEntry[] = [];
-mock.module("@/hooks/useFiles", () => ({ ...actualUseFiles, useFiles: () => ({ files: mountedFiles }) }));
-
-const { ArchiveScreen } = await import("./ArchiveScreen");
 
 const CARDS = [
   {
@@ -82,14 +73,13 @@ function serve(body: unknown, status = 200) {
     return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
   }) as typeof fetch;
 }
-afterEach(() => { globalThis.fetch = realFetch; asked = []; mountedFiles = []; });
+afterEach(() => { globalThis.fetch = realFetch; asked = []; });
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
-test("groups by machine and project, badges what can be resumed, opens the local transcript only", async () => {
+test("groups by machine and project, badges what can be resumed, and opens any transcript", async () => {
   setLocale("uk");
-  mountedFiles = [entry({})];
-  serve({ cards: CARDS });
+  serve({ cards: CARDS, total: CARDS.length });
   const el = mount(<ArchiveScreen host={null} />);
   await act(flush); await act(flush);
 
@@ -116,19 +106,46 @@ test("groups by machine and project, badges what can be resumed, opens the local
   /* The card sessionmem never summarised says so, honestly. */
   expect((el.querySelector('[data-archive-card="s2"]') as HTMLElement).textContent).toContain("самарі ще не зроблено");
 
+  /* Nothing in the catalog was mocked, and both buttons are still live: the
+     archive does not ask the board feed for permission to open a transcript. */
   const local = el.querySelector('[data-archive-transcript="s1"]') as HTMLButtonElement;
+  const pulled = el.querySelector('[data-archive-transcript="s2"]') as HTMLButtonElement;
   expect(local.disabled).toBe(false);
-  const elsewhere = el.querySelector('[data-archive-transcript="s2"]') as HTMLButtonElement;
-  expect(elsewhere.disabled).toBe(true);
-  expect(elsewhere.getAttribute("title")).toContain("транскрипт на іншій машині");
+  expect(pulled.disabled).toBe(false);
 
   act(() => { local.click(); });
   expect(dom.location.hash).toBe("#f=" + encodeURIComponent("/w/.claude/projects/-w-fleet/s1.jsonl"));
+  act(() => { pulled.click(); });
+  expect(dom.location.hash).toBe("#f=" + encodeURIComponent("/w/state/pulled/walter/p/s2.jsonl"));
+
+  /* The whole archive fits, so nothing is claimed about what is not shown. */
+  expect(el.querySelector("[data-archive-showing]")).toBeNull();
+});
+
+test("a capped page says how much of the archive it is showing", async () => {
+  setLocale("uk");
+  serve({ cards: CARDS, total: 317 });
+  const el = mount(<ArchiveScreen host={null} />);
+  await act(flush); await act(flush);
+  const showing = el.querySelector("[data-archive-showing]");
+  expect(showing).not.toBeNull();
+  expect(showing!.textContent).toBe("показано 2 з 317");
+});
+
+test("a machine sessionmem could not name gets no heading instead of an empty one", async () => {
+  setLocale("uk");
+  serve({ cards: [{ ...CARDS[0]!, host: "" }], total: 1 });
+  const el = mount(<ArchiveScreen host={null} />);
+  await act(flush); await act(flush);
+  const section = el.querySelector('[data-archive-host=""]');
+  expect(section).not.toBeNull();
+  expect(section!.querySelector("h2")).toBeNull();
+  expect(el.querySelector('[data-archive-card="s1"]')).not.toBeNull();
 });
 
 test("an empty archive says so, and a project filter is asked for by name", async () => {
   setLocale("uk");
-  serve({ cards: [] });
+  serve({ cards: [], total: 0 });
   const el = mount(<ArchiveScreen host={null} project="bot" />);
   await act(flush); await act(flush);
   expect(asked.filter((url) => url.startsWith("/api/archive"))).toEqual(["/api/archive?project=bot"]);

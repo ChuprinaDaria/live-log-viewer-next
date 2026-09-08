@@ -2805,7 +2805,7 @@ export const uk: Record<keyof typeof en, Message> = {
   "archive.noCard": "самарі ще не зроблено",
   "archive.resumable": "можна продовжити",
   "archive.transcript": "повний транскрипт",
-  "archive.transcriptElsewhere": "транскрипт на іншій машині",
+  "archive.showing": "показано {shown} з {total}",
   "archive.did": "Зробили",
   "archive.broke": "Зламалось",
   "archive.decided": "Вирішили",

@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { MobileBarTitle, MobileShell, type MobileShellHost, type SheetRenderer } from "@/components/mobile/MobileShell";
-import { useFiles } from "@/hooks/useFiles";
 import { useLocale } from "@/lib/i18n";
 import type { ArchiveCard } from "@/lib/archive/sessionmemArchive";
 
@@ -30,18 +29,21 @@ export function ArchiveScreen({
 }) {
   const { t } = useLocale();
   const [cards, setCards] = useState<ArchiveCard[] | null>(null);
+  /* How many sessions the archive actually holds for this filter. The list is
+     capped, so «317» in the tree and 200 on screen is a difference the screen
+     has to say out loud rather than swallow. */
+  const [total, setTotal] = useState(0);
   const [failed, setFailed] = useState(false);
-  /* The catalog the deep link resolves against: it decides whether a card's
-     transcript can be opened on this machine at all. */
-  const { files } = useFiles();
 
   const url = project ? `/api/archive?project=${encodeURIComponent(project)}` : "/api/archive";
   const load = useCallback(async () => {
     try {
       const response = await fetch(url, { cache: "no-store" });
       if (!response.ok) { setFailed(true); return; }
-      const body = await response.json() as { cards?: ArchiveCard[] };
-      setCards(body.cards ?? []);
+      const body = await response.json() as { cards?: ArchiveCard[]; total?: number };
+      const page = body.cards ?? [];
+      setCards(page);
+      setTotal(typeof body.total === "number" ? body.total : page.length);
       setFailed(false);
     } catch {
       setFailed(true);
@@ -58,19 +60,26 @@ export function ArchiveScreen({
         {failed ? <p className="text-body text-muted">{t("archive.unavailable")}</p>
           : cards === null ? <p className="text-body text-muted">{t("common.loading")}</p>
           : groups.length === 0 ? <p className="text-body text-muted">{t("archive.empty")}</p>
-          : groups.map((group) => (
+          : <>
+            {cards.length < total ? (
+              <p data-archive-showing className="text-label text-muted">{t("archive.showing", { shown: cards.length, total })}</p>
+            ) : null}
+            {groups.map((group) => (
               <section key={group.host} data-archive-host={group.host} className="flex flex-col gap-2">
-                <h2 className="text-label font-bold uppercase tracking-wide text-muted">{group.host}</h2>
+                {/* A machine sessionmem could not name gets no heading rather
+                    than an empty one. */}
+                {group.host ? <h2 className="text-label font-bold uppercase tracking-wide text-muted">{group.host}</h2> : null}
                 {group.projects.map((entry) => (
                   <div key={entry.project} data-archive-project={entry.project} className="flex flex-col gap-1">
                     <h3 className="text-body font-semibold text-secondary">{entry.project || t("desktop.unassigned")}</h3>
                     {entry.cards.map((card) => (
-                      <ArchiveCardView key={card.sessionId} card={card} files={files} />
+                      <ArchiveCardView key={card.sessionId} card={card} />
                     ))}
                   </div>
                 ))}
               </section>
             ))}
+          </>}
       </div>
     </MobileShell>
   );

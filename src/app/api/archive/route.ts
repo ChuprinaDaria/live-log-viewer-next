@@ -54,13 +54,16 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
     /* No path, no honest filter: an unbound project owns no sessions here. */
     if (cwdPrefixes.length === 0) {
-      return NextResponse.json(count ? { count: 0 } : { cards: [] }, { headers });
+      return NextResponse.json(count ? { count: 0 } : { cards: [], total: 0 }, { headers });
     }
   }
 
   try {
+    /* A list answer carries how many sessions the filter matched as well as the
+       page itself: the page is capped, and a screen that only knew its own
+       length would silently drop the rest. */
     return NextResponse.json(
-      count ? { count: await countArchive({ cwdPrefixes }) } : { cards: await readArchive({ cwdPrefixes }) },
+      count ? { count: await countArchive({ cwdPrefixes }) } : await readArchive({ cwdPrefixes }),
       { headers },
     );
   } catch (error) {

@@ -4,7 +4,6 @@ import { transcriptFocusHash } from "@/components/search/GlobalSearch";
 import { fmtAge } from "@/components/utils";
 import { useLocale } from "@/lib/i18n";
 import type { ArchiveCard } from "@/lib/archive/sessionmemArchive";
-import type { FileEntry } from "@/lib/types";
 
 /*
  * One archived session: shut, it is a title, an age and — when `claude
@@ -14,12 +13,8 @@ import type { FileEntry } from "@/lib/types";
  * Split out of ArchiveScreen so the screen stays about grouping and fetching.
  */
 
-export function ArchiveCardView({ card, files }: { card: ArchiveCard; files: readonly FileEntry[] }) {
+export function ArchiveCardView({ card }: { card: ArchiveCard }) {
   const { t } = useLocale();
-  /* The deep link resolves against the Viewer's own catalog, so a transcript
-     that is not in it cannot be opened — a card pulled from another machine
-     says so instead of offering a button that would land nowhere. */
-  const local = card.transcriptPath ? files.some((file) => file.path === card.transcriptPath) : false;
   const lists = [
     { label: t("archive.did"), items: card.did },
     { label: t("archive.broke"), items: card.broke },
@@ -52,13 +47,18 @@ export function ArchiveCardView({ card, files }: { card: ArchiveCard; files: rea
         </div>
       ))}
 
+      {/* Always live. `/api/files` is a recency-capped BOARD budget, so most
+          archived transcripts are absent from it while sitting right here on
+          disk — gating the button on that feed disabled it for nearly every
+          card. The `#f=` deep link goes to the Viewer's own resolver, whose pin
+          ride-along fetches a transcript outside the feed; one that is really
+          gone gets the Viewer's stale-focus notice, which is its job, not
+          this button's guess. */}
       <button
         type="button"
         data-archive-transcript={card.sessionId}
-        disabled={!local}
-        title={local ? undefined : t("archive.transcriptElsewhere")}
         onClick={() => { if (card.transcriptPath) window.location.hash = transcriptFocusHash(card.transcriptPath); }}
-        className="mt-1.5 inline-flex h-8 items-center rounded-[8px] border border-border px-2 text-label font-semibold text-secondary hover:border-accent/45 hover:text-accent disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-border disabled:hover:text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+        className="mt-1.5 inline-flex h-8 items-center rounded-[8px] border border-border px-2 text-label font-semibold text-secondary hover:border-accent/45 hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
       >
         {t("archive.transcript")}
       </button>

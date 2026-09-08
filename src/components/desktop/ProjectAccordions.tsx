@@ -5,9 +5,9 @@ import { useCallback, useState } from "react";
 import type { ProjectDetail } from "@/components/mobile/firmsModel";
 import { useMcpRegistry, type McpRegistryRead } from "@/components/mobile/mcpModel";
 import { shareSecret, useSecretsInventory, type SecretsRead } from "@/components/mobile/secretsModel";
+import { transcriptFocusHash } from "@/components/search/GlobalSearch";
 import { fmtAge } from "@/components/utils";
 import { useLocale } from "@/lib/i18n";
-import type { FileEntry } from "@/lib/types";
 
 import { effectiveRows, effectiveSecretRows, type EffectiveRow } from "./desktopHomeModel";
 
@@ -24,8 +24,6 @@ import { effectiveRows, effectiveSecretRows, type EffectiveRow } from "./desktop
 export interface ProjectAccordionsProps {
   project: string;
   detail: ProjectDetail | null;
-  files: readonly FileEntry[];
-  onOpenFile: (file: FileEntry) => void;
   onChanged: () => void;
 }
 
@@ -61,7 +59,7 @@ type Kind = "mcp" | "skills" | "secrets";
 const SUMMARY = "flex min-h-8 cursor-pointer list-none items-center px-2 text-[11.5px] font-semibold text-secondary hover:text-accent";
 const CHIP = "inline-flex h-6 shrink-0 items-center rounded-[6px] border border-border px-1.5 text-[11px] text-secondary hover:border-accent/45 hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40";
 
-export function ProjectAccordions({ project, detail, files, onOpenFile, onChanged }: ProjectAccordionsProps) {
+export function ProjectAccordions({ project, detail, onChanged }: ProjectAccordionsProps) {
   const { t } = useLocale();
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [archive, setArchive] = useState<ArchiveCard[] | null>(null);
@@ -113,7 +111,7 @@ export function ProjectAccordions({ project, detail, files, onOpenFile, onChange
           : archive === null ? <p className="text-[11.5px] text-muted">{t("common.loading")}</p>
           : archive.length === 0 ? <p className="text-[11.5px] text-muted">{t("archive.empty")}</p>
           : <ul className="flex flex-col gap-1">{archive.map((card) => (
-              <li key={card.sessionId}><ArchiveEntry card={card} files={files} onOpenFile={onOpenFile} /></li>
+              <li key={card.sessionId}><ArchiveEntry card={card} /></li>
             ))}</ul>}
       </Accordion>
 
@@ -155,9 +153,8 @@ function Accordion({ name, label, open, onToggle, children }: {
   );
 }
 
-function ArchiveEntry({ card, files, onOpenFile }: { card: ArchiveCard; files: readonly FileEntry[]; onOpenFile: (file: FileEntry) => void }) {
+function ArchiveEntry({ card }: { card: ArchiveCard }) {
   const { t } = useLocale();
-  const transcript = card.transcriptPath ? files.find((file) => file.path === card.transcriptPath) ?? null : null;
   const lists: { label: string; items: string[] }[] = [
     { label: t("archive.did"), items: card.did },
     { label: t("archive.broke"), items: card.broke },
@@ -183,13 +180,14 @@ function ArchiveEntry({ card, files, onOpenFile }: { card: ArchiveCard; files: r
           </ul>
         </div>
       ))}
-      {transcript ? (
-        <button type="button" data-console-transcript={card.sessionId} className={`${CHIP} mt-1`} onClick={() => onOpenFile(transcript)}>
-          {t("archive.transcript")}
-        </button>
-      ) : (
-        <p className="pt-1 text-[11px] text-muted">{t("archive.transcriptElsewhere")}</p>
-      )}
+      {/* `/api/files` is a recency-capped board budget, so an archived
+          transcript is usually absent from it while sitting right here on
+          disk. The deep link goes to the Viewer's own resolver, which fetches
+          a transcript outside the feed and says so itself when there is none. */}
+      <button type="button" data-console-transcript={card.sessionId} className={`${CHIP} mt-1`}
+        onClick={() => { if (card.transcriptPath) window.location.hash = transcriptFocusHash(card.transcriptPath); }}>
+        {t("archive.transcript")}
+      </button>
     </details>
   );
 }

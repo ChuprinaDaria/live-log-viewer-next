@@ -86,10 +86,17 @@ describe("readArchive", () => {
     const seen: string[] = [];
     const cards = await readArchive({ cwdPrefixes: ["/w/fleet"], limit: 5 }, async (payload) => {
       seen.push(payload);
-      return JSON.stringify({ host: "ryzen", rows: [row(), row({ session_id: "s2", transcript_path: "/w/state/pulled/pi/p/s2.jsonl" })] });
+      return JSON.stringify({ host: "ryzen", total: 9, rows: [row(), row({ session_id: "s2", transcript_path: "/w/state/pulled/pi/p/s2.jsonl" })] });
     });
     expect(JSON.parse(seen[0]!)).toEqual({ cwdPrefixes: ["/w/fleet"], limit: 5, count: false });
-    expect(cards.map((card) => [card.sessionId, card.host])).toEqual([["s1", "ryzen"], ["s2", "pi"]]);
+    expect(cards.cards.map((card) => [card.sessionId, card.host])).toEqual([["s1", "ryzen"], ["s2", "pi"]]);
+    /* The page is capped; the screen has to be able to say how much it is not showing. */
+    expect(cards.total).toBe(9);
+  });
+
+  test("without a total from the script, the page is all there is", async () => {
+    const page = await readArchive({}, async () => JSON.stringify({ host: "h", rows: [row()] }));
+    expect(page.total).toBe(1);
   });
 
   test("caps the limit and defaults it, so one request cannot ask for the whole database", async () => {
@@ -101,7 +108,7 @@ describe("readArchive", () => {
   });
 
   test("an unreadable answer is an error, not an empty archive", async () => {
-    expect(readArchive({}, async () => "not json")).rejects.toThrow();
+    await expect(readArchive({}, async () => "not json")).rejects.toThrow();
   });
 });
 

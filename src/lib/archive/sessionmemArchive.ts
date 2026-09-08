@@ -81,14 +81,18 @@ opts = json.loads(sys.argv[1])
 prefixes = [p for p in (opts.get("cwdPrefixes") or []) if isinstance(p, str) and p]
 db = index.connect()
 
+# A prefix must stop at a path boundary: a bare LIKE 'p%' also matches
+# /w/fleet-old for /w/fleet. The boundary is "/", which LIKE never treats as a
+# wildcard, so no ESCAPE clause is needed.
 where, params = "", []
 if prefixes:
-    where = " WHERE " + " OR ".join(["cwd LIKE ? || '%'"] * len(prefixes))
-    params = list(prefixes)
+    where = " WHERE " + " OR ".join(["(cwd = ? OR cwd LIKE ? || '/%')"] * len(prefixes))
+    for prefix in prefixes:
+        params += [prefix.rstrip("/"), prefix.rstrip("/")]
 
+total = db.execute("SELECT COUNT(*) FROM sessions" + where, params).fetchone()[0]
 if opts.get("count"):
-    n = db.execute("SELECT COUNT(*) FROM sessions" + where, params).fetchone()[0]
-    print(json.dumps({"count": n}))
+    print(json.dumps({"count": total}))
     raise SystemExit(0)
 
 rows = db.execute(
@@ -120,7 +124,7 @@ for r in rows:
         "decided": card.get("decided", []),
         "left": card.get("left", []),
     })
-print(json.dumps({"host": os.uname().nodename, "rows": out}, ensure_ascii=False))
+print(json.dumps({"host": os.uname().nodename, "total": total, "rows": out}, ensure_ascii=False))
 `;
 
 export function sessionmemInstalled(): boolean {
@@ -205,14 +209,23 @@ function payloadFor(options: ArchiveOptions, count: boolean): string {
   return JSON.stringify({ cwdPrefixes: [...(options.cwdPrefixes ?? [])], limit, count });
 }
 
-export async function readArchive(options: ArchiveOptions, run: ArchivePython = runPython): Promise<ArchiveCard[]> {
+/** The page of cards, and how many sessions the filter actually matched: the
+    list is capped, so a screen that showed only the page would quietly drop the
+    rest. */
+export interface ArchivePage {
+  cards: ArchiveCard[];
+  total: number;
+}
+
+export async function readArchive(options: ArchiveOptions, run: ArchivePython = runPython): Promise<ArchivePage> {
   const answer = lastLine(await run(payloadFor(options, false)));
   if (typeof answer !== "object" || answer === null) throw new Error("sessionmem: unreadable answer");
-  const { host, rows, error } = answer as { host?: unknown; rows?: unknown; error?: unknown };
+  const { host, rows, total, error } = answer as { host?: unknown; rows?: unknown; total?: unknown; error?: unknown };
   if (typeof error === "string") throw new Error(`sessionmem: ${error}`);
   if (!Array.isArray(rows)) throw new Error("sessionmem: unreadable answer");
   const fallback = typeof host === "string" && host ? host : "";
-  return rows.map((row) => cardFromRow(row, fallback)).filter((card): card is ArchiveCard => card !== null);
+  const cards = rows.map((row) => cardFromRow(row, fallback)).filter((card): card is ArchiveCard => card !== null);
+  return { cards, total: typeof total === "number" && Number.isFinite(total) ? total : cards.length };
 }
 
 export async function countArchive(options: ArchiveOptions, run: ArchivePython = runPython): Promise<number> {

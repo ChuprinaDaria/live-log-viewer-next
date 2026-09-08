@@ -77,8 +77,12 @@ const gets: string[] = [];
 /** What `/api/tmux` answers, so a refused delivery can be exercised. */
 let tmuxAnswer: { status: number; body: unknown } = { status: 200, body: { ok: true } };
 
+/** The archive answer for the next mount: `null` makes the route fail, which
+    is the branch the first test asserts. */
+let archiveAnswer: unknown = null;
+
 function get(url: string): unknown {
-  if (url.startsWith("/api/archive")) return null;
+  if (url.startsWith("/api/archive")) return archiveAnswer;
   if (url.startsWith("/api/projects") && url.includes("code=1")) return CODE;
   if (url.startsWith("/api/projects?project=")) return DETAIL;
   if (url.startsWith("/api/projects")) return { projects: [{ id: "bot", name: "bot", firm: "noologic", parent: null, grants: { mcp: [], skills: [] }, secrets: [], rules: 0 }] };
@@ -108,7 +112,7 @@ const fakeFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 /* Re-installed per test: restoring the real fetch once and never putting the
    fake back left every test after the first talking to the host. */
 beforeEach(() => { globalThis.fetch = fakeFetch; });
-afterEach(() => { posts.length = 0; gets.length = 0; tmuxAnswer = { status: 200, body: { ok: true } }; });
+afterEach(() => { posts.length = 0; gets.length = 0; tmuxAnswer = { status: 200, body: { ok: true } }; archiveAnswer = null; });
 afterAll(() => { globalThis.fetch = realFetch; });
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -221,4 +225,26 @@ test("«Сказати HQ» stays disabled until the project has been read", asy
   expect((el.querySelector("[data-console-tell-hq]") as HTMLButtonElement).disabled).toBe(true);
   await settle();
   expect((el.querySelector("[data-console-tell-hq]") as HTMLButtonElement).disabled).toBe(false);
+});
+
+test("an archived card opens its transcript through the app's own deep link", async () => {
+  setLocale("uk");
+  /* The board feed is capped, so an archived transcript is usually not in it.
+     The button is live anyway and hands the path to the Viewer's resolver. */
+  archiveAnswer = { total: 1, cards: [{
+    sessionId: "s1", title: "Індексатор", host: "walter", endedAt: 1_700_000_000, resumable: false,
+    transcriptPath: "/pulled/walter/bot-old.jsonl",
+    summary: "Полагодили лічильник.", did: [], broke: [], decided: [], left: [],
+  }] };
+  const el = mount(<ProjectConsole project="bot" files={FILES} onOpenFile={() => {}} />);
+  await settle();
+  openAccordion(el, "old");
+  await settle();
+
+  const card = el.querySelector('[data-console-archive-card="s1"]') as HTMLElement;
+  expect(card.textContent).toContain("Полагодили лічильник.");
+  const transcript = el.querySelector('[data-console-transcript="s1"]') as HTMLButtonElement;
+  expect(transcript.disabled).toBe(false);
+  act(() => { transcript.click(); });
+  expect(dom.location.hash).toBe("#f=" + encodeURIComponent("/pulled/walter/bot-old.jsonl"));
 });

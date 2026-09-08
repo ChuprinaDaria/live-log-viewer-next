@@ -140,7 +140,7 @@ export function ProjectConsole({ project, files, onOpenFile }: ProjectConsolePro
           branch sits on which machine, which cards the archive returned — and
           the tree switches A→B without unmounting this column, so without the
           key B renders A's git state under B's name. */}
-      <ProjectAccordions key={project} project={project} detail={detail} files={files} onOpenFile={onOpenFile} onChanged={() => void reload()} />
+      <ProjectAccordions key={project} project={project} detail={detail} onChanged={() => void reload()} />
     </section>
   );
 }
