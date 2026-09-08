@@ -518,7 +518,7 @@ export async function executeSpawnRequest(
        name their private chats, and the issue's fence keeps registry rows down
        to status, window and error code. The board card still reads its title
        from the scanned transcript, whose first line names the run. */
-    const launchDisplay = (!reportClassGrant && (userPrompt.trim() || images.length))
+    const launchDisplay = (!reportClassGrant && !hqClassGrant && (userPrompt.trim() || images.length))
       ? { ["prompt"]: userPrompt, images: images.length, echo: prompt }
       : null;
     /* Both a runnable launch and an explicit-account preflight failure reserve

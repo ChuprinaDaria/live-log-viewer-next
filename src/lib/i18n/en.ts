@@ -2717,13 +2717,14 @@ export const en = {
   "mobile2.pipeline.reviewTranscript": "review transcript · round {n}",
   "mobile2.pipeline.openReviewTranscript": "Open the review transcript of round {n}",
   /* TZ-UI.md — the Чат tab as the project room (slice 1). */
-  "mobile2.chat.agents": "Project agents",
-  "mobile2.chat.openAgent": "Open {title}",
-  "mobile2.chat.mention": "Mention an agent",
   "mobile2.hq.name": "Orchestrator",
+  "mobile2.hq.placeholder": "what are we doing?",
+  "mobile2.hq.engine": "Engine",
+  "mobile2.hq.model": "Model",
+  "mobile2.hq.effort": "Reasoning",
+  "mobile2.hq.accountDefault": "default",
   "mobile2.hq.vacant": "The fleet orchestrator is not running yet.",
   "mobile2.hq.start": "Start the orchestrator",
   "mobile2.hq.starting": "The orchestrator is starting…",
   "mobile2.hq.unreachable": "The server is not answering — the orchestrator’s status is unknown.",
-  "mobile2.chat.mentionTitle": "Mention an agent",
 } satisfies Dictionary;

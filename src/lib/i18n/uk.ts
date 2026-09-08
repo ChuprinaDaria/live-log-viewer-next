@@ -2629,13 +2629,14 @@ export const uk: Record<keyof typeof en, Message> = {
   "mobile2.pipeline.reviewTranscript": "транскрипт рев’ю · раунд {n}",
   "mobile2.pipeline.openReviewTranscript": "Відкрити транскрипт рев’ю раунду {n}",
   /* TZ-UI.md — the Чат tab as the project room (slice 1). */
-  "mobile2.chat.agents": "Агенти проєкту",
-  "mobile2.chat.openAgent": "Відкрити {title}",
-  "mobile2.chat.mention": "Згадати агента",
   "mobile2.hq.name": "Оркестратор",
+  "mobile2.hq.placeholder": "що робимо?",
+  "mobile2.hq.engine": "Рушій",
+  "mobile2.hq.model": "Модель",
+  "mobile2.hq.effort": "Міркування",
+  "mobile2.hq.accountDefault": "типовий",
   "mobile2.hq.vacant": "Головний оркестратор ще не запущений.",
   "mobile2.hq.start": "Запустити оркестратора",
   "mobile2.hq.starting": "Оркестратор стартує…",
   "mobile2.hq.unreachable": "Сервер не відповідає — статус оркестратора невідомий.",
-  "mobile2.chat.mentionTitle": "Згадати агента",
 };

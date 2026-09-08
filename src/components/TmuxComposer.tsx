@@ -1374,6 +1374,10 @@ export interface TmuxComposerProps {
       Without it the two surfaces would be ordinary competing places and a board
       remount could take the form out from under the operator. */
   primaryPlace?: boolean;
+  /** Hide the composer's model/reasoning pill: a surface that carries those
+      controls of its own (the HQ room's title accordion) would otherwise show
+      them twice. */
+  hideRuntimeControl?: boolean;
 }
 
 /**
@@ -1421,8 +1425,9 @@ function VoiceComposerCardSlot({ cardId, composerProps, primary }: { cardId: str
       deadHost: composerProps.deadHost ?? false,
       sendBlockedReason: composerProps.sendBlockedReason ?? null,
       placeholder: composerProps.placeholder,
+      hideRuntimeControl: composerProps.hideRuntimeControl ?? false,
     });
-  }, [cardId, composerProps.deadHost, composerProps.file, composerProps.placeholder, composerProps.pollPaused, composerProps.sendBlockedReason, placeId]);
+  }, [cardId, composerProps.deadHost, composerProps.file, composerProps.hideRuntimeControl, composerProps.placeholder, composerProps.pollPaused, composerProps.sendBlockedReason, placeId]);
   return <div ref={publishNode} data-testid="voice-composer-card-slot" className="contents" />;
 }
 
@@ -1439,6 +1444,7 @@ export function TmuxComposerCore({
   deadHost = false,
   sendBlockedReason = null,
   placeholder,
+  hideRuntimeControl = false,
   dockNode,
 }: TmuxComposerProps & {
   /** Absent: render the form inline (the card owns the composer, as ever).
@@ -2981,7 +2987,7 @@ export function TmuxComposerCore({
         /* The compact model/reasoning pill (issue #390): lives in the quiet
            bottom row, left of the image picker, on exactly the surfaces the
            capability matrix keeps the runtime control visible. */
-        caps.controls.runtime.state !== "hidden" ? (
+        caps.controls.runtime.state !== "hidden" && !hideRuntimeControl ? (
           <RuntimePill
             file={file}
             surface={caps.surface}

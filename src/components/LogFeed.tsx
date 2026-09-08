@@ -213,12 +213,18 @@ interface Props {
   follow: boolean;
   setFollow: (follow: boolean) => void;
   compact?: boolean;
+  /** One-to-one room chrome (the HQ room): no launch/delivery chips, no
+      per-turn who/model header, no end-of-turn status line, and the launch
+      prompt itself — a mandate the operator never wrote — stays out of the
+      feed. Nothing is summarized away: every message the conversation holds
+      still renders, with its own text. */
+  bare?: boolean;
   /** Opens a fresh editable draft from a terminal structured launch receipt —
       wired through so the launch chips keep their retry inside the window. */
   onLaunchRetry?: () => void;
 }
 
-export function LogFeed({ file, showSvc, lineFilter, onStatus, paused, follow, setFollow, compact = false, onLaunchRetry }: Props) {
+export function LogFeed({ file, showSvc, lineFilter, onStatus, paused, follow, setFollow, compact = false, bare = false, onLaunchRetry }: Props) {
   /* Mobile v2 §3.4, §6: on the phone the transcript ends at the composer. The
      live-tail pill and the turn status bar below it are both gone — following
      is the feed's default and needs no pill, and elapsed time lives in the
@@ -1069,7 +1075,11 @@ export function LogFeed({ file, showSvc, lineFilter, onStatus, paused, follow, s
               visibleItems.map(({ anchorKey, key, item, responseDurationMs }, visibleIndex) => {
                 const answer = speakableAnswer(feed.items, visibleStartIndex + visibleIndex);
                 const speakText = answer?.firstIndex === visibleStartIndex + visibleIndex ? answer.text : undefined;
-                const turnHead = isTurnHead(feed.items, visibleStartIndex + visibleIndex);
+                const turnHead = !bare && isTurnHead(feed.items, visibleStartIndex + visibleIndex);
+                /* The launch prompt of a bare room is its mandate — the
+                   system's words, not the operator's — so the room opens on
+                   the first real turn. */
+                if (bare && visibleStartIndex + visibleIndex === 0 && item.kind === "user") return null;
                 return (
                   /* Session-stable keys: a row keeps its DOM node while the
                      window slides. Compact panes live on the zoomable canvas:
@@ -1122,7 +1132,7 @@ export function LogFeed({ file, showSvc, lineFilter, onStatus, paused, follow, s
               outbox: Boolean(memoryKey && pendingOutbox.length),
               delta: visibleLiveTurnItems.length > 0,
             }).map((section) => {
-              if (section === "launch") return <LaunchChips key="launch" launch={launch!} onRetry={onLaunchRetry} />;
+              if (section === "launch") return bare ? null : <LaunchChips key="launch" launch={launch!} onRetry={onLaunchRetry} />;
               if (section === "outbox") {
                 /* While this card is switching accounts the server holds every
                    delivery it admits, so the bubble — the message's ONE delivery
@@ -1166,11 +1176,11 @@ export function LogFeed({ file, showSvc, lineFilter, onStatus, paused, follow, s
             {feed.items.length && !file.pendingQuestion && !file.waitingInput && endedQuestion ? (
               <div className="my-4 rounded-[8px] border border-border bg-sunken px-4 py-3 text-[13px] font-semibold text-muted">{endedQuestion}</div>
             ) : null}
-            {feed.items.length && file.activity === "recent" && isAwaitingUser(file) ? (
+            {!bare && feed.items.length && file.activity === "recent" && isAwaitingUser(file) ? (
               <div className="mt-2 flex items-center gap-1.5 text-[11.5px] font-semibold text-warning">
                 <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-warning" aria-hidden /> {t("feed.finishedTurn")}
               </div>
-            ) : feed.items.length && file.activity === "recent" && isSubagent(file) && file.proc !== "running" ? (
+            ) : !bare && feed.items.length && file.activity === "recent" && isSubagent(file) && file.proc !== "running" ? (
               <div className="mt-2 flex items-center gap-1 text-[11.5px] font-semibold text-accent">
                 <CornerDownRight className="h-3.5 w-3.5" aria-hidden /> {t("feed.returnedResult")}
               </div>

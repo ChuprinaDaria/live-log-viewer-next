@@ -90,6 +90,8 @@ export interface VoiceComposerCardProps {
   deadHost: boolean;
   sendBlockedReason: string | null;
   placeholder?: string;
+  /** The surface carries the model/reasoning control itself. */
+  hideRuntimeControl?: boolean;
 }
 
 /**

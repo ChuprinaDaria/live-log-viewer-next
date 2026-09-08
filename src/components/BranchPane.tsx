@@ -467,6 +467,12 @@ export function BranchPane({ file, tasks, isRoot, onClose, dragHandle, noCompose
           follow
           setFollow={noop}
           compact
+          /* The phone reads a conversation as a chat, not as a card: the
+             launch/delivery chips, the per-turn who/model header and the
+             end-of-turn status line are all facts the bar's meta line and the
+             `⋯` menu already carry, and stacked around every message they were
+             the clutter the operator asked us to remove. Desktop keeps them. */
+          bare={isMobile}
           onLaunchRetry={onSpawnRetry && file.spawn ? () => onSpawnRetry(file) : undefined}
         />
         {/* Unified control strip (issue #241): the single action surface, mounted

@@ -60,12 +60,8 @@ import { MobileHostSheet } from "./mobile/MobileHostSheet";
 import { MobileSeatCard } from "./mobile/MobileSeatCard";
 import { MobileMenuSheet, type MobileMenuEntry } from "./mobile/MobileMenuSheet";
 import { showReceipt } from "./mobile/MobileReceipt";
-import { MobileAgentsStrip } from "./mobile/MobileAgentsStrip";
-import { mobileAgentStrip } from "./mobile/mobileBoardModel";
 import { renderMobileRootScreen } from "./mobile/MobileRootScreen";
 import { MobileSheet, MobileSheetRow } from "./mobile/MobileSheet";
-import { hqFileOf, useHqSeat } from "./mobile/hqSeat";
-import { appendComposerDraft } from "./TmuxComposer";
 import { MobileAccountsScreen, MobileBarTitle, MobileShell, type MobileShellHost } from "./mobile/MobileShell";
 import { MobilePipelineScreen } from "./mobile/MobilePipelineScreen";
 import { MobilePipelinesScreen } from "./mobile/MobilePipelinesScreen";
@@ -1772,10 +1768,6 @@ function ProjectDashboardView({
   };
   const mobileBoardModel = isMobile ? mobileBoardOf(mobileBoardProps) : null;
   /* The Чат tab's roster: the board's own triage order, seat excluded. */
-  const mobileAgents = mobileBoardModel ? mobileAgentStrip(mobileBoardModel) : [];
-  /* The HQ room's transcript, for the «@» sheet's composer target. */
-  const hqSeat = useHqSeat();
-  const hqFile = hqFileOf(allFiles ?? files, hqSeat.status);
   /* The pipeline the stack names, when the scan still carries it (lane 7). */
   const mobilePipelineOnScreen = mobileTop.kind === "pipeline"
     ? activePipelines.find((pipeline) => pipeline.id === mobileTop.id) ?? null
@@ -1989,25 +1981,6 @@ function ProjectDashboardView({
   };
 
   const renderMobileSheet = (name: MobileSheetName, close: () => void) => {
-    if (name === "mention") {
-      /* «@» on the Чат tab: pick an agent, and its name lands in the room's
-         composer — the orchestrator resolves the address (mandate v14). */
-      return (
-        <MobileSheet name="mention" title={t("mobile2.chat.mentionTitle")} onClose={close}>
-          {mobileAgents.map((row) => (
-            <MobileSheetRow
-              key={row.path}
-              label={row.title}
-              attrs={{ "data-mobile2-mention": row.path }}
-              onSelect={() => {
-                close();
-                if (hqFile) appendComposerDraft(conversationIdentity(hqFile), `@${row.title} `);
-              }}
-            />
-          ))}
-        </MobileSheet>
-      );
-    }
     if (name === "menu") return <MobileMenuSheet title={projectName} entries={mobileMenuEntries()} onClose={close} />;
     /* Host details (mobile v2 lane 2): the background processes with their PIDs
        and a Kill that acts on the tap, the runtime connection, and the quiet
@@ -2076,13 +2049,6 @@ function ProjectDashboardView({
           </>
         ),
         files: allFiles ?? files,
-        agentsStrip: (
-          <MobileAgentsStrip
-            agents={mobileAgents}
-            onOpen={openBoardRow}
-            onMention={mobileAgents.length ? () => mobileNav.openSheet("mention") : undefined}
-          />
-        ),
       })
     : null;
   return (

@@ -28,14 +28,12 @@ export interface MobileRootContext {
   hostTrailing?: ReactNode;
   /** Every scanned file: the HQ seat's transcript lives outside any project. */
   files: readonly FileEntry[];
-  /** The surface's agents strip for the room (a project has one). */
-  agentsStrip?: ReactNode;
 }
 
 export function renderMobileRootScreen(kind: MobileScreenKind, ctx: MobileRootContext): ReactNode | null {
   switch (kind) {
     case "settings": return <MobileSettingsScreen ctx={ctx} />;
-    case "orchestrator": return <MobileHqRoom files={ctx.files} host={ctx.host} renderSheet={ctx.renderSheet} strip={ctx.agentsStrip} />;
+    case "orchestrator": return <MobileHqRoom files={ctx.files} host={ctx.host} renderSheet={ctx.renderSheet} />;
     case "secrets": return <MobileNotBuiltScreen kind={kind} ctx={ctx} />;
     case "mcp": return <MobileNotBuiltScreen kind={kind} ctx={ctx} />;
     default: return null;
