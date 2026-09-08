@@ -43,6 +43,7 @@ export function ProjectConsole({ project, files, onOpenFile }: ProjectConsolePro
   const [detailError, setDetailError] = useState<string | null>(null);
   const [move, setMove] = useState<MoveRequest | null>(null);
   const [told, setTold] = useState<"sent" | "no-seat" | null>(null);
+  const [tellFailure, setTellFailure] = useState<string | null>(null);
   const hq = useHqSeat();
 
   const reload = useCallback(async () => {
@@ -60,25 +61,39 @@ export function ProjectConsole({ project, files, onOpenFile }: ProjectConsolePro
     setDetailError(null);
     setMove(null);
     setTold(null);
+    setTellFailure(null);
     void reload();
   }, [reload]);
 
   const live = projectAgents(files, project).filter((file) => file.activity === "live");
   const hqFile = hqFileOf(files, hq.status);
 
+  /* The line is only worth sending once the project has been read: without
+     the detail it would say «Відкриваю проєкт  → bot ()». And a refused POST
+     is a refusal — «HQ отримав.» over a 503 is the console lying to the
+     operator about where their message went. */
   const tellHq = async () => {
-    if (!hqFile) { setTold("no-seat"); return; }
-    const text = t("desktop.tellHqLine", {
-      firm: detail?.firm ?? "",
-      project: detail?.name || project,
-      path: detail?.path ?? "",
-    });
-    await fetch("/api/tmux", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: hqFile.path, text }),
-    });
-    setTold("sent");
+    if (!detail) return;
+    if (!hqFile) { setTold("no-seat"); setTellFailure(null); return; }
+    const text = t("desktop.tellHqLine", { firm: detail.firm, project: detail.name || project, path: detail.path ?? "" });
+    try {
+      const response = await fetch("/api/tmux", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: hqFile.path, text }),
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => null) as { error?: string } | null;
+        setTold(null);
+        setTellFailure(body?.error ?? `HTTP ${response.status}`);
+        return;
+      }
+      setTold("sent");
+      setTellFailure(null);
+    } catch (cause) {
+      setTold(null);
+      setTellFailure(cause instanceof Error ? cause.message : String(cause));
+    }
   };
 
   return (
@@ -86,14 +101,15 @@ export function ProjectConsole({ project, files, onOpenFile }: ProjectConsolePro
       <header className="flex flex-col gap-1 px-1">
         <div className="flex items-center gap-2">
           <span className="min-w-0 flex-1 truncate text-[13px] font-bold text-primary">{detail?.name || project}</span>
-          <button type="button" data-console-tell-hq onClick={() => void tellHq()}
-            className="inline-flex h-7 shrink-0 items-center rounded-[8px] border border-border px-2 text-[11.5px] font-semibold text-secondary hover:border-accent/45 hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40">
+          <button type="button" data-console-tell-hq disabled={!detail} onClick={() => void tellHq()}
+            className="inline-flex h-7 shrink-0 items-center rounded-[8px] border border-border px-2 text-[11.5px] font-semibold text-secondary hover:border-accent/45 hover:text-accent disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40">
             {t("desktop.tellHq")}
           </button>
         </div>
         {detail?.firm ? <span className="truncate text-[11px] text-muted">{detail.firm}</span> : null}
         {told === "sent" ? <p role="status" className="text-[11px] text-success">{t("desktop.tellHqSent")}</p> : null}
         {told === "no-seat" ? <p role="status" className="text-[11px] text-muted">{t("desktop.tellHqNoSeat")}</p> : null}
+        {tellFailure ? <p role="status" data-console-tell-failure className="text-[11px] text-danger">{tellFailure}</p> : null}
         {detailError ? <p role="status" className="text-[11px] text-danger">{t("desktop.detailFailed", { reason: detailError })}</p> : null}
       </header>
 
@@ -120,7 +136,11 @@ export function ProjectConsole({ project, files, onOpenFile }: ProjectConsolePro
         )}
       </div>
 
-      <ProjectAccordions project={project} detail={detail} files={files} onOpenFile={onOpenFile} onChanged={() => void reload()} />
+      {/* Keyed by project: the panels hold what one project answered — which
+          branch sits on which machine, which cards the archive returned — and
+          the tree switches A→B without unmounting this column, so without the
+          key B renders A's git state under B's name. */}
+      <ProjectAccordions key={project} project={project} detail={detail} files={files} onOpenFile={onOpenFile} onChanged={() => void reload()} />
     </section>
   );
 }

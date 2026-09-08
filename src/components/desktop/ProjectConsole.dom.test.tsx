@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
 import { Window } from "happy-dom";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -74,6 +74,8 @@ const SECRETS = { generatedAt: null, accounts: [], clis: [], secrets: [{ name: "
 const realFetch = globalThis.fetch;
 const posts: { url: string; body: Record<string, unknown> }[] = [];
 const gets: string[] = [];
+/** What `/api/tmux` answers, so a refused delivery can be exercised. */
+let tmuxAnswer: { status: number; body: unknown } = { status: 200, body: { ok: true } };
 
 function get(url: string): unknown {
   if (url.startsWith("/api/archive")) return null;
@@ -91,10 +93,11 @@ function get(url: string): unknown {
 }
 
 const JSON_HEADERS = { "content-type": "application/json" };
-globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+const fakeFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(input);
   if (init?.method === "POST") {
     posts.push({ url, body: JSON.parse(String(init.body)) as Record<string, unknown> });
+    if (url === "/api/tmux") return new Response(JSON.stringify(tmuxAnswer.body), { status: tmuxAnswer.status, headers: JSON_HEADERS });
     return new Response(JSON.stringify(url.startsWith("/api/mcp-registry") ? REGISTRY : { ok: true }), { status: 200, headers: JSON_HEADERS });
   }
   gets.push(url);
@@ -102,7 +105,11 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   if (body === null) return new Response(JSON.stringify({ error: "no archive route yet" }), { status: 404, headers: JSON_HEADERS });
   return new Response(JSON.stringify(body), { status: 200, headers: JSON_HEADERS });
 }) as typeof fetch;
-afterEach(() => { globalThis.fetch = realFetch; posts.length = 0; gets.length = 0; });
+/* Re-installed per test: restoring the real fetch once and never putting the
+   fake back left every test after the first talking to the host. */
+beforeEach(() => { globalThis.fetch = fakeFetch; });
+afterEach(() => { posts.length = 0; gets.length = 0; tmuxAnswer = { status: 200, body: { ok: true } }; });
+afterAll(() => { globalThis.fetch = realFetch; });
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
 async function settle(times = 4) {
@@ -173,4 +180,45 @@ test("project console: launch first, live sessions with «перенести», 
   await settle();
   expect(posts.find((post) => post.url === "/api/tmux")?.body)
     .toEqual({ path: "/hq/t.jsonl", text: "Відкриваю проєкт noologic → bot (/w/bot)" });
+});
+
+test("switching project shuts the accordions: no machine's git state under another project's name", async () => {
+  setLocale("uk");
+  const el = mount(<ProjectConsole project="bot" files={FILES} onOpenFile={() => {}} />);
+  await settle();
+
+  openAccordion(el, "code");
+  await settle();
+  const code = () => el.querySelector('[data-console-accordion="code"]') as HTMLDetailsElement;
+  expect(code().open).toBe(true);
+  expect(code().textContent).toContain("main @ abc1234");
+
+  /* The tree selects one project after another without ever passing through
+     null, so the column is never unmounted between them. */
+  act(() => { root!.render(<ProjectConsole project="money" files={FILES} onOpenFile={() => {}} />); });
+  await settle();
+  expect(code().open).toBe(false);
+  expect(code().textContent).not.toContain("main @ abc1234");
+});
+
+test("«Сказати HQ» does not claim success when the delivery is refused", async () => {
+  setLocale("uk");
+  tmuxAnswer = { status: 503, body: { error: "HQ не тримає сеанс" } };
+  const el = mount(<ProjectConsole project="bot" files={FILES} onOpenFile={() => {}} />);
+  await settle();
+
+  act(() => { (el.querySelector("[data-console-tell-hq]") as HTMLButtonElement).click(); });
+  await settle();
+  expect(posts.some((post) => post.url === "/api/tmux")).toBe(true);
+  const console_ = el.querySelector("[data-project-console]") as HTMLElement;
+  expect(console_.textContent).not.toContain("HQ отримав.");
+  expect(el.querySelector("[data-console-tell-failure]")?.textContent).toBe("HQ не тримає сеанс");
+});
+
+test("«Сказати HQ» stays disabled until the project has been read", async () => {
+  setLocale("uk");
+  const el = mount(<ProjectConsole project="bot" files={FILES} onOpenFile={() => {}} />);
+  expect((el.querySelector("[data-console-tell-hq]") as HTMLButtonElement).disabled).toBe(true);
+  await settle();
+  expect((el.querySelector("[data-console-tell-hq]") as HTMLButtonElement).disabled).toBe(false);
 });
