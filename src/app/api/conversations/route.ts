@@ -1,5 +1,6 @@
 import { catalogEntryToFileEntry, conversationCatalogReady, conversationCatalogSnapshot, ExpiredConversationCatalogCursorError, loadConversationCatalogPage } from "@/lib/scanner/conversationCatalog";
 import { indexConversationCatalog } from "@/lib/scanner/conversationSearchIndex";
+import { attachOrgAttribution } from "@/lib/projects/orgBridge";
 import { searchTextForTranscript } from "@/lib/scanner/describe";
 import { refreshConversationCatalog } from "@/lib/scanner/discover";
 import { overlaySessionProjects, overlaySessionTitles, overlaySessionTitlesYielding } from "@/lib/session/titleProjection";
@@ -57,6 +58,9 @@ export async function GET(request: Request): Promise<Response> {
       page = await loadConversationCatalogPage(projected, options, undefined, hydrateSearchText);
       overlaySessionTitles(page.items);
     }
+    // Which firm and console project each row belongs to. One console read per
+    // page, and only for the rows this page actually ships.
+    await attachOrgAttribution(page.items);
     return Response.json(page);
   } catch (error) {
     if (error instanceof ExpiredConversationCatalogCursorError) {

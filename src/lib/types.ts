@@ -139,6 +139,13 @@ export interface FileEntry {
   project: string;
   /** Human repository label carried separately from the stable project key. */
   projectName?: string;
+  /** Which firm and console project this conversation belongs to, joined from
+      the operator console by `orgBridge`. The board's `project` above stays a
+      hashed scanner identity; this is the org layer the operator actually
+      names things in — «Noologic → ai-trainer» rather than `dir-9f3a…`.
+      Absent when no console is reachable or no project claims this cwd, which
+      is honest emptiness rather than a guessed firm. */
+  org?: { firm: string; firmName: string; project: string; projectName: string; via: "board-id" | "path" };
   /** The scanner could not prove a repository identity for this entry. */
   projectUnresolved?: true;
   /** Durable conversation-level project authority (issue #315): explicit
