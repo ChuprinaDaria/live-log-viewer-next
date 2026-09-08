@@ -36,6 +36,22 @@ export interface SkillRow {
   granted_to: string[];
 }
 
+/** A server as the operator describes it in the form. Values live here for
+    exactly as long as the submit takes: the route sends them to the console
+    over stdin, the answer carries key names only, and the sheet drops its
+    state on close. Nothing in this module stores one. */
+export interface McpServerInput {
+  name: string;
+  type: "stdio" | "http" | "sse";
+  command?: string;
+  args?: string[];
+  cwd?: string;
+  url?: string;
+  env?: Record<string, string>;
+  headers?: Record<string, string>;
+  replace?: boolean;
+}
+
 export interface McpRegistryRead {
   servers: McpServerRow[] | null;
   skills: SkillRow[] | null;
@@ -45,13 +61,33 @@ export interface McpRegistryRead {
   refresh: () => Promise<void>;
   /** Resolves with the console's own refusal text, or null on success. */
   grant: (kind: "mcp" | "skills", item: string, target: string, revoke?: boolean) => Promise<string | null>;
+  /** Write the server into the registry; refusal text, or null on success. */
+  addServer: (input: McpServerInput) => Promise<string | null>;
+  /** Take it out, its grants with it. Irreversible: the env and header values
+      went with it and this page never held them to put back. */
+  removeServer: (name: string) => Promise<McpRemoveOutcome>;
 }
 
 interface Answer {
-  servers?: McpServerRow[];
-  skills?: SkillRow[];
+  /** Null when the write went through but the console could not be re-read. */
+  servers?: McpServerRow[] | null;
+  skills?: SkillRow[] | null;
   registry?: string;
   error?: string;
+  /** The console's own answer to the write. `mcp_remove` reports the grants it
+      took down with the server, as a list of holders. */
+  result?: { grants_cleaned?: string[] | number };
+}
+
+/** What a removal cost: the console's refusal, or the grants it revoked. */
+export interface McpRemoveOutcome {
+  error: string | null;
+  grantsCleaned: number;
+}
+
+function countGrants(cleaned: string[] | number | undefined): number {
+  if (Array.isArray(cleaned)) return cleaned.length;
+  return typeof cleaned === "number" ? cleaned : 0;
 }
 
 export function useMcpRegistry(): McpRegistryRead {
@@ -87,30 +123,45 @@ export function useMcpRegistry(): McpRegistryRead {
     return () => controller.abort();
   }, [load]);
 
-  const grant = useCallback(async (
-    kind: "mcp" | "skills",
-    item: string,
-    target: string,
-    revoke = false,
-  ): Promise<string | null> => {
+  /* One writer for the three verbs this page has. The route answers each of
+     them with the whole list, so the view cannot disagree with the store
+     about what exists or who holds it. */
+  const write = useCallback(async (payload: Record<string, unknown>): Promise<{ error: string | null; body: Answer | null }> => {
     try {
       const response = await fetch("/api/mcp-registry", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ kind, item, target, ...(revoke ? { revoke: true } : {}) }),
+        body: JSON.stringify(payload),
       });
       const body = await response.json() as Answer;
-      if (!response.ok) return body.error ?? `HTTP ${response.status}`;
-      /* The route answers with the whole list, so the view cannot disagree
-         with the store about who holds what. */
+      if (!response.ok) return { error: body.error ?? `HTTP ${response.status}`, body: null };
       apply(body);
-      return null;
+      /* A null list means the write landed but the re-read did not; the page
+         asks again rather than standing on a view it knows is behind. */
+      if (body.servers === null) void load();
+      return { error: null, body };
     } catch (cause) {
-      return cause instanceof Error ? cause.message : String(cause);
+      return { error: cause instanceof Error ? cause.message : String(cause), body: null };
     }
-  }, [apply]);
+  }, [apply, load]);
 
-  return { servers, skills, registry, error, loading, refresh: () => load(), grant };
+  const grant = useCallback(
+    async (kind: "mcp" | "skills", item: string, target: string, revoke = false) =>
+      (await write({ kind, item, target, ...(revoke ? { revoke: true } : {}) })).error,
+    [write],
+  );
+
+  const addServer = useCallback(
+    async (input: McpServerInput) => (await write({ action: "add", ...input })).error,
+    [write],
+  );
+
+  const removeServer = useCallback(async (name: string): Promise<McpRemoveOutcome> => {
+    const { error, body } = await write({ action: "remove", name });
+    return { error, grantsCleaned: countGrants(body?.result?.grants_cleaned) };
+  }, [write]);
+
+  return { servers, skills, registry, error, loading, refresh: () => load(), grant, addServer, removeServer };
 }
 
 /** «stdio · uv» / «http · example.com» — what a server IS, in one line. */
