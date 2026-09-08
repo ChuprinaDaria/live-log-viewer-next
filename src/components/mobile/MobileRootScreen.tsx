@@ -11,6 +11,7 @@ import type { FileEntry } from "@/lib/types";
 import { MobileHqRoom } from "./MobileHqRoom";
 import { MobileFirmsScreen } from "./MobileFirmsScreen";
 import { MobileMcpScreen } from "./MobileMcpScreen";
+import { AutoBalanceToggle } from "./AutoBalanceToggle";
 import { MobileChannelsScreen } from "./MobileChannelsScreen";
 import { MobileMachinesScreen } from "./MobileMachinesScreen";
 import { MobilePermissionsScreen } from "./MobilePermissionsScreen";
@@ -80,6 +81,13 @@ function MobileSettingsScreen({ ctx }: { ctx: MobileRootContext }) {
             <SoundToggle />
           </div>
           <div className="px-2.5"><KeepAwakeMenuRow /></div>
+        </div>
+        {/* Leaving an exhausted account is a thing that happens TO a running
+            conversation, so it lives beside the other switches rather than
+            hidden in an accounts screen the phone does not have. */}
+        <div className={card}>
+          <AutoBalanceToggle engine="claude" />
+          <AutoBalanceToggle engine="codex" />
         </div>
       </div>
     </MobileShell>

@@ -6,6 +6,8 @@ import type { Dictionary } from ".";
 export const en = {
   // Common, reused across components
   "common.serverUnavailable": "server unavailable",
+  "autoBalance.title": "Switch accounts on its own ({engine})",
+  "autoBalance.explain": "When the active one drops below {percent}% and stays there for a minute, move the work to an account with room",
   "channels.title": "Channels",
   "channels.addTitle": "Connect a chat",
   "channels.addTarget": "To: firm:<id> or project:<id>",

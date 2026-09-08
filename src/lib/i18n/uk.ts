@@ -5,6 +5,8 @@ import type { en } from "./en";
    the build if a key is missing or extra, keeping both locales in lockstep. */
 export const uk: Record<keyof typeof en, Message> = {
   "common.serverUnavailable": "сервер недоступний",
+  "autoBalance.title": "Сам міняти акаунт ({engine})",
+  "autoBalance.explain": "Коли в активного лишається менше {percent}% і так тримається хвилину — перевести роботу на акаунт із запасом",
   "channels.title": "Канали",
   "channels.addTitle": "Підключити чат",
   "channels.addTarget": "Кому: firm:<id> або project:<id>",
