@@ -62,6 +62,7 @@ import { MobileMenuSheet, type MobileMenuEntry } from "./mobile/MobileMenuSheet"
 import { showReceipt } from "./mobile/MobileReceipt";
 import { renderMobileRootScreen } from "./mobile/MobileRootScreen";
 import { MobileSheet, MobileSheetRow } from "./mobile/MobileSheet";
+import { DesktopMenu } from "./DesktopMenu";
 import { MobileAccountsScreen, MobileBarTitle, MobileShell, type MobileShellHost } from "./mobile/MobileShell";
 import { MobilePipelineScreen } from "./mobile/MobilePipelineScreen";
 import { MobilePipelinesScreen } from "./mobile/MobilePipelinesScreen";
@@ -2059,6 +2060,10 @@ function ProjectDashboardView({
            (mobile v2 lane 1): one 52 px bar with the project name as the title
            cell and at most three 44 px targets, everything else behind ⋯. */
         <div className="flex h-10 shrink-0 items-center gap-2.5 border-b border-border bg-card px-4">
+          {/* The door to the console pages (secrets, MCP, machines, permissions,
+              roles, firms, channels). They were reachable only under 640 px,
+              where the tab bar lives; here there was no way in at all. */}
+          <DesktopMenu />
           <h1 className="truncate text-[13.5px] font-bold" title={projectName}>{projectName}</h1>
           {/* The project account surface is one compact switch per relevant engine
               (#1331). Pool/carrier detail opens on demand, and quiet projects still
