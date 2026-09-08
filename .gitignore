@@ -75,3 +75,12 @@ evidence/**/*.png
 # carry no privacy-manifest provenance and stay out of the commit. Regenerate
 # with `bun run build && bun evidence/issue-1086/drive.ts`.
 /.artifacts/
+
+# Machine-local, and two of them deliberately so: .run-env.sh carries this
+# host's MCP grants and launch variables, and the operator's spec quotes them
+# by name — neither belongs in a public fork. install.log and package-lock.json
+# are byproducts of installing here; the lockfile this repo uses is bun.lock.
+install.log
+package-lock.json
+.run-env.sh
+TZ-UI*.md
