@@ -9,6 +9,7 @@ import { internalServiceHeaders, requireOperatorAuthority } from "@/lib/agent/op
 import { executeSpawnRequest, productionSpawnCommandDependencies } from "@/lib/agent/spawnCommand";
 import { VIEWER_SPAWN_CAPABILITY_HEADER } from "@/lib/agent/spawnPolicy";
 import { HQ_PROJECT, HQ_PROMPT_VERSION, HQ_SPAWN_CONFIG, hqCwd, hqMandate, hqSshHosts, hqTelegramChat } from "@/lib/orchestrator/hq";
+import { readHqIdentity } from "@/lib/orchestrator/hqIdentity";
 import { executeOrchestratorSeatRequest, productionSeatCommandDependencies } from "@/lib/orchestrator/seatCommand";
 import { orchestratorSeatFor, type OrchestratorSeat } from "@/lib/orchestrator/seats";
 import { rejectCrossOrigin } from "@/lib/sameOrigin";
@@ -72,6 +73,9 @@ export async function POST(req: NextRequest): Promise<NextResponse<Record<string
     sshHosts: hqSshHosts(),
     telegramChat: hqTelegramChat(),
     mcpServers,
+    /* The seat is briefed with the name the room signs its messages with, so
+       the two never disagree in front of the operator. */
+    name: readHqIdentity().name,
   });
   const result = await executeOrchestratorSeatRequest({
     project: HQ_PROJECT,

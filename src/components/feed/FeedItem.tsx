@@ -89,6 +89,35 @@ function internalCard(ts: unknown, text: string, senderRole: string | undefined)
   };
 }
 
+/** The room's own signature, when it has one (the HQ room): who is speaking,
+    above their answer. It belongs to the ROOM rather than to the message —
+    a transcript carries no such field — so it is passed down and rendered only
+    on the agent's own prose. */
+export interface FeedSignature {
+  name: string;
+  avatarUrl: string | null;
+}
+
+/* A plain <img>, deliberately: next/image would re-encode an animated GIF into
+   a still frame, and the operator uploading a GIF wants it to move. */
+function SignatureRow({ signature }: { signature: FeedSignature }) {
+  return (
+    <div data-feed-signature className="flex items-center gap-1.5 text-[11px] font-semibold text-secondary">
+      {signature.avatarUrl ? (
+        <img src={signature.avatarUrl} alt="" data-hq-avatar className="h-5 w-5 shrink-0 rounded-full object-cover" />
+      ) : (
+        <span aria-hidden className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-sunken text-[10px] font-semibold text-secondary">
+          {/* Cased here rather than by `text-transform`: the letter is the
+              picture's stand-in, and a CSS-only capital is invisible to
+              anything reading the row's text. */}
+          {([...signature.name][0] ?? "").toLocaleUpperCase()}
+        </span>
+      )}
+      <span className="min-w-0 truncate">{signature.name}</span>
+    </div>
+  );
+}
+
 /* Memoized: feed items are immutable after buildFeed, so a pane re-render
    (poll tick, camera state, files refresh) skips re-parsing markdown for
    every message that did not change. The provenance lookup arrives by context,
@@ -97,7 +126,7 @@ function internalCard(ts: unknown, text: string, senderRole: string | undefined)
    `turnHead` (TZ-UI.md stage 1): this row opens an agent turn, so on the
    phone it carries the one who/model/account header — computed per-index in
    the LogFeed map like `speakText`, never derived here. */
-export const FeedItem = memo(function FeedItem({ item: sourceItem, speakText, turnHead = false }: { item: Item; speakText?: string; turnHead?: boolean }) {
+export const FeedItem = memo(function FeedItem({ item: sourceItem, speakText, turnHead = false, signature }: { item: Item; speakText?: string; turnHead?: boolean; signature?: FeedSignature }) {
   const { t } = useLocale();
   const provenance = useMessageProvenance();
   const isMobile = useIsMobile();
@@ -133,6 +162,7 @@ export const FeedItem = memo(function FeedItem({ item: sourceItem, speakText, tu
       const time = mobileClock(item.ts);
       return (
         <div className="group/msg" data-mobile-message="agent">
+          {signature ? <SignatureRow signature={signature} /> : null}
           {/* TZ-UI.md stage 1: the head of a turn carries the full who/model/
               account header; a continuation keeps only the right-hand cluster
               — repeating the glyph and name on every block was the noise the
@@ -154,8 +184,10 @@ export const FeedItem = memo(function FeedItem({ item: sourceItem, speakText, tu
         </div>
       );
     }
-    return (
-      <div className="group/msg my-3 flex gap-2.5">
+    /* Signed rooms wrap the message so the row sits above it; unsigned ones
+       keep the exact node the desktop feed always had. */
+    const body = (
+      <div className={signature ? "group/msg flex gap-2.5" : "group/msg my-3 flex gap-2.5"}>
         <div className={`mt-1 flex h-6.5 w-6.5 shrink-0 items-center justify-center rounded-full text-white ${cls}`}>
           <AvatarIcon className="h-3.5 w-3.5" aria-hidden />
         </div>
@@ -183,6 +215,13 @@ export const FeedItem = memo(function FeedItem({ item: sourceItem, speakText, tu
           </div>
           <div className="contents" data-tts-body>{mdBlocks(item.text)}</div>
         </div>
+      </div>
+    );
+    if (!signature) return body;
+    return (
+      <div className="my-3">
+        <SignatureRow signature={signature} />
+        {body}
       </div>
     );
   }

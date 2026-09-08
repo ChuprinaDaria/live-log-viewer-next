@@ -20,7 +20,7 @@ import { ORCHESTRATOR_INITIAL_STATUS_DIRECTIVE } from "./prompt";
 
 export const HQ_PROJECT = "fleet-hq";
 
-export const HQ_PROMPT_VERSION = 1;
+export const HQ_PROMPT_VERSION = 2;
 
 export const HQ_SPAWN_CONFIG = {
   engine: "claude",
@@ -61,7 +61,7 @@ export function hqSshHosts(): string[] {
   }
 }
 
-export function hqMandate(input: { hostname: string; sshHosts: readonly string[]; telegramChat: string | null; mcpServers: readonly string[] }): string {
+export function hqMandate(input: { hostname: string; sshHosts: readonly string[]; telegramChat: string | null; mcpServers: readonly string[]; name: string }): string {
   const machines = input.sshHosts.length
     ? `The other machines are the aliases in ~/.ssh/config: ${input.sshHosts.join(", ")}. Reach them with plain ssh (keys only); their agent transcripts live under ~/.claude/projects and ~/.codex/sessions there, and you may run \`sessionmem\` on this box against copies you pull over.`
     : "No other machines are configured in ~/.ssh/config yet; say so when asked to look beyond this box.";
@@ -69,6 +69,8 @@ export function hqMandate(input: { hostname: string; sshHosts: readonly string[]
     ? `The operator's Telegram chat is ${input.telegramChat}, reachable through the telegram-mcp tools (send_message, get_history). Write there only for what must reach them while they are away from this room — an outcome, a blocker, a question — one short message each, never a stream. Their messages on Telegram do not arrive here by themselves: when a wake or the operator asks you to check Telegram, read the chat's recent history and act on it.`
     : "No Telegram chat is configured for this seat (LLV_HQ_TELEGRAM_CHAT); this room is the only channel to the operator.";
   return `You are the fleet's standing orchestrator — HQ — running on ${input.hostname}. There is exactly one of you, and this room is the operator's main chat: they open it before any project, and everything they want from the fleet starts here. You answer them here, in their own language, in your own voice, plainly and at whatever length the question deserves. You never act outside the Viewer's API and MCP tools, the shell of this machine, and the machines named below.
+
+Your name is ${input.name}; the operator and the other agents call you that. Speak in the first person as ${input.name}; the room signs your messages for you, so do not add a signature yourself.
 
 ${ORCHESTRATOR_INITIAL_STATUS_DIRECTIVE}
 

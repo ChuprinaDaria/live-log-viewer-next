@@ -38,7 +38,7 @@ import {
 } from "./conversation/outbox";
 import { createFeedSession, type FeedSession, type FeedSnapshot } from "./feed/parse";
 import { claimFeedSession, releaseFeedSession, takeFeedSession } from "./feed/sessionPool";
-import { FeedItem } from "./feed/FeedItem";
+import { FeedItem, type FeedSignature } from "./feed/FeedItem";
 import { FeedIdentityProvider, NO_FEED_IDENTITY, type FeedIdentity } from "./feed/feedIdentity";
 import { MessageProvenanceProvider, useDeliveredMessageProvenance } from "./feed/messageProvenance";
 import { RawLineProvider, type RawLineLookup } from "./feed/rawLine";
@@ -219,12 +219,16 @@ interface Props {
       feed. Nothing is summarized away: every message the conversation holds
       still renders, with its own text. */
   bare?: boolean;
+  /** Who the room's answers are FROM (the HQ room's signature): a compact
+      name/avatar row above every agent message. Only a bare room has one —
+      elsewhere the per-turn header already names the speaker. */
+  signature?: FeedSignature;
   /** Opens a fresh editable draft from a terminal structured launch receipt —
       wired through so the launch chips keep their retry inside the window. */
   onLaunchRetry?: () => void;
 }
 
-export function LogFeed({ file, showSvc, lineFilter, onStatus, paused, follow, setFollow, compact = false, bare = false, onLaunchRetry }: Props) {
+export function LogFeed({ file, showSvc, lineFilter, onStatus, paused, follow, setFollow, compact = false, bare = false, signature, onLaunchRetry }: Props) {
   /* Mobile v2 §3.4, §6: on the phone the transcript ends at the composer. The
      live-tail pill and the turn status bar below it are both gone — following
      is the feed's default and needs no pill, and elapsed time lives in the
@@ -1093,7 +1097,7 @@ export function LogFeed({ file, showSvc, lineFilter, onStatus, paused, follow, s
                     data-feed-source-id={"sourceId" in item ? item.sourceId : undefined}
                     className={compact ? "feed-cv" : undefined}
                   >
-                    <FeedItem item={item} speakText={speakText} turnHead={turnHead} />
+                    <FeedItem item={item} speakText={speakText} turnHead={turnHead} signature={bare ? signature : undefined} />
                     {responseDurationMs !== undefined ? <ResponseDuration durationMs={responseDurationMs} /> : null}
                   </div>
                 );
