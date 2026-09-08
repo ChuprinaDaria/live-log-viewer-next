@@ -100,6 +100,16 @@ export const MIN_TRANSCRIPT_SHARE = 0.75;
 /** The same guarantee with the keyboard open (§4.3): 315 px of the 508 that are
     visible, with the whole question card inside them. */
 export const MIN_KEYBOARD_TRANSCRIPT_SHARE = 0.6;
+/** The tab bar (TZ-UI.md): five labelled roots, at the bottom of the stack
+    only. Chrome on a tab ROOT, 0 px on every pushed screen, and it yields to
+    the keyboard, so it never rides the keyboard case. */
+export const TAB_BAR_PX = 56;
+/** The agents strip on the Чат tab: 44 px, only while the project has an
+    agent to name and the keyboard is down. */
+export const AGENTS_STRIP_PX = 44;
+/** The transcript's floor on a TAB ROOT, keyboard closed: the worst persistent
+    case is bar + strip + composer + tab bar + banner = 306 of 844 (63.7%). */
+export const MIN_TAB_ROOT_TRANSCRIPT_SHARE = 0.62;
 
 export interface Viewport {
   /** Layout viewport height in CSS px (844 at iPhone 390×844). */
@@ -110,6 +120,10 @@ export interface Viewport {
   chips?: boolean;
   /** The on-screen keyboard's height, 0 (the default) while it is closed. */
   keyboard?: number;
+  /** A tab root carries the tab bar (keyboard closed). */
+  tabBar?: boolean;
+  /** The Чат tab's agents strip is up. */
+  agentsStrip?: boolean;
 }
 
 export interface ChatBudget {
@@ -126,11 +140,13 @@ export interface ChatBudget {
 }
 
 /** The transcript's height and share for one viewport and its chrome. */
-export function chatBudget({ height, banner = false, chips = false, keyboard = 0 }: Viewport): ChatBudget {
+export function chatBudget({ height, banner = false, chips = false, keyboard = 0, tabBar = false, agentsStrip = false }: Viewport): ChatBudget {
   const usable = Math.max(0, height - Math.max(0, keyboard));
-  const chrome = BAR_PX + COMPOSER_PX + (banner ? BANNER_PX : 0) + (chips ? SUGGESTED_CHIPS_PX : 0);
+  /* The tab bar and the strip both yield to the keyboard, so they count only while it is closed. */
+  const roots = keyboard > 0 ? 0 : (tabBar ? TAB_BAR_PX : 0) + (agentsStrip ? AGENTS_STRIP_PX : 0);
+  const chrome = BAR_PX + COMPOSER_PX + (banner ? BANNER_PX : 0) + (chips ? SUGGESTED_CHIPS_PX : 0) + roots;
   const transcript = Math.max(0, usable - chrome);
   const share = usable > 0 ? Math.min(1, transcript / usable) : 0;
-  const floor = keyboard > 0 ? MIN_KEYBOARD_TRANSCRIPT_SHARE : MIN_TRANSCRIPT_SHARE;
+  const floor = keyboard > 0 ? MIN_KEYBOARD_TRANSCRIPT_SHARE : tabBar ? MIN_TAB_ROOT_TRANSCRIPT_SHARE : MIN_TRANSCRIPT_SHARE;
   return { usable, chrome, transcript, share, meetsMinimum: share >= floor };
 }

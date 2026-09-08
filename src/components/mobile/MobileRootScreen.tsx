@@ -23,14 +23,19 @@ export interface MobileRootContext {
   /** Whether this surface can show the host sheet (a project board can, the overview cannot). */
   hostSheet: boolean;
   hostTrailing?: ReactNode;
-  /** The chat page's one working control: opens the orchestrator the board dock opens. */
-  onOpenOrchestrator?: () => void;
+  /** The live room: the seat's conversation screen, composed by the dashboard.
+      Present only when the seat is live and its transcript is here. */
+  orchestratorRoom?: ReactNode;
+  /** The seat's own reading, for the honest empty state. */
+  seatShape?: "invitation" | "seat";
+  /** Overview only: no project, so no seat. */
+  onPickProject?: () => void;
 }
 
 export function renderMobileRootScreen(kind: MobileScreenKind, ctx: MobileRootContext): ReactNode | null {
   switch (kind) {
     case "settings": return <MobileSettingsScreen ctx={ctx} />;
-    case "orchestrator": return <MobileNotBuiltScreen kind={kind} ctx={ctx} />;
+    case "orchestrator": return ctx.orchestratorRoom ?? <MobileChatEmptyScreen ctx={ctx} />;
     case "secrets": return <MobileNotBuiltScreen kind={kind} ctx={ctx} />;
     case "mcp": return <MobileNotBuiltScreen kind={kind} ctx={ctx} />;
     default: return null;
@@ -62,23 +67,36 @@ function MobileSettingsScreen({ ctx }: { ctx: MobileRootContext }) {
   );
 }
 
-function MobileNotBuiltScreen({ kind, ctx }: { kind: "orchestrator" | "secrets" | "mcp"; ctx: MobileRootContext }) {
+const ACTION = "inline-flex min-h-11 items-center rounded-control border border-accent px-4 text-body font-semibold text-accent active:bg-accent-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40";
+
+/** The Чат tab with no room to show: no project (overview), no seat yet, or a
+    seat that is not ready to talk. One sentence, one button, nothing else. */
+function MobileChatEmptyScreen({ ctx }: { ctx: MobileRootContext }) {
   const { t } = useLocale();
-  const title = t(kind === "orchestrator" ? "mobile2.tabs.chat" : kind === "secrets" ? "mobile2.tabs.secrets" : "mobile2.tabs.mcp");
-  const sentence = t(kind === "orchestrator" ? "mobile2.soon.chat" : kind === "secrets" ? "mobile2.soon.secrets" : "mobile2.soon.mcp");
+  const nav = useMobileNavStore();
+  const view = ctx.onPickProject
+    ? { sentence: t("mobile2.chat.pickProject"), action: t("mobile2.chat.pickProjectAction"), run: ctx.onPickProject }
+    : ctx.seatShape === "invitation"
+      ? { sentence: t("mobile2.chat.seatVacant"), action: t("mobile2.chat.seatCreate"), run: () => nav.openSheet("rotate") }
+      : { sentence: t("mobile2.chat.seatBusy"), action: t("mobile2.chat.openOrchestrator"), run: () => nav.openSheet("seat") };
+  return (
+    <MobileShell screen="orchestrator" title={<MobileBarTitle>{t("mobile2.board.orchestrator")}</MobileBarTitle>} host={ctx.host} renderSheet={ctx.renderSheet}>
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 px-6 text-center" data-mobile2-chat-empty>
+        <p className="max-w-[280px] text-body leading-relaxed text-secondary">{view.sentence}</p>
+        <button type="button" className={ACTION} onClick={view.run}>{view.action}</button>
+      </div>
+    </MobileShell>
+  );
+}
+
+function MobileNotBuiltScreen({ kind, ctx }: { kind: "secrets" | "mcp"; ctx: MobileRootContext }) {
+  const { t } = useLocale();
+  const title = t(kind === "secrets" ? "mobile2.tabs.secrets" : "mobile2.tabs.mcp");
+  const sentence = t(kind === "secrets" ? "mobile2.soon.secrets" : "mobile2.soon.mcp");
   return (
     <MobileShell screen={kind} title={<MobileBarTitle>{title}</MobileBarTitle>} host={ctx.host} renderSheet={ctx.renderSheet}>
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 px-6 text-center" data-mobile2-not-built={kind}>
         <p className="max-w-[280px] text-body leading-relaxed text-secondary">{sentence}</p>
-        {kind === "orchestrator" && ctx.onOpenOrchestrator ? (
-          <button
-            type="button"
-            className="inline-flex min-h-11 items-center rounded-control border border-accent px-4 text-body font-semibold text-accent active:bg-accent-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-            onClick={ctx.onOpenOrchestrator}
-          >
-            {t("mobile2.chat.openOrchestrator")}
-          </button>
-        ) : null}
       </div>
     </MobileShell>
   );

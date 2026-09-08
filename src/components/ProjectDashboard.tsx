@@ -60,7 +60,12 @@ import { MobileHostSheet } from "./mobile/MobileHostSheet";
 import { MobileSeatCard } from "./mobile/MobileSeatCard";
 import { MobileMenuSheet, type MobileMenuEntry } from "./mobile/MobileMenuSheet";
 import { showReceipt } from "./mobile/MobileReceipt";
+import { MobileAgentsStrip } from "./mobile/MobileAgentsStrip";
+import { mobileAgentStrip } from "./mobile/mobileBoardModel";
 import { renderMobileRootScreen } from "./mobile/MobileRootScreen";
+import { MobileSheet, MobileSheetRow } from "./mobile/MobileSheet";
+import { seatCardView } from "./mobile/orchestratorRowState";
+import { appendComposerDraft } from "./TmuxComposer";
 import { MobileAccountsScreen, MobileBarTitle, MobileShell, type MobileShellHost } from "./mobile/MobileShell";
 import { MobilePipelineScreen } from "./mobile/MobilePipelineScreen";
 import { MobilePipelinesScreen } from "./mobile/MobilePipelinesScreen";
@@ -1762,6 +1767,8 @@ function ProjectDashboardView({
     now: nowSeconds,
   };
   const mobileBoardModel = isMobile ? mobileBoardOf(mobileBoardProps) : null;
+  /* The Чат tab's roster: the board's own triage order, seat excluded. */
+  const mobileAgents = mobileBoardModel ? mobileAgentStrip(mobileBoardModel) : [];
   /* The pipeline the stack names, when the scan still carries it (lane 7). */
   const mobilePipelineOnScreen = mobileTop.kind === "pipeline"
     ? activePipelines.find((pipeline) => pipeline.id === mobileTop.id) ?? null
@@ -1975,6 +1982,25 @@ function ProjectDashboardView({
   };
 
   const renderMobileSheet = (name: MobileSheetName, close: () => void) => {
+    if (name === "mention") {
+      /* «@» on the Чат tab: pick an agent, and its name lands in the room's
+         composer — the orchestrator resolves the address (mandate v14). */
+      return (
+        <MobileSheet name="mention" title={t("mobile2.chat.mentionTitle")} onClose={close}>
+          {mobileAgents.map((row) => (
+            <MobileSheetRow
+              key={row.path}
+              label={row.title}
+              attrs={{ "data-mobile2-mention": row.path }}
+              onSelect={() => {
+                close();
+                if (seatFile) appendComposerDraft(conversationIdentity(seatFile), `@${row.title} `);
+              }}
+            />
+          ))}
+        </MobileSheet>
+      );
+    }
     if (name === "menu") return <MobileMenuSheet title={projectName} entries={mobileMenuEntries()} onClose={close} />;
     /* Host details (mobile v2 lane 2): the background processes with their PIDs
        and a Kill that acts on the tap, the runtime connection, and the quiet
@@ -1996,9 +2022,61 @@ function ProjectDashboardView({
     return mobileShell?.renderSheet(name, close) ?? null;
   };
 
-  /* The tab bar's own roots (settings, and the pages not built yet) replace
-     the board at the bottom of the stack; the chat page's one button opens the
-     orchestrator exactly as the board dock does. */
+  /* The phone's conversation screen, composed once: the board leaf mounts it
+     for whatever conversation is on top of the stack, and the Чат tab mounts
+     the same screen pinned to the orchestrator's seat (TZ-UI.md: the room). */
+  const mobileFocusProps = {
+    project,
+    projectName,
+    groups: layoutGroups,
+    manual: layoutManual,
+    files,
+    flows,
+    reviewGroups: directReviewGroups,
+    pipelines,
+    surfacePipelines: activePipelines,
+    tasks: hasNodes ? boardTasks : EMPTY_TASKS,
+    sheetTasks: projectTasks,
+    drafts: layoutDrafts,
+    favorites: favoriteIdSet,
+    isolatedManualPaths: isolatedCompactHistoryPaths,
+    loaded,
+    /* The SCREEN is the truth on the phone (mobile v2 §3.3): the conversation
+       on top of the stack outranks the board's own highlight. */
+    focus: mobileConversationKey ?? highlight,
+    onSelect: openSwitchboardFile,
+    onClose: closeNode,
+    onDraftClose: removeDraft,
+    onDraftSpawned: draftSpawned,
+    onConversationOpened: markPathSeen,
+    /* «Hand off» and «Transfer» are rows in the conversation's ⋯ (§4.2): the
+       board owns the draft, the screen only asks for it. */
+    onHandoff: addHandoffDraft,
+    onTransfer: (file: FileEntry) => { void addTransferDraft(file); },
+    trayApi,
+  };
+  /* The tab bar's own roots. The Чат tab is the seat's conversation as the
+     room, with the project's agents as a strip; without a live seat it is one
+     sentence and the existing seat/rotate sheet. */
+  const seatView = seatCardView(seatState, { conversationReady: Boolean(seatFile) });
+  const orchestratorRoom = isMobile && boardReady && seatView.tap === "conversation" && seatFile ? (
+    <MobileFocusView
+      {...mobileFocusProps}
+      focus={seatFile.path}
+      /* Mounted from the ROOT screen, outside the board's shell, so the chrome
+         the board leaf inherits is passed by hand. */
+      shellHost={mobileShell}
+      renderBoardSheet={renderMobileSheet}
+      roomTitle={t("mobile2.board.orchestrator")}
+      agentsStrip={
+        <MobileAgentsStrip
+          agents={mobileAgents}
+          onOpen={openBoardRow}
+          onMention={mobileAgents.length ? () => mobileNav.openSheet("mention") : undefined}
+        />
+      }
+    />
+  ) : null;
   const mobileRootScreen = isMobile
     ? renderMobileRootScreen(mobileTop.kind, {
         host: mobileShell,
@@ -2010,11 +2088,8 @@ function ProjectDashboardView({
             {t("mobile2.menu.hostTasks", { count: dockedTasks.length })}
           </>
         ),
-        onOpenOrchestrator: !boardReady
-          ? undefined
-          : seatState.kind === "live" && seatFile
-            ? () => openBoardRow(seatFile)
-            : () => mobileNav.openSheet(seatState.kind === "draft" ? "rotate" : "seat"),
+        orchestratorRoom,
+        seatShape: seatView.shape,
       })
     : null;
   return (
@@ -2228,42 +2303,7 @@ function ProjectDashboardView({
                   onOpenCatalog={inlineCatalog.toggle}
                 />
               ) : projectView === "scheme" && schemeAvailable ? (
-                <MobileFocusView
-                  project={project}
-                  projectName={projectName}
-                  groups={layoutGroups}
-                  manual={layoutManual}
-                  files={files}
-                  flows={flows}
-                  reviewGroups={directReviewGroups}
-                  pipelines={pipelines}
-                  surfacePipelines={activePipelines}
-                  tasks={hasNodes ? boardTasks : EMPTY_TASKS}
-                  sheetTasks={projectTasks}
-                  drafts={layoutDrafts}
-                  favorites={favoriteIdSet}
-                  isolatedManualPaths={isolatedCompactHistoryPaths}
-                  loaded={loaded}
-                  /* The SCREEN is the truth on the phone (mobile v2 §3.3):
-                     the conversation on top of the stack is the one this
-                     screen is, and it outranks the board's own highlight —
-                     which still names the previously focused card for the
-                     frame in which the new screen mounts, and painted that
-                     other conversation's pane before replacing it. */
-                  focus={mobileConversationKey ?? highlight}
-                  onSelect={openSwitchboardFile}
-                  onClose={closeNode}
-                  onDraftClose={removeDraft}
-                  onDraftSpawned={draftSpawned}
-                  onConversationOpened={markPathSeen}
-                  /* «Hand off» is a row in the conversation's ⋯ (§4.2): the
-                     board owns the draft, the screen only asks for it. The
-                     host sheet's handoff handle — the last of the retired
-                     shelf's contents — went with lane 10. */
-                  onHandoff={addHandoffDraft}
-                  onTransfer={(file) => { void addTransferDraft(file); }}
-                  trayApi={trayApi}
-                />
+                <MobileFocusView {...mobileFocusProps} />
               ) : (
                 /* The phone has THREE leaves and the pin belongs in all of them
                    (PRD #976 decision 5). The focus view carries it inside its own

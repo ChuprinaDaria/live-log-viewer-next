@@ -32,7 +32,7 @@ export type MobileScreen =
   | { kind: "mcp" }
   | { kind: "settings" };
 export type MobileScreenKind = MobileScreen["kind"];
-export type MobileSheetName = "projects" | "attention" | "menu" | "host" | "search" | "seat" | "rotate" | "switch" | "model" | "stage";
+export type MobileSheetName = "projects" | "attention" | "menu" | "host" | "search" | "seat" | "rotate" | "switch" | "model" | "stage" | "mention";
 /** How the current state was reached; the shell picks its transition from it. */
 export type MobileNavMotion = "load" | "push" | "pop" | "switch" | "sheet" | "act";
 

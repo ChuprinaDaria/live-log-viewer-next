@@ -88,8 +88,8 @@ test("bridge reports survive as the second channel, for the operator away from t
 
 /* Seats record the mandate version they were spawned on; `get_orchestrator` reports
    this constant as defaultPromptVersion, so an older seat reads as stale without a diff. */
-test("the default mandate is at version 13", () => {
-  expect(ORCHESTRATOR_PROMPT_VERSION).toBe(13);
+test("the default mandate is at version 14", () => {
+  expect(ORCHESTRATOR_PROMPT_VERSION).toBe(14);
 });
 
 /* #1428 v13 — agents kept re-solving what an earlier conversation had already

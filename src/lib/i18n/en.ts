@@ -2717,4 +2717,14 @@ export const en = {
   "mobile2.pipeline.openAttempt": "Open the transcript of attempt {n}",
   "mobile2.pipeline.reviewTranscript": "review transcript · round {n}",
   "mobile2.pipeline.openReviewTranscript": "Open the review transcript of round {n}",
+  /* TZ-UI.md — the Чат tab as the project room (slice 1). */
+  "mobile2.chat.agents": "Project agents",
+  "mobile2.chat.openAgent": "Open {title}",
+  "mobile2.chat.mention": "Mention an agent",
+  "mobile2.chat.mentionTitle": "Mention an agent",
+  "mobile2.chat.seatVacant": "This project has no orchestrator yet.",
+  "mobile2.chat.seatCreate": "Create orchestrator",
+  "mobile2.chat.seatBusy": "The orchestrator is not ready to talk yet.",
+  "mobile2.chat.pickProject": "Pick a project — each one has its own orchestrator.",
+  "mobile2.chat.pickProjectAction": "Choose project",
 } satisfies Dictionary;

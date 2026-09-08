@@ -50,7 +50,7 @@ const EDGE: Record<"warning" | "danger", string> = {
   warning: "shadow-[inset_3px_0_0_var(--color-warning),var(--shadow-1)]",
   danger: "shadow-[inset_3px_0_0_var(--color-danger),var(--shadow-1)]",
 };
-const DOT: Record<MobileRowState["dot"], string> = {
+export const DOT: Record<MobileRowState["dot"], string> = {
   success: "bg-success",
   warning: "bg-warning",
   danger: "bg-danger",

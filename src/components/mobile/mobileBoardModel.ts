@@ -401,3 +401,14 @@ export function buildMobileBoard({
     attentionCount: needsYou.length,
   };
 }
+
+/** The project's agents in the board's own triage order, for the Чат tab's
+    strip. The seat is excluded by `buildMobileBoard`, so this is agents only;
+    pure, so the strip and the board can never disagree. */
+export function mobileAgentStrip(model: MobileBoardModel): MobileBoardConversation[] {
+  return [
+    ...model.needsYou.flatMap((item) => (item.kind === "conversation" ? [item] : [])),
+    ...model.working,
+    ...model.recent,
+  ];
+}

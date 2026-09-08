@@ -231,7 +231,7 @@ export function OverviewBoard({ files, projectCatalog, projectDisplayNames = {},
     const renderSheet = (name: MobileSheetName, close: () => void) => mobileShell?.renderSheet(name, close) ?? null;
     /* The tab bar's roots (settings, the pages not built yet); the overview
        has no host sheet of its own. */
-    const rootScreen = renderMobileRootScreen(topScreen(mobileNavState).kind, { host: mobileShell, renderSheet, hostSheet: false });
+    const rootScreen = renderMobileRootScreen(topScreen(mobileNavState).kind, { host: mobileShell, renderSheet, hostSheet: false, onPickProject: () => mobileNav.openSheet("projects") });
     if (rootScreen) return rootScreen;
     if (topScreen(mobileNavState).kind === "accounts") return <MobileAccountsScreen host={mobileShell} renderSheet={renderSheet} />;
     return (

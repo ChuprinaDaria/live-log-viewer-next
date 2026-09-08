@@ -2629,4 +2629,14 @@ export const uk: Record<keyof typeof en, Message> = {
   "mobile2.pipeline.openAttempt": "Відкрити транскрипт спроби {n}",
   "mobile2.pipeline.reviewTranscript": "транскрипт рев’ю · раунд {n}",
   "mobile2.pipeline.openReviewTranscript": "Відкрити транскрипт рев’ю раунду {n}",
+  /* TZ-UI.md — the Чат tab as the project room (slice 1). */
+  "mobile2.chat.agents": "Агенти проєкту",
+  "mobile2.chat.openAgent": "Відкрити {title}",
+  "mobile2.chat.mention": "Згадати агента",
+  "mobile2.chat.mentionTitle": "Згадати агента",
+  "mobile2.chat.seatVacant": "У цьому проєкті ще немає оркестратора.",
+  "mobile2.chat.seatCreate": "Створити оркестратора",
+  "mobile2.chat.seatBusy": "Оркестратор ще не готовий до розмови.",
+  "mobile2.chat.pickProject": "Оберіть проєкт — у кожного свій оркестратор.",
+  "mobile2.chat.pickProjectAction": "Обрати проєкт",
 };
