@@ -1,4 +1,8 @@
 import type { Metadata, Viewport } from "next";
+import Script from "next/script";
+
+import { TelegramWebAppHost } from "@/components/telegram/TelegramWebAppHost";
+
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -22,7 +26,20 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="h-full antialiased">
-      <body className="h-dvh overflow-hidden font-sans text-[15px]">
+      <head>
+        {/* Telegram's Mini App bridge. It must come from their domain — the
+            script talks to the client through a channel a bundled copy does
+            not have — and it must run before the app mounts, because the host
+            below reads `window.Telegram.WebApp` on its first effect. Outside
+            Telegram it defines the global and nothing else happens. */}
+        <Script src="https://telegram.org/js/telegram-web-app.js" strategy="beforeInteractive" />
+      </head>
+      {/* The height is a variable, not `100dvh`: inside Telegram's browser the
+          viewport units report the whole screen while the app occupies part of
+          it, so the shell would run off the bottom. Everywhere else the
+          variable is unset and the fallback is the value this always used. */}
+      <body className="app-shell overflow-hidden font-sans text-[15px]">
+        <TelegramWebAppHost />
         {children}
       </body>
     </html>

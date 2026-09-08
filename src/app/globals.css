@@ -10,6 +10,21 @@ body {
   color: var(--color-primary);
 }
 
+/* The app's own height, and the edges nothing may be painted under.
+ *
+ * Outside Telegram every variable below is unset, so this is `100dvh` with no
+ * padding — exactly what `h-dvh` gave before. Inside Telegram's embedded
+ * browser the viewport units lie (they report the whole screen while the app
+ * is a sheet inside it) and `env(safe-area-inset-*)` reads 0 even though the
+ * notch and the gesture bar are still there; the client reports both itself,
+ * and `TelegramWebAppHost` writes them here. */
+.app-shell {
+  height: var(--app-height, 100dvh);
+  padding-top: var(--tg-safe-top, 0px);
+  padding-bottom: var(--tg-safe-bottom, 0px);
+  background: var(--tg-page-background, var(--color-canvas));
+}
+
 /* Native <button> ships with `cursor: default`, so every custom control in the
    app reads as un-clickable until you hover a link. Restore a sane pointer for
    interactive elements, and switch to not-allowed when they're disabled. These
