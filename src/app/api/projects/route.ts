@@ -27,10 +27,15 @@ function list(value: unknown): string[] | undefined {
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const project = request.nextUrl.searchParams.get("project")?.trim();
   const firm = request.nextUrl.searchParams.get("firm")?.trim();
+  /* `?code=1` is a different question about the same project: not what it is
+     allowed to use, but what its checkout looks like on every machine that
+     has one — branch, head, dirty. The console answers it separately, so the
+     detail read stays as cheap as it was. */
+  const code = request.nextUrl.searchParams.get("code") === "1";
   try {
     if (project) {
       if (!SLUG.test(project)) return NextResponse.json({ error: "project id is invalid" }, { status: 400, headers });
-      return NextResponse.json(await fleetctl({ fn: "project_show", params: { project } }), { headers });
+      return NextResponse.json(await fleetctl({ fn: code ? "project_code" : "project_show", params: { project } }), { headers });
     }
     return NextResponse.json(await fleetctl({ fn: "projects_list", params: firm && SLUG.test(firm) ? { firm } : {} }), { headers });
   } catch (error) {

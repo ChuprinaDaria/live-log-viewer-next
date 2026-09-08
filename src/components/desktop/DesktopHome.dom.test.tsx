@@ -56,7 +56,7 @@ const flush = () => new Promise((r) => setTimeout(r, 0));
 test("desktop home = console column + HQ room, and «Дошка» hands off", async () => {
   setLocale("uk");
   let boards = 0;
-  const el = mount(<DesktopHome files={[]} selectedProject={null} onSelectProject={() => {}} onOpenBoard={() => { boards += 1; }} onOpenBoardProject={() => {}} onOpenFile={() => {}} onCreateAgent={() => {}} />);
+  const el = mount(<DesktopHome files={[]} selectedProject={null} onSelectProject={() => {}} onOpenBoard={() => { boards += 1; }} onOpenBoardProject={() => {}} onOpenFile={() => {}} />);
   await act(flush); await act(flush);
   expect(el.querySelector("[data-desktop-console]")).not.toBeNull();
   expect(el.querySelector('[data-mobile2-hq="vacant"]')).not.toBeNull();

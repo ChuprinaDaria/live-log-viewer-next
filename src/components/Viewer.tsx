@@ -1199,7 +1199,6 @@ export function Viewer() {
           onOpenBoard={openBoard}
           onOpenBoardProject={(key) => { openBoard(); selectProject(key); }}
           onOpenFile={(file) => { setHomeMode("board"); openFile(file); }}
-          onCreateAgent={() => undefined}
         />
         <AttentionHost mobile={false} />
         <ArtifactPreviewHost mobile={false} />

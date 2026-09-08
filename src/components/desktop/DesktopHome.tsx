@@ -1,7 +1,6 @@
 "use client";
 
 import { LayoutGrid } from "lucide-react";
-import type { ReactNode } from "react";
 
 import { MobileHqRoom } from "@/components/mobile/MobileHqRoom";
 import { SuppressMobileTabs } from "@/components/mobile/MobileShell";
@@ -9,6 +8,7 @@ import { useLocale } from "@/lib/i18n";
 import type { FileEntry } from "@/lib/types";
 
 import { OrgTree } from "./OrgTree";
+import { ProjectConsole } from "./ProjectConsole";
 
 /*
  * The desktop's home (spec 2026-09-08): the console column on the left — the
@@ -25,11 +25,9 @@ export interface DesktopHomeProps {
   onOpenBoard: () => void;
   onOpenBoardProject: (boardProject: string) => void;
   onOpenFile: (file: FileEntry) => void;
-  onCreateAgent: (project: string | null) => void;
-  projectConsole?: ReactNode;
 }
 
-export function DesktopHome({ files, selectedProject, onSelectProject, onOpenBoard, onOpenBoardProject, projectConsole }: DesktopHomeProps) {
+export function DesktopHome({ files, selectedProject, onSelectProject, onOpenBoard, onOpenBoardProject, onOpenFile }: DesktopHomeProps) {
   const { t } = useLocale();
   return (
     <div className="flex h-full">
@@ -43,7 +41,7 @@ export function DesktopHome({ files, selectedProject, onSelectProject, onOpenBoa
           </button>
         </div>
         <OrgTree files={files} selected={selectedProject} onSelect={(id) => onSelectProject(id === selectedProject ? null : id)} onOpenBoardProject={onOpenBoardProject} />
-        {projectConsole}
+        {selectedProject ? <ProjectConsole project={selectedProject} files={files} onOpenFile={onOpenFile} /> : null}
       </aside>
       <main data-desktop-hq className="flex min-w-0 flex-1 flex-col">
         <SuppressMobileTabs>
