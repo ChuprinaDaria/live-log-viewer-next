@@ -2,12 +2,13 @@
 
 import { useEffect, useState } from "react";
 
+import { effortTierLabel } from "@/components/builderCopy";
 import { ReasoningControls, type SpeedChoice } from "@/components/ReasoningControls";
 import { Select } from "@/components/ui/Select";
 import { engineTintOf } from "@/components/utils";
 import { effortScale } from "@/lib/agent/efforts";
-import { defaultModelFor } from "@/lib/agent/models";
-import { useLocale } from "@/lib/i18n";
+import { ENGINE_MODELS, defaultModelFor } from "@/lib/agent/models";
+import { useLocale, type TFunction } from "@/lib/i18n";
 
 /**
  * THE shared «which agent am I launching» control set (PRD #976 slice A).
@@ -219,6 +220,27 @@ export function useAgentLaunchDraft(options: {
 }
 
 /**
+ * The one-line truth about a launch draft, for a collapsed settings row: role,
+ * model, effort, codex speed, account — each token present only when the value
+ * exists, so nothing stands in for data that is not there.
+ */
+export function launchSummary(
+  t: TFunction,
+  draft: Pick<AgentLaunchDraft, "engine" | "model" | "effort" | "speed" | "accounts" | "launchAccountId">,
+  roleLabel?: string | null,
+): string {
+  const tokens: string[] = [];
+  if (roleLabel) tokens.push(roleLabel);
+  const model = ENGINE_MODELS[draft.engine].find((option) => option.id === draft.model);
+  tokens.push(draft.model ? (model?.shortLabel ?? draft.model) : t("draft.summaryModelDefault"));
+  tokens.push(draft.effort ? effortTierLabel(t, draft.effort) : t("draft.summaryEffortDefault"));
+  if (draft.engine === "codex" && draft.speed) tokens.push(t(draft.speed === "fast" ? "draft.speedFast" : "draft.speedStandard"));
+  const account = draft.accounts.find((entry) => entry.id === draft.launchAccountId);
+  if (account) tokens.push(account.label);
+  return tokens.join(" · ");
+}
+
+/**
  * The engine picker chips every draft-style window shares — the agent draft
  * pane, the pipeline stage placeholders and the orchestrator panel render the
  * exact same control (issue #196: one window recipe, no lookalikes).
@@ -227,17 +249,21 @@ export function EngineRadioGroup({
   engine,
   disabled,
   roomy,
+  touch,
   onChange,
 }: {
   engine: LaunchEngine;
   disabled?: boolean;
   /** The 32px control step for surfaces that give the draft its own column. */
   roomy?: boolean;
+  /** A full-width segmented pair at the 44px touch step (32px from `sm:`),
+      for the primary launch stack where the engine is the first decision. */
+  touch?: boolean;
   onChange: (engine: LaunchEngine) => void;
 }) {
   const { t } = useLocale();
   return (
-    <div className="flex shrink-0 items-center gap-1" role="radiogroup" aria-label={t("draft.engineAria")}>
+    <div className={touch ? "flex w-full items-center gap-2" : "flex shrink-0 items-center gap-1"} role="radiogroup" aria-label={t("draft.engineAria")}>
       {ENGINES.map(({ key, label }) => {
         const active = engine === key;
         const chip = engineTintOf(key);
@@ -250,8 +276,8 @@ export function EngineRadioGroup({
             disabled={disabled}
             onClick={() => onChange(key)}
             style={active ? { backgroundColor: "var(--color-card)", color: chip.color, borderColor: chip.color } : undefined}
-            className={`rounded-full border font-bold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-60 ${
-              roomy ? "px-3 py-1 text-ui" : "px-2 py-0.5 text-[10.5px]"
+            className={`border font-bold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-60 ${
+              touch ? "min-h-11 flex-1 rounded-control px-4 text-body sm:min-h-8" : roomy ? "rounded-full px-3 py-1 text-ui" : "rounded-full px-2 py-0.5 text-[10.5px]"
             } ${active ? "" : "border-transparent bg-transparent text-muted hover:text-primary"}`}
           >
             {label}

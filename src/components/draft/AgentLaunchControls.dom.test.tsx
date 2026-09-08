@@ -3,7 +3,7 @@ import { Window as HappyWindow } from "happy-dom";
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 
-import { setLocale } from "@/lib/i18n";
+import { setLocale, translate } from "@/lib/i18n";
 
 /*
  * The SHARED launch controls (PRD #976 slice A): one module owns engine, model,
@@ -31,6 +31,7 @@ Object.assign(globalThis, {
 const {
   AgentLaunchControls,
   launchAccountCatalogOf,
+  launchSummary,
   resolveLaunchAccountId,
   useAgentLaunchDraft,
 } = await import("./AgentLaunchControls");
@@ -188,4 +189,22 @@ test.each(["ultra", "max"])("model switch reconciles and persists Astra/%s for L
   expect(draft().model).toBe("gpt-5.6-luna");
   expect(draft().effort).toBe(expected);
   expect(store.get("effort")).toBe(expected || undefined);
+});
+
+/* The collapsed settings row's one-line summary (TZ-UI.md stage 2): every token
+   comes from a value that exists, nothing stands in for a missing one. */
+const en = (key: Parameters<typeof translate>[1], params?: Parameters<typeof translate>[2]) => translate("en", key, params);
+const noAccounts = { accounts: [], launchAccountId: "" };
+
+test("the launch summary names model and effort defaults honestly and adds nothing else", () => {
+  expect(launchSummary(en, { engine: "claude", model: "opus", effort: "", speed: "", ...noAccounts })).toBe("Opus 5 · default");
+  expect(launchSummary(en, { engine: "claude", model: "", effort: "high", speed: "", ...noAccounts })).toBe("default · high");
+});
+
+test("the launch summary adds role, codex speed and the resolved account only when present", () => {
+  expect(launchSummary(en, { engine: "claude", model: "opus", effort: "medium", speed: "", ...noAccounts }, "reviewer")).toBe("reviewer · Opus 5 · medium");
+  const accounts = [{ id: "codex-a", label: "codex-a", authPresent: true }];
+  expect(launchSummary(en, { engine: "codex", model: "gpt-6-astra", effort: "", speed: "fast", accounts, launchAccountId: "codex-a" })).toBe("6-Astra · default · fast · codex-a");
+  /* A claude draft ignores a stale codex speed; an unresolved account id adds no token. */
+  expect(launchSummary(en, { engine: "claude", model: "opus", effort: "", speed: "fast", accounts, launchAccountId: "gone" })).toBe("Opus 5 · default");
 });

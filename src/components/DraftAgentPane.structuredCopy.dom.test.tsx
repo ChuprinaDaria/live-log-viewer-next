@@ -85,12 +85,12 @@ test("a structured spawn drops the tmux wording from the composer hint, placehol
   flushSync(() => root!.render(<DraftAgentPane draftId="structured-copy" project="proj" files={[]} onClose={() => {}} onSpawned={() => {}} />));
   await settle();
 
-  /* Unlaunched composer copy follows the negotiated structured host. */
-  expect(host.textContent).toContain("the agent will start, and the conversation");
+  /* Unlaunched composer copy follows the negotiated structured host. The empty
+     state names no transport at all (TZ-UI.md stage 2: one sentence, nothing
+     the controls above already say); the placeholder still does. */
   expect(host.textContent).not.toContain("tmux");
   const textarea = host.querySelector("textarea") as HTMLTextAreaElement;
   expect(textarea.placeholder).toBe("first prompt — the agent will start…");
-  expect(host.innerHTML).toContain('title="new structured session with a fresh agent"');
   expect(host.innerHTML).not.toContain("tmux");
 
   /* The frozen card after launch stays tmux-free too. */
@@ -119,8 +119,6 @@ test("a legacy tmux spawn keeps the pane, window, and target wording (#266)", as
   flushSync(() => root!.render(<DraftAgentPane draftId="legacy-copy" project="proj" files={[]} onClose={() => {}} onSpawned={() => {}} />));
   await settle();
 
-  expect(host.textContent).toContain("the agent will start in tmux");
   const textarea = host.querySelector("textarea") as HTMLTextAreaElement;
   expect(textarea.placeholder).toBe("first prompt — the agent will start in tmux…");
-  expect(host.innerHTML).toContain('title="new tmux window with a fresh agent"');
 });

@@ -6,9 +6,10 @@ import { roleDescription, roleName, roleParamDescription, roleParamLabel, rolePa
 import {
   EngineRadioGroup,
   LaunchAccountSelect,
+  launchSummary,
   useAgentLaunchDraft,
 } from "@/components/draft/AgentLaunchControls";
-import { Play, X } from "@/components/icons";
+import { ChevronDown, GitBranch, X } from "@/components/icons";
 import { Select } from "@/components/ui/Select";
 import { useComposer } from "@/hooks/useComposer";
 import { seedLaunchOutbox } from "@/components/conversation/outbox";
@@ -151,6 +152,8 @@ export function RoleSection({
   disabled,
   allowedRoleIds,
   compactPreview,
+  className = "flex shrink-0 flex-col gap-1.5 border-b border-border bg-sunken px-2.5 py-1.5",
+  roomy,
   onSelectRole,
   onSetParam,
   children,
@@ -162,6 +165,10 @@ export function RoleSection({
   disabled?: boolean;
   allowedRoleIds?: ReadonlySet<string>;
   compactPreview?: boolean;
+  /** Container classes; the default is the dense band the stage placeholders keep. */
+  className?: string;
+  /** Touch-step controls (44px, 32px from `sm:`) for a host that stacks the fields. */
+  roomy?: boolean;
   onSelectRole: (roleId: string) => void;
   onSetParam: (key: string, value: string | number) => void;
   children?: React.ReactNode;
@@ -169,17 +176,19 @@ export function RoleSection({
   const { t } = useLocale();
   const offered = allowedRoleIds ? roles.filter((role) => allowedRoleIds.has(role.id)) : roles;
   const selectedRole = offered.find((role) => role.id === roleId) ?? null;
+  const control = roomy ? "min-h-11 sm:min-h-8" : "";
   return (
-    <div className="flex shrink-0 flex-col gap-1.5 border-b border-border bg-sunken px-2.5 py-1.5">
+    <div className={className}>
       <div className="flex min-w-0 flex-wrap items-center gap-1.5">
         <label className="shrink-0 text-caption font-semibold text-muted" htmlFor={`draft-role-${idPrefix}`}>{t("draft.role")}</label>
         <Select
           id={`draft-role-${idPrefix}`}
           value={roleId}
           disabled={disabled}
+          roomy={roomy}
+          className={`flex-1 ${control}`}
           onChange={(event) => onSelectRole(event.target.value)}
           aria-label={t("draft.roleAria")}
-          className="flex-1"
         >
           <option value="">{t("draft.noRole")}</option>
           {offered.map((role) => <option key={role.id} value={role.id}>{roleName(t, role)}</option>)}
@@ -196,13 +205,13 @@ export function RoleSection({
                   <label key={parameter.key} className="flex min-w-28 flex-1 flex-col gap-0.5 text-caption text-muted">
                     <span>{label}{parameter.required ? " *" : ""}</span>
                     {parameter.kind === "select" ? (
-                      <Select value={String(roleParams[parameter.key] ?? "")} disabled={disabled} onChange={(event) => onSetParam(parameter.key, event.target.value)}>
+                      <Select value={String(roleParams[parameter.key] ?? "")} disabled={disabled} roomy={roomy} className={control} onChange={(event) => onSetParam(parameter.key, event.target.value)}>
                         {parameter.options?.map((option) => (
                           <option key={option} value={option}>{roleParamOptionLabel(t, selectedRole.id, parameter.key, option)}</option>
                         ))}
                       </Select>
                     ) : (
-                      <input type={parameter.kind === "integer" ? "number" : "text"} min={parameter.kind === "integer" ? parameter.min : undefined} max={parameter.kind === "integer" ? parameter.max : undefined} value={String(roleParams[parameter.key] ?? "")} disabled={disabled} onChange={(event) => onSetParam(parameter.key, parameter.kind === "integer" && event.target.value ? Number(event.target.value) : event.target.value)} aria-label={label} className="h-7 min-w-0 rounded-control border border-border bg-card px-1.5 text-ui text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-60" />
+                      <input type={parameter.kind === "integer" ? "number" : "text"} min={parameter.kind === "integer" ? parameter.min : undefined} max={parameter.kind === "integer" ? parameter.max : undefined} value={String(roleParams[parameter.key] ?? "")} disabled={disabled} onChange={(event) => onSetParam(parameter.key, parameter.kind === "integer" && event.target.value ? Number(event.target.value) : event.target.value)} aria-label={label} className={`${roomy ? "min-h-11 px-2 text-body sm:min-h-8" : "h-7 px-1.5 text-ui"} min-w-0 rounded-control border border-border bg-card text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-60`} />
                     )}
                     <span className="leading-3">{roleParamDescription(t, selectedRole.id, parameter)}</span>
                   </label>
@@ -257,7 +266,7 @@ function scaffoldPreview(scaffold: string, params: Record<string, string | numbe
 
 /** Everything a draft keeps in sessionStorage; called when the draft leaves the scheme. */
 export function clearDraftStorage(id: string) {
-  for (const name of ["engine", "model", "cwd", "cwdSeed", "text", "boot", "src", "parentConversationId", "effort", "speed", "accountId", "role", "roleParams", "reviews", "confirm"]) sessionStorage.removeItem(field(id, name));
+  for (const name of ["engine", "model", "cwd", "cwdSeed", "text", "boot", "src", "parentConversationId", "effort", "speed", "accountId", "role", "roleParams", "reviews", "confirm", "advancedOpen"]) sessionStorage.removeItem(field(id, name));
 }
 
 /** Source transcript a handoff draft continues; empty for a plain draft. */
@@ -376,6 +385,14 @@ export function DraftAgentPane({
   const [roleParams, setRoleParamsState] = useState(() => readRoleParams(draftId));
   const [reviews, setReviewsState] = useState(() => readField(draftId, "reviews"));
   const [deployConfirm, setDeployConfirmState] = useState(() => readField(draftId, "confirm"));
+  /* The settings disclosure is closed by default; its summary line says what
+     the launch will carry. It persists per draft, and a refusal that names a
+     field inside it opens it so the blamed field is on screen. */
+  const [advancedOpen, setAdvancedOpenState] = useState(() => readField(draftId, "advancedOpen") === "1");
+  const setAdvancedOpen = (open: boolean) => {
+    setAdvancedOpenState(open);
+    writeField(draftId, "advancedOpen", open ? "1" : "");
+  };
   const [dirs, setDirs] = useState<string[]>([]);
   /* The stored key is "" before the first negotiation and after an engine flip;
      the derived value below reads any mismatch as «loading», which is exactly
@@ -742,14 +759,17 @@ export function DraftAgentPane({
         return value === undefined || (typeof value === "string" && !value.trim());
       });
       if (missing) {
+        setAdvancedOpen(true);
         setStatus({ kind: "err", text: t("draft.roleNeedsParams") });
         return;
       }
       if (selectedRole.id === "deployer" && deployConfirm !== "deploy") {
+        setAdvancedOpen(true);
         setStatus({ kind: "err", text: t("draft.deployConfirm") });
         return;
       }
       if (selectedRole.id === "reviewer" && !reviews) {
+        setAdvancedOpen(true);
         setStatus({ kind: "err", text: t("draft.reviewerNeedsConversation") });
         return;
       }
@@ -802,89 +822,118 @@ export function DraftAgentPane({
       className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[10px] border border-border bg-card shadow-1"
       aria-label={t("draft.paneAria")}
     >
-      <span aria-hidden className="h-1 w-full shrink-0" style={{ backgroundColor: tint.color }} />
-      <header className="flex h-10 shrink-0 items-center gap-1.5 border-b border-border px-2.5" style={{ backgroundColor: tint.soft }}>
-        <LaunchAccountSelect draft={launch} disabled={fieldsDisabled} className="max-w-28" />
-        <span className="h-2 w-2 shrink-0 rounded-full bg-strong" title={t("draft.notStarted")} />
-        <EngineRadioGroup engine={engine} disabled={fieldsDisabled} onChange={setEngine} />
+      <span aria-hidden className="h-[3px] w-full shrink-0" style={{ backgroundColor: tint.color }} />
+      <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-3 sm:h-10 sm:px-2.5">
+        {src ? <GitBranch className="h-4 w-4 shrink-0 text-info" aria-hidden /> : null}
         <span
-          className="min-w-0 flex-1 truncate text-[12px] font-semibold text-muted"
-          title={srcFile ? cleanTitle(srcFile.title) : undefined}
+          className="min-w-0 flex-1 truncate text-body font-semibold text-secondary sm:text-ui"
+          title={src ? src : undefined}
         >
           {src ? t("draft.handoffLabel", { title: srcFile ? cleanTitle(srcFile.title, 60) : t("draft.conversation") }) : t("draft.newConvo")}
         </span>
         <button
-          className="inline-flex shrink-0 items-center rounded-[8px] border border-border bg-canvas px-1.5 py-0.5 text-muted hover:border-danger/40 hover:text-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+          className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-control text-muted hover:text-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 sm:h-7 sm:w-7"
           aria-label={t("draft.dismiss")}
           onClick={onClose}
         >
-          <X className="h-3 w-3" aria-hidden />
+          <X className="h-4 w-4 sm:h-3 sm:w-3" aria-hidden />
         </button>
       </header>
 
-      {/* The picker's popup hangs out of this strip, so the strip cannot clip
-          its own overflow — the pane below it scrolls, the strip does not. */}
-      <div className="relative z-20 flex shrink-0 items-center gap-1.5 border-b border-border bg-sunken px-2.5 py-1.5">
-        <span className="shrink-0 text-[10px] font-semibold text-muted">{t("draft.directory")}</span>
-        <DirectoryPicker
-          id={dirPickerId}
-          value={cwd}
-          dirs={dirs}
-          disabled={fieldsDisabled}
-          ariaLabel={t("draft.dirAria")}
-          onChange={setCwd}
-        />
-      </div>
-
-      <RoleSection
-        idPrefix={draftId}
-        roles={roles}
-        roleId={roleId}
-        roleParams={roleParams}
-        disabled={fieldsDisabled}
-        onSelectRole={selectRole}
-        onSetParam={setRoleParam}
-      >
-        {selectedRole?.id === "reviewer" ? (
-          <label className="flex max-w-full flex-col gap-0.5 text-caption text-muted">
-            <span>{t("draft.reviews")}</span>
-            <Select
-              value={reviews}
+      {/* The launch card: engine, directory, and one disclosure for the rest.
+          The directory picker's popup hangs out of the card, so the card cannot
+          clip its own overflow and stacks over the pane below, which scrolls. */}
+      <div className="shrink-0 px-3 pt-3 pb-2 sm:px-2.5 sm:pt-2 sm:pb-1.5">
+        <div className="relative z-20 divide-y divide-border overflow-visible rounded-surface border border-border bg-sunken">
+          <div className="flex items-center gap-2 px-2 py-1.5">
+            <EngineRadioGroup engine={engine} disabled={fieldsDisabled} touch onChange={setEngine} />
+          </div>
+          <div className="flex items-center px-2 py-1.5">
+            <DirectoryPicker
+              id={dirPickerId}
+              value={cwd}
+              dirs={dirs}
               disabled={fieldsDisabled}
-              onChange={(event) => setReviews(event.target.value)}
-              aria-label={t("draft.reviewsAria")}
+              ariaLabel={t("draft.dirAria")}
+              onChange={setCwd}
+            />
+          </div>
+          <details open={advancedOpen} onToggle={(event) => setAdvancedOpen(event.currentTarget.open)}>
+            <summary
+              className="flex min-h-11 cursor-pointer list-none select-none items-center gap-2 px-3 py-2 text-label font-semibold text-secondary hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/40 sm:min-h-8 [&::-webkit-details-marker]:hidden"
+              aria-label={t("draft.advancedAria")}
             >
-              <option value="">{t("draft.reviewsPlaceholder")}</option>
-              {reviews && !reviewCandidates.some((file) => (file.conversationId ?? file.path) === reviews) ? (
-                <option value={reviews}>{reviews}</option>
+              <span className="shrink-0">{t("draft.advanced")}</span>
+              <span className="min-w-0 flex-1 truncate text-right font-normal text-muted">
+                {launchSummary(t, launch, selectedRole ? roleName(t, selectedRole) : null)}
+              </span>
+              <ChevronDown className={`h-4 w-4 shrink-0 text-muted transition-transform ${advancedOpen ? "rotate-180" : ""}`} aria-hidden />
+            </summary>
+            <div className="flex flex-col gap-3 border-t border-border bg-card px-3 py-3 sm:gap-2.5 sm:px-2.5 sm:py-2">
+              <RoleSection
+                idPrefix={draftId}
+                roles={roles}
+                roleId={roleId}
+                roleParams={roleParams}
+                disabled={fieldsDisabled}
+                className="flex flex-col gap-2"
+                roomy
+                onSelectRole={selectRole}
+                onSetParam={setRoleParam}
+              >
+                {selectedRole?.id === "reviewer" ? (
+                  <label className="flex max-w-full flex-col gap-0.5 text-caption text-muted">
+                    <span>{t("draft.reviews")}</span>
+                    <Select
+                      value={reviews}
+                      disabled={fieldsDisabled}
+                      roomy
+                      onChange={(event) => setReviews(event.target.value)}
+                      aria-label={t("draft.reviewsAria")}
+                    >
+                      <option value="">{t("draft.reviewsPlaceholder")}</option>
+                      {reviews && !reviewCandidates.some((file) => (file.conversationId ?? file.path) === reviews) ? (
+                        <option value={reviews}>{reviews}</option>
+                      ) : null}
+                      {reviewCandidates.map((file) => {
+                        const value = file.conversationId ?? file.path;
+                        return <option key={value} value={value}>{cleanTitle(file.title, 80)}</option>;
+                      })}
+                    </Select>
+                  </label>
+                ) : null}
+                {selectedRole?.id === "deployer" ? (
+                  <label className="flex max-w-52 flex-col gap-0.5 text-caption text-muted">
+                    <span>{t("draft.deployConfirm")}</span>
+                    <input value={deployConfirm} disabled={fieldsDisabled} onChange={(event) => setDeployConfirm(event.target.value)} aria-label={t("draft.deployConfirm")} placeholder="deploy" className="min-h-11 rounded-control border border-border bg-card px-2 text-body text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-60 sm:min-h-8" />
+                  </label>
+                ) : null}
+              </RoleSection>
+              <div className="flex min-w-0 flex-col gap-1">
+                <span className="text-label font-semibold text-muted">{t("launch.reasoning")}</span>
+                <div className="flex flex-wrap gap-2 [&>select]:min-h-11 [&>select]:min-w-28 [&>select]:flex-1 sm:[&>select]:min-h-8">
+                  <ReasoningControls
+                    engine={engine}
+                    model={model}
+                    effort={effort}
+                    speed={speed}
+                    disabled={fieldsDisabled}
+                    roomy
+                    onModel={setModel}
+                    onEffort={setEffort}
+                    onSpeed={setSpeed}
+                  />
+                </div>
+              </div>
+              {launch.accounts.length ? (
+                <div className="flex min-w-0 flex-col gap-1">
+                  <span className="text-label font-semibold text-muted">{t("launch.account")}</span>
+                  <LaunchAccountSelect draft={launch} disabled={fieldsDisabled} roomy className="min-h-11 w-full sm:min-h-8" />
+                </div>
               ) : null}
-              {reviewCandidates.map((file) => {
-                const value = file.conversationId ?? file.path;
-                return <option key={value} value={value}>{cleanTitle(file.title, 80)}</option>;
-              })}
-            </Select>
-          </label>
-        ) : null}
-        {selectedRole?.id === "deployer" ? (
-          <label className="flex max-w-52 flex-col gap-0.5 text-[10px] text-muted">
-            <span>{t("draft.deployConfirm")}</span>
-            <input value={deployConfirm} disabled={fieldsDisabled} onChange={(event) => setDeployConfirm(event.target.value)} aria-label={t("draft.deployConfirm")} placeholder="deploy" className="h-7 rounded-[7px] border border-border bg-card px-1.5 text-[11px] text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-60" />
-          </label>
-        ) : null}
-      </RoleSection>
-
-      <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-border bg-sunken px-2.5 py-1.5">
-        <span className="shrink-0 text-[10px] font-semibold text-muted">{t("draft.reasoning")}</span>
-        <ReasoningControls
-          engine={engine}
-          model={model}
-          effort={effort}
-          speed={speed}
-          disabled={fieldsDisabled}
-          onModel={setModel}
-          onEffort={setEffort}
-          onSpeed={setSpeed}
-        />
+            </div>
+          </details>
+        </div>
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 py-4">
@@ -898,18 +947,10 @@ export function DraftAgentPane({
             <DraftLaunchStatus ref={attentionRef} phase={phase} target={target} structured={structuredSpawn} error={attempt.error ?? null} />
           </div>
         ) : (
-          <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center">
-            <span className="rounded-full px-3 py-1 text-[13px] font-bold" style={{ backgroundColor: tint.soft, color: tint.color }}>
-              {engine === "claude" ? "Claude" : "Codex"}
-            </span>
-            <div className="max-w-[360px] text-[12px] text-muted">
-              {src ? t("draft.hintRelay") : structuredSpawn ? t("draft.hintNewStructured") : t("draft.hintNew")}
-            </div>
-            {src ? (
-              <div className="max-w-[420px] truncate font-mono text-[10px] text-muted" title={src}>
-                {src}
-              </div>
-            ) : null}
+          <div className="flex flex-1 flex-col items-center justify-center px-2 text-center">
+            <p className="max-w-[300px] text-body leading-relaxed text-muted">
+              {src ? t("draft.hintRelayShort") : t("draft.hintNewShort")}
+            </p>
           </div>
         )}
       </div>
@@ -919,7 +960,7 @@ export function DraftAgentPane({
           event.preventDefault();
           void send();
         }}
-        className="flex shrink-0 flex-col gap-1.5 border-t border-border bg-card px-2.5 py-2"
+        className="flex shrink-0 flex-col gap-1.5 border-t border-border bg-card px-3 py-2 sm:px-2.5"
         aria-label={t("draft.promptAria")}
       >
         {spawnImageNegotiation.status === "error" ? (
@@ -948,14 +989,7 @@ export function DraftAgentPane({
           sendIdleStyle={{ backgroundColor: tint.color, borderColor: tint.color }}
           imageDisabled={spawnImagesDisabled}
           imageDisabledReason={spawnImagesReason}
-          leftSlot={
-            <span
-              className="inline-flex min-w-0 items-center gap-1 rounded-control bg-sunken px-1.5 py-1 text-caption font-semibold text-secondary"
-              title={structuredSpawn ? t("draft.newWindowTitleStructured") : t("draft.newWindowTitle")}
-            >
-              <Play className="h-3 w-3 shrink-0" aria-hidden /> {t("draft.newAgent")}
-            </span>
-          }
+          leftSlot={null}
         />
       </form>
     </section>
