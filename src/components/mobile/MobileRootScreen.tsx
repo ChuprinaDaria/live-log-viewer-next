@@ -1,6 +1,6 @@
 "use client";
 
-import { Info, UserRound } from "lucide-react";
+import { Building2, Info, SlidersHorizontal, UserRound } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { KeepAwakeMenuRow } from "@/components/KeepAwakeControl";
@@ -9,6 +9,7 @@ import { useLocale } from "@/lib/i18n";
 import type { FileEntry } from "@/lib/types";
 
 import { MobileHqRoom } from "./MobileHqRoom";
+import { MobileRolesScreen } from "./MobileRolesScreen";
 import { MobileSecretsScreen } from "./MobileSecretsScreen";
 import { MobileBarTitle, MobileShell, type MobileShellHost, type SheetRenderer } from "./MobileShell";
 import { MobileSheetRow } from "./MobileSheet";
@@ -36,6 +37,7 @@ export function renderMobileRootScreen(kind: MobileScreenKind, ctx: MobileRootCo
     case "settings": return <MobileSettingsScreen ctx={ctx} />;
     case "orchestrator": return <MobileHqRoom files={ctx.files} host={ctx.host} renderSheet={ctx.renderSheet} />;
     case "secrets": return <MobileSecretsScreen host={ctx.host} renderSheet={ctx.renderSheet} />;
+    case "roles": return <MobileRolesScreen host={ctx.host} renderSheet={ctx.renderSheet} />;
     case "mcp": return <MobileNotBuiltScreen kind={kind} ctx={ctx} />;
     default: return null;
   }
@@ -53,6 +55,12 @@ function MobileSettingsScreen({ ctx }: { ctx: MobileRootContext }) {
           {ctx.hostSheet ? (
             <MobileSheetRow icon={<Info className="h-[18px] w-[18px]" aria-hidden />} label={t("mobile2.menu.host")} trailing={ctx.hostTrailing} attrs={{ "data-mobile2-open": "host" }} onSelect={() => nav.openSheet("host")} />
           ) : null}
+        </div>
+        {/* The configuration console's own pages: the role catalog and the org
+            layer, both edited through fleetctl rather than beside it. */}
+        <div className={card}>
+          <MobileSheetRow icon={<SlidersHorizontal className="h-[18px] w-[18px]" aria-hidden />} label={t("roles.title")} attrs={{ "data-mobile2-go": "roles" }} onSelect={() => nav.push({ kind: "roles" })} />
+          <MobileSheetRow icon={<Building2 className="h-[18px] w-[18px]" aria-hidden />} label={t("firms.title")} attrs={{ "data-mobile2-go": "firms" }} onSelect={() => nav.push({ kind: "firms" })} />
         </div>
         <div className={card}>
           <div className="flex min-h-11 items-center gap-2 px-4">
