@@ -9,6 +9,8 @@ import { claudeValidityFromLimitRead } from "@/lib/accounts/spawnHealth";
 import { explicitLaunchProfileSandbox, launchProfileEngineReadOnly, type LaunchProfile } from "@/lib/accounts/migration/contracts";
 import type { SpawnAccountAdmission } from "@/lib/agent/accountLiveness";
 import { effectiveClaudePermissionMode, type AgentEngine, type ResumeSpec } from "@/lib/agent/cli";
+import { hqMcpServers } from "@/lib/agent/mcpAllowlist";
+import { HQ_PROJECT } from "@/lib/orchestrator/hq";
 import { identityMaterializationFence, type AgentRegistry, type AgentRegistryEntry, type ProcessIdentity, type RegistryFile, type SpawnReceipt, type StructuredHostColumns } from "@/lib/agent/registry";
 import { sessionKey, sessionKeyId, type SessionKey } from "@/lib/agent/sessionKey";
 import type { SpawnResponse } from "@/lib/agent/spawnResponse";
@@ -1419,6 +1421,24 @@ export function structuredClaudeSpawnPolicyBaseSettingsPath(
   return account.kind === "managed" ? sharedSettingsPath() : null;
 }
 
+/**
+ * The MCP grant this launch runs with.
+ *
+ * The durable launch profile does not persist `mcpServers`, so a RESUME — a
+ * host restart, a Viewer restart, a recovered session — arrives with the field
+ * absent and the session comes back holding the Viewer baseline alone. For an
+ * ordinary session that is the safe reading and it stays. The standing HQ seat
+ * is the one session whose whole point is its connectors, and its identity is
+ * durable: it is the seat of the reserved HQ project. So its grant is derived
+ * from that identity rather than carried in a field that does not survive —
+ * which also means no profile a caller can write can widen anything, because
+ * the only name that grants more is a project key the seat route owns.
+ */
+function launchMcpServers(profile: LaunchProfile): string[] | undefined {
+  if (profile.mcpServers && profile.mcpServers.length > 0) return profile.mcpServers;
+  return profile.project === HQ_PROJECT ? hqMcpServers() : profile.mcpServers;
+}
+
 async function defaultStartHost(input: StructuredSpawnInput, capability: string): Promise<SpawnedStructuredHost> {
   const profile = input.spec.launchProfile ?? {} as LaunchProfile;
   const resumeSessionId = structuredResumeSessionId(input);
@@ -1439,7 +1459,7 @@ async function defaultStartHost(input: StructuredSpawnInput, capability: string)
       model: profile.model ?? undefined,
       effort: profile.effort ?? undefined,
       allowSubagents: profile.allowSubagents,
-      mcpServers: profile.mcpServers,
+      mcpServers: launchMcpServers(profile),
       /* Plugin grant from the durable profile (issue #687): present only for
          an operator-launched root session that did not opt out. */
       plugins: profile.plugins,
@@ -1460,7 +1480,7 @@ async function defaultStartHost(input: StructuredSpawnInput, capability: string)
     claudeProjectsDir: input.account.transcriptRoot,
     spawnPolicyBaseSettingsPath: structuredClaudeSpawnPolicyBaseSettingsPath(input.account),
     allowSubagents: profile.allowSubagents,
-    mcpServers: profile.mcpServers,
+    mcpServers: launchMcpServers(profile),
     mcpStatePath: input.account.kind === "managed"
       ? path.join(input.account.home, ".claude.json")
       : path.join(path.dirname(input.account.home), ".claude.json"),

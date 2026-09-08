@@ -1,0 +1,130 @@
+"use client";
+
+import { useCallback, useEffect, useState } from "react";
+
+import type { AccountView, CliView, SecretsInventoryView, SecretState, SecretView } from "@/app/api/secrets/route";
+
+/*
+ * The Secrets page's data: the inventory as the browser reads it, and the
+ * grouping the screen renders. The file is rewritten by the operator's
+ * inventory agent, so the page re-reads it on mount and on every return to the
+ * tab rather than holding an answer from an earlier visit.
+ */
+
+export type { AccountView, CliView, SecretState, SecretView };
+
+export type SecretsFilter = "all" | "dead" | "unchecked";
+
+export interface SecretsRead {
+  /** Null until the first answer. */
+  inventory: SecretsInventoryView | null;
+  /** The server's own word for what went wrong, or null. */
+  error: string | null;
+  loading: boolean;
+  refresh: () => Promise<void>;
+}
+
+export function useSecretsInventory(active: boolean): SecretsRead {
+  const [inventory, setInventory] = useState<SecretsInventoryView | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const load = useCallback(async (signal?: AbortSignal) => {
+    setLoading(true);
+    try {
+      const response = await fetch("/api/secrets", signal ? { signal, cache: "no-store" } : { cache: "no-store" });
+      const body = await response.json() as SecretsInventoryView | { error: string };
+      if ("error" in body) {
+        setError(body.error);
+      } else {
+        setInventory(body);
+        setError(null);
+      }
+    } catch (cause) {
+      if ((cause as { name?: string }).name !== "AbortError") setError("UNREACHABLE");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!active) return;
+    const controller = new AbortController();
+    void load(controller.signal);
+    return () => controller.abort();
+  }, [active, load]);
+
+  return { inventory, error, loading, refresh: () => load() };
+}
+
+export interface SecretGroup {
+  provider: string;
+  rows: SecretView[];
+  alive: number;
+  dead: number;
+  unchecked: number;
+}
+
+export interface SecretsSummary {
+  total: number;
+  alive: number;
+  dead: number;
+  unchecked: number;
+}
+
+export function summarize(secrets: readonly SecretView[]): SecretsSummary {
+  return {
+    total: secrets.length,
+    alive: secrets.filter((row) => row.state === "alive").length,
+    dead: secrets.filter((row) => row.state === "dead").length,
+    unchecked: secrets.filter((row) => row.state === "unchecked").length,
+  };
+}
+
+export function matchesFilter(row: SecretView, filter: SecretsFilter): boolean {
+  return filter === "all" || (filter === "dead" ? row.state === "dead" : row.state === "unchecked");
+}
+
+/**
+ * Providers in one stable alphabetical order, and their rows likewise.
+ *
+ * Ordering by "most dead first" was the obvious move and is the wrong one: the
+ * list would rebuild itself under the operator every time a key is re-checked,
+ * so no position could ever be learned. The dead keys are reached by the
+ * filter, which is what it is for, and by the count on each group's header.
+ */
+export function groupByProvider(secrets: readonly SecretView[], filter: SecretsFilter): SecretGroup[] {
+  const groups = new Map<string, SecretView[]>();
+  for (const row of secrets) {
+    if (!matchesFilter(row, filter)) continue;
+    const rows = groups.get(row.provider);
+    if (rows) rows.push(row);
+    else groups.set(row.provider, [row]);
+  }
+  return [...groups.entries()]
+    .map(([provider, rows]) => ({
+      provider,
+      rows: [...rows].sort((a, b) => a.name.localeCompare(b.name)),
+      alive: rows.filter((row) => row.state === "alive").length,
+      dead: rows.filter((row) => row.state === "dead").length,
+      unchecked: rows.filter((row) => row.state === "unchecked").length,
+    }))
+    .sort((a, b) => a.provider.localeCompare(b.provider));
+}
+
+/** The row's headline: the inventory's human name when it has one, the slug
+    otherwise. A labelled row keeps its slug in the meta line, where it is
+    evidence rather than a heading. */
+export function secretTitle(row: SecretView): string {
+  return row.label?.trim() || row.name;
+}
+
+/** The freshest check across the inventory: one date at the top answers "how
+    current is this", where 82 dates in 82 rows answer nothing. */
+export function lastCheckedAt(secrets: readonly SecretView[]): string | null {
+  let latest: string | null = null;
+  for (const row of secrets) {
+    if (row.checkedAt && (latest === null || row.checkedAt > latest)) latest = row.checkedAt;
+  }
+  return latest;
+}

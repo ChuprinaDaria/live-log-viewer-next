@@ -9,6 +9,7 @@ import { useLocale } from "@/lib/i18n";
 import type { FileEntry } from "@/lib/types";
 
 import { MobileHqRoom } from "./MobileHqRoom";
+import { MobileSecretsScreen } from "./MobileSecretsScreen";
 import { MobileBarTitle, MobileShell, type MobileShellHost, type SheetRenderer } from "./MobileShell";
 import { MobileSheetRow } from "./MobileSheet";
 import { useMobileNavStore, type MobileScreenKind } from "./mobileNav";
@@ -34,7 +35,7 @@ export function renderMobileRootScreen(kind: MobileScreenKind, ctx: MobileRootCo
   switch (kind) {
     case "settings": return <MobileSettingsScreen ctx={ctx} />;
     case "orchestrator": return <MobileHqRoom files={ctx.files} host={ctx.host} renderSheet={ctx.renderSheet} />;
-    case "secrets": return <MobileNotBuiltScreen kind={kind} ctx={ctx} />;
+    case "secrets": return <MobileSecretsScreen host={ctx.host} renderSheet={ctx.renderSheet} />;
     case "mcp": return <MobileNotBuiltScreen kind={kind} ctx={ctx} />;
     default: return null;
   }
@@ -65,10 +66,10 @@ function MobileSettingsScreen({ ctx }: { ctx: MobileRootContext }) {
   );
 }
 
-function MobileNotBuiltScreen({ kind, ctx }: { kind: "secrets" | "mcp"; ctx: MobileRootContext }) {
+function MobileNotBuiltScreen({ kind, ctx }: { kind: "mcp"; ctx: MobileRootContext }) {
   const { t } = useLocale();
-  const title = t(kind === "secrets" ? "mobile2.tabs.secrets" : "mobile2.tabs.mcp");
-  const sentence = t(kind === "secrets" ? "mobile2.soon.secrets" : "mobile2.soon.mcp");
+  const title = t("mobile2.tabs.mcp");
+  const sentence = t("mobile2.soon.mcp");
   return (
     <MobileShell screen={kind} title={<MobileBarTitle>{title}</MobileBarTitle>} host={ctx.host} renderSheet={ctx.renderSheet}>
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 px-6 text-center" data-mobile2-not-built={kind}>

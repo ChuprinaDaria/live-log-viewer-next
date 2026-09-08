@@ -82,6 +82,10 @@ export async function POST(req: NextRequest): Promise<NextResponse<Record<string
     model: typeof body.model === "string" ? body.model : HQ_SPAWN_CONFIG.model,
     effort: typeof body.effort === "string" ? body.effort : HQ_SPAWN_CONFIG.effort,
     ...(typeof body.accountId === "string" && body.accountId ? { accountId: body.accountId } : {}),
+    /* Replacing a live HQ seat is deliberate and stays the caller's word: the
+       seat command refuses an implicit replacement, which is what keeps a
+       double-tap from minting a second orchestrator. */
+    ...(body.replaceIncumbent === true ? { replaceIncumbent: true } : {}),
     clientRequestId: body.clientRequestId,
   }, { ...productionSeatCommandDependencies, spawn: spawnHq }, { kind: "operator", conversationId: null, seatEpoch: null });
   return NextResponse.json(result.body, { status: result.status, headers });
