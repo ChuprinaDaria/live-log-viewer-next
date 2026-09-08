@@ -6,6 +6,7 @@ import path from "node:path";
 
 import { emptyLaunchProfile } from "@/lib/accounts/migration/contracts";
 import { AgentRegistry, type TmuxHostEvidence } from "@/lib/agent/registry";
+import { beginLegacySpawnFixture, beginLegacySpawnReceiptFixture } from "@/lib/agent/registryTestFixtures";
 import type { TranscriptHost, TranscriptHostSnapshot } from "@/lib/agent/transcriptHost";
 import { mutateBoard, setBoardFileForTests } from "@/lib/board/store";
 import type { Flow } from "@/lib/flows/types";
@@ -879,7 +880,7 @@ test("an unknown missing transcript reaches the dead-transcript TTL in productio
   delete process.env.LLV_REAPER_ENABLED;
   const registry = new AgentRegistry(path.join(directory, "agent-registry.json"));
   const profile = emptyLaunchProfile({ cwd: "/repo", role: "worker" });
-  const receipt = registry.beginSpawn("codex", "/repo", profile);
+  const receipt = beginLegacySpawnReceiptFixture(registry, "codex", "/repo", profile);
   registry.completeSpawn(receipt.launchId, {
     key: { engine: "codex", sessionId }, artifactPath: pathname, cwd: "/repo", accountId: "default",
     launchProfile: profile, status: "idle", host: null, claimEpoch: 0, claimOwner: null, pendingAction: null,
@@ -1912,7 +1913,7 @@ test("Viewer flow deliveries are discounted from transcript authorship", async (
   delete process.env.LLV_REAPER_ENABLED;
   const registry = new AgentRegistry(path.join(directory, "agent-registry.json"));
   const profile = emptyLaunchProfile({ cwd: "/repo", role: "worker" });
-  const receipt = registry.beginSpawn("codex", "/repo", profile);
+  const receipt = beginLegacySpawnReceiptFixture(registry, "codex", "/repo", profile);
   registry.completeSpawn(receipt.launchId, {
     key: { engine: "codex", sessionId },
     artifactPath: pathname,
@@ -2335,7 +2336,7 @@ test("the reaper actuates a due pinned tmux queue exactly once without a runtime
   const registryFile = path.join(directory, "agent-registry.json");
   let registry = new AgentRegistry(registryFile);
   const retryAt = new Date(Date.now() + 60_000).toISOString();
-  const begun = registry.beginSpawnRequest({
+  const begun = beginLegacySpawnFixture(registry, {
     engine: "claude",
     cwd: directory,
     transport: "tmux",
