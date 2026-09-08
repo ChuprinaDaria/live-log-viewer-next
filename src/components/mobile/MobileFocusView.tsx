@@ -653,7 +653,7 @@ export function MobileFocusView({ project, projectName, groups, manual, files, f
     <div
       data-testid="mobile-chat-shell"
       data-chat-min-share={MIN_TRANSCRIPT_SHARE}
-      className="relative flex h-full max-h-[100dvh] min-h-0 min-w-0 max-w-[100dvw] flex-1 flex-col overflow-hidden overflow-x-clip"
+      className="relative flex h-full max-h-[var(--app-height,100dvh)] min-h-0 min-w-0 max-w-[100dvw] flex-1 flex-col overflow-hidden overflow-x-clip"
       onTouchStart={onTouchStart}
       onTouchEnd={onTouchEnd}
       style={kbInset > 0 ? { paddingBottom: kbInset } : undefined}
