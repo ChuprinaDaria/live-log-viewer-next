@@ -120,3 +120,20 @@ test("a console project without a path is skipped, not half-joined", async () =>
   const bridge = await loadOrgBridge({ force: true });
   expect(bridge.empty).toBe(true);
 });
+
+test("a session whose transcript names no cwd still joins, by the Claude folder slug", async () => {
+  /* The scanner falls back to the folder name Claude Code uses — every `/`,
+     `_` and `.` replaced by `-` — and a great many transcripts carry no
+     readable cwd at all. Covering only the ones that do would leave most
+     sessions unattributed while looking like it worked. */
+  const projectPath = "/srv/remote-host/logger/bridge-ramona/workspace";
+  seedCache([
+    { firm: "bluebird", firmName: "Blue Bird", project: "ramona", projectName: "Ramona", path: projectPath, via: "path" },
+  ]);
+
+  const bridge = await loadOrgBridge({ force: true });
+  const slug = projectPath.replace(/[/_.]/g, "-");
+
+  expect(orgAttributionFor(bridge, slug, null)?.project).toBe("ramona");
+  expect(orgAttributionFor(bridge, slug, undefined)?.via).toBe("board-id");
+});

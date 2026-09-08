@@ -80,9 +80,22 @@ interface CacheEnvelope {
 
 let memo: { bridge: OrgBridge; at: number } | null = null;
 
-/** Board identities a console path can mint. Both are recorded: the repository
-    identity only exists where the checkout does, and the directory identity is
-    what the other machine would have produced for the same path. */
+/** How Claude Code names the folder it keeps a cwd's transcripts in: every
+    `/`, `_` and `.` becomes `-`. The scanner falls back to that slug when a
+    transcript carries no readable cwd, and a great many do not — which is
+    exactly the case this bridge was failing to cover. */
+function claudeSlugForPath(resolvedPath: string): string {
+  return resolvedPath.replace(/[/_.]/g, "-");
+}
+
+/** Board identities a console path can mint.
+ *
+ *  - the repository identity, where the checkout actually exists;
+ *  - the directory identity, which is what another machine would mint for the
+ *    same path;
+ *  - the Claude folder slug, which is what the scanner falls back to when the
+ *    transcript names no cwd. Without this one the join silently covers only
+ *    sessions whose cwd survived, and those are the minority. */
 function boardIdsForPath(projectPath: string): string[] {
   const ids: string[] = [];
   const resolved = path.resolve(projectPath);
@@ -92,6 +105,7 @@ function boardIdsForPath(projectPath: string): string[] {
     if (identity) ids.push(identity.project);
   }
   ids.push(directoryProjectId(resolved));
+  ids.push(claudeSlugForPath(resolved));
   return ids;
 }
 
