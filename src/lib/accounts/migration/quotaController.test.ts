@@ -296,3 +296,94 @@ test("the controller records the probe's reset credits and carries them through 
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+/* The joint that was missing: policy, chooser and intent all existed, and the
+   controller passed `signature: null` — which clears the sustain window on
+   every tick, so it could never close and nothing ever switched. */
+test("a sustained wall on the active account switches to the healthy one", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "llv-quota-balance-"));
+  try {
+    const registry = new AgentRegistry(path.join(root, "registry.json"));
+    let current = Date.parse("2026-07-10T12:00:00.000Z");
+    const accounts: CodexAccount[] = [
+      { id: "default", label: "Main", kind: "legacy", home: "/homes/main", sessionsDir: "/homes/main/sessions", authPresent: true, loginPane: null, createdAt: 0 },
+      { id: "managed", label: "Managed", kind: "managed", home: "/homes/managed", sessionsDir: "/homes/managed/sessions", authPresent: true, loginPane: null, createdAt: 1 },
+    ];
+    const probe: QuotaProbePort = {
+      list: () => accounts,
+      active: () => "default",
+      async probe(engine, candidate, now) {
+        return {
+          engine, accountId: candidate.id, authenticated: true, authCheckedAt: now,
+          limits: {
+            /* The active account is at its wall; the other one is nearly
+               untouched. That is the whole shape of the decision. */
+            session: { usedPercent: candidate.id === "default" ? 100 : 5, resetsAt: Math.floor(now / 1000) + 3_600 },
+            weekly: null, plan: "pro", capturedAt: Math.floor(now / 1000),
+          },
+          provenance: { source: "live", reason: null, staleSince: null },
+          observedAt: now,
+        };
+      },
+    };
+    /* The switch itself is watched through the port rather than executed: the
+       coordinator needs a real account tree, and what this test is about is
+       whether the controller ASKS, and when. */
+    const asked: { targetId: string; from: string | null }[] = [];
+    const controller = new QuotaController(registry, probe, "boot-balance-test", () => current,
+      undefined, async (_engine, targetId, evidence) => { asked.push({ targetId, from: evidence?.sourceId ?? null }); });
+    registry.setEngineRouting("codex", "default");
+    registry.setAutoBalancePolicy("codex", true);
+
+    /* One tick is a dip, not a wall: nothing may move yet. */
+    await controller.tick("codex");
+    expect(asked).toHaveLength(0);
+
+    /* The same decision a minute later closes the sustain window. */
+    current += 60_000;
+    await controller.tick("codex");
+    expect(asked).toEqual([{ targetId: "managed", from: "default" }]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("with the policy off the same wall moves nothing, however long it lasts", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "llv-quota-balance-off-"));
+  try {
+    const registry = new AgentRegistry(path.join(root, "registry.json"));
+    let current = Date.parse("2026-07-10T12:00:00.000Z");
+    const accounts: CodexAccount[] = [
+      { id: "default", label: "Main", kind: "legacy", home: "/homes/main", sessionsDir: "/homes/main/sessions", authPresent: true, loginPane: null, createdAt: 0 },
+      { id: "managed", label: "Managed", kind: "managed", home: "/homes/managed", sessionsDir: "/homes/managed/sessions", authPresent: true, loginPane: null, createdAt: 1 },
+    ];
+    const probe: QuotaProbePort = {
+      list: () => accounts,
+      active: () => "default",
+      async probe(engine, candidate, now) {
+        return {
+          engine, accountId: candidate.id, authenticated: true, authCheckedAt: now,
+          limits: {
+            session: { usedPercent: candidate.id === "default" ? 100 : 5, resetsAt: Math.floor(now / 1000) + 3_600 },
+            weekly: null, plan: "pro", capturedAt: Math.floor(now / 1000),
+          },
+          provenance: { source: "live", reason: null, staleSince: null },
+          observedAt: now,
+        };
+      },
+    };
+    const asked: string[] = [];
+    const controller = new QuotaController(registry, probe, "boot-balance-off", () => current,
+      undefined, async (_engine, targetId) => { asked.push(targetId); });
+    registry.setEngineRouting("codex", "default");
+    registry.setAutoBalancePolicy("codex", false);
+
+    for (let tick = 0; tick < 4; tick += 1) {
+      await controller.tick("codex");
+      current += 60_000;
+    }
+    expect(asked).toEqual([]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

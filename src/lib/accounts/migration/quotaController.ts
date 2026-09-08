@@ -4,6 +4,8 @@ import path from "node:path";
 import { activeClaudeAccountId, listClaudeAccounts, type ClaudeAccount } from "@/lib/accounts/claude";
 import { realClaudeLoginPorts } from "@/lib/accounts/claudeLogin";
 import { withAccountMutationLockAsync } from "@/lib/accounts/accountMutation";
+import { chooseAutoBalance } from "./quotaPolicy";
+import type { MigrationEvidence } from "./contracts";
 import { activeCodexAccountId, listCodexAccounts, type CodexAccount } from "@/lib/accounts/codex";
 import { managedCodexRuntime, type CodexQuotaProbe } from "@/lib/accounts/codexRuntime";
 import type { AppServerResetCredits } from "@/lib/accounts/codexAppServer";
@@ -138,6 +140,24 @@ export function probeTimeout(timeoutMs: number): Promise<never> {
   });
 }
 
+/** How the controller asks for a switch. A port, not a direct call, for the
+    same reason the probe is one: the decision and the act are separable, and
+    a test may watch the act without an account tree behind it. */
+export type MigrationRequestPort = (
+  engine: MigrationEngine,
+  targetId: string,
+  evidence: MigrationEvidence,
+  routeRevision: number,
+  registry: AgentRegistry,
+) => Promise<void>;
+
+const productionMigrationRequest: MigrationRequestPort = async (engine, targetId, evidence, routeRevision, registry) => {
+  /* Imported here rather than at module scope: the coordinator pulls in the
+     migration machinery, and this module is loaded by the tick loop. */
+  const { createMigrationIntent } = await import("./coordinator");
+  await createMigrationIntent(engine, targetId, "auto", crypto.randomUUID(), routeRevision, "active", registry, evidence);
+};
+
 export class QuotaController {
   constructor(
     private readonly registry: AgentRegistry = agentRegistry(),
@@ -145,6 +165,7 @@ export class QuotaController {
     private readonly bootId: string = crypto.randomUUID(),
     private readonly now: () => number = () => Date.now(),
     private readonly probeTimeoutMs: number = PROBE_TIMEOUT_MS,
+    private readonly requestMigration: MigrationRequestPort = productionMigrationRequest,
   ) {}
 
   /* A failed probe must not erase the last successful reading — the panel
@@ -219,14 +240,58 @@ export class QuotaController {
       });
     });
     const recorded: DurableQuotaObservation[] = observations.map((observation) => durableQuotaObservation({ ...observation, engine }, this.bootId));
-    this.registry.recordQuotaEvaluation({
+
+    /* The auto-balance decision, and the sustain window that gates it.
+     *
+     * This is the joint that was missing: the policy, the chooser and the
+     * intent all existed, and the controller passed `signature: null` — which
+     * makes `recordQuotaEvaluation` clear the sustain window on every tick, so
+     * it could never close and nothing ever switched. Auto-balance was written
+     * and disconnected.
+     *
+     * The signature names the decision, not the moment: the same «leave A for
+     * B» on two consecutive ticks, a minute apart, is what counts as sustained.
+     * A different decision, or none, resets the window — which is the point.
+     * A single dip below the threshold is noise; a minute of it is a wall.
+     *
+     * `chooseAutoBalance` refuses on its own when the policy is off, during
+     * cooldown, or on anything but a fresh live reading, so nothing here has
+     * to re-decide what is safe. */
+    const snapshot = this.registry.readOnlySnapshot();
+    const activeId = snapshot.engineRouting[engine]?.activeAccountId ?? null;
+    const policy = snapshot.autoBalance[engine];
+    const decision = activeId ? chooseAutoBalance(engine, activeId, observations, policy, now) : null;
+
+    const outcome = this.registry.recordQuotaEvaluation({
       engine,
       observations: recorded,
-      signature: null,
-      evidence: null,
+      signature: decision ? `${activeId}->${decision.targetId}` : null,
+      evidence: decision?.evidence ?? null,
       bootId: this.bootId,
       now: new Date(now).toISOString(),
       minimumGapMs: 60_000,
     });
+
+    if (!decision || !outcome.sustained) return;
+
+    /* The window closed on the same decision twice: switch. Failure here is
+       logged and swallowed — a quota tick that throws stops every later tick,
+       and an account that did not migrate is a smaller problem than limits
+       that stop being read at all. */
+    try {
+      await this.requestMigration(engine, decision.targetId, decision.evidence, outcome.routeRevision, this.registry);
+      logQuotaEvent({
+        engine, accountId: decision.targetId, accountKind: "managed",
+        envelope: null, probePhase: "account-rate-limits",
+        provenance: "live", reasonCode: `auto-balance-switched:${activeId}->${decision.targetId}`,
+      });
+    } catch (error) {
+      logQuotaEvent({
+        engine, accountId: decision.targetId, accountKind: "managed",
+        envelope: null, probePhase: "account-rate-limits",
+        provenance: "live",
+        reasonCode: `auto-balance-failed:${error instanceof Error ? error.message : String(error)}`,
+      });
+    }
   }
 }
