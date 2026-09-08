@@ -39,6 +39,14 @@ export function rejectCrossOrigin(req: NextRequest): NextResponse<ApiError> | nu
   if (tailnetHost) {
     allowedHosts.add(hostWithoutPort(tailnetHost));
   }
+  /* The operator sometimes reaches the board by its tailnet IP rather than the
+     MagicDNS name (a phone whose DNS is not cooperating). That address is the
+     same machine, so the deployment may list it — comma-separated, hosts only,
+     ports ignored — instead of every action failing as cross-origin. */
+  for (const extra of (process.env.LLV_EXTRA_ORIGIN_HOSTS ?? "").split(",")) {
+    const trimmed = extra.trim();
+    if (trimmed) allowedHosts.add(hostWithoutPort(trimmed));
+  }
 
   const host = req.headers.get("host");
   if (host === null || !allowedHosts.has(hostWithoutPort(host))) return forbidden();
