@@ -114,7 +114,7 @@ export function useMachines(): MachinesRead {
   return { machines, error, loading, refresh: () => load(), accountsOn, spawn };
 }
 
-/** «walter · ssh pi@… · /home/pi/work» — what the machine is, in one line. */
+/** «this machine · <work root>» — what the machine is, in one line. */
 export function machineLine(machine: MachineRow): string {
   const parts = [machine.is_local ? "ця машина" : machine.ssh ?? "", machine.work_root ?? ""];
   return parts.filter(Boolean).join(" · ");
