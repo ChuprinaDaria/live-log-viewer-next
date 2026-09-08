@@ -32,3 +32,34 @@ export function isTurnHead(entries: readonly FeedEntry[], index: number): boolea
   }
   return true;
 }
+
+/**
+ * Whether the item at `index` is the first PROSE of its turn — where a room's
+ * own signature goes (the HQ room's name and avatar above the answer).
+ *
+ * Not the same question as {@link isTurnHead}. A turn opens on whatever agent
+ * item comes first, and for HQ that is routinely a tool row: it lists agents or
+ * takes a board snapshot before it says anything. A signature over that row
+ * names nobody's words, and head-only would leave most of HQ's answers with no
+ * signature at all. So the boundaries are the turn's — computed by the same
+ * walk — and the signature lands on the first thing in it that is text.
+ *
+ * Pure and index-local like {@link isTurnHead}: computed per visible row in the
+ * LogFeed map, so virtualization and scroll anchoring stay untouched.
+ */
+export function firstProseOfTurn(entries: readonly FeedEntry[], index: number): boolean {
+  const item = entries[index]?.item;
+  if (!item || item.kind !== "prose") return false;
+  for (let i = index - 1; i >= 0; i -= 1) {
+    const prev = entries[i]!.item;
+    /* Operator input (or a context break) starts a turn: nothing before this
+       point belongs to it, so this block is its first words. */
+    if (BREAK_KINDS.has(prev.kind)) return true;
+    /* Earlier words in the SAME turn already carry the signature — unless the
+       engine flipped, which `isTurnHead` treats as a new turn and so does this. */
+    if (prev.kind === "prose") return prev.engine !== item.engine;
+    /* Tool rows, command groups and quiet chrome: turn members that are not
+       words, so keep walking back. */
+  }
+  return true;
+}

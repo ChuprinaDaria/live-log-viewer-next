@@ -38,7 +38,7 @@ import {
 } from "./conversation/outbox";
 import { createFeedSession, type FeedSession, type FeedSnapshot } from "./feed/parse";
 import { claimFeedSession, releaseFeedSession, takeFeedSession } from "./feed/sessionPool";
-import { FeedItem } from "./feed/FeedItem";
+import { FeedItem, type FeedSignature } from "./feed/FeedItem";
 import { FeedIdentityProvider, NO_FEED_IDENTITY, type FeedIdentity } from "./feed/feedIdentity";
 import { MessageProvenanceProvider, useDeliveredMessageProvenance } from "./feed/messageProvenance";
 import { RawLineProvider, type RawLineLookup } from "./feed/rawLine";
@@ -47,7 +47,7 @@ import { SuggestedReplies } from "./feed/SuggestedReplies";
 import { BoundedLru } from "./feed/scrollMemory";
 import { ConversationAttention } from "./runtime/ConversationAttention";
 import { speakableAnswer } from "./feed/speakableAnswer";
-import { isTurnHead } from "./feed/turnHeads";
+import { firstProseOfTurn, isTurnHead } from "./feed/turnHeads";
 import { isSubagent } from "./projectModel";
 import { TaskHeader } from "./TaskHeader";
 import { TurnStatusBar } from "./TurnStatusBar";
@@ -219,12 +219,16 @@ interface Props {
       feed. Nothing is summarized away: every message the conversation holds
       still renders, with its own text. */
   bare?: boolean;
+  /** Who the room's answers are FROM (the HQ room's signature): a compact
+      name/avatar row above every agent message. Only a bare room has one —
+      elsewhere the per-turn header already names the speaker. */
+  signature?: FeedSignature;
   /** Opens a fresh editable draft from a terminal structured launch receipt —
       wired through so the launch chips keep their retry inside the window. */
   onLaunchRetry?: () => void;
 }
 
-export function LogFeed({ file, showSvc, lineFilter, onStatus, paused, follow, setFollow, compact = false, bare = false, onLaunchRetry }: Props) {
+export function LogFeed({ file, showSvc, lineFilter, onStatus, paused, follow, setFollow, compact = false, bare = false, signature, onLaunchRetry }: Props) {
   /* Mobile v2 §3.4, §6: on the phone the transcript ends at the composer. The
      live-tail pill and the turn status bar below it are both gone — following
      is the feed's default and needs no pill, and elapsed time lives in the
@@ -1076,6 +1080,15 @@ export function LogFeed({ file, showSvc, lineFilter, onStatus, paused, follow, s
                 const answer = speakableAnswer(feed.items, visibleStartIndex + visibleIndex);
                 const speakText = answer?.firstIndex === visibleStartIndex + visibleIndex ? answer.text : undefined;
                 const turnHead = !bare && isTurnHead(feed.items, visibleStartIndex + visibleIndex);
+                /* A bare room shows no who/model header, but it still needs to
+                   know where an answer starts: one message arrives as several
+                   `prose` items, and the room's signature belongs above the
+                   first of them, not above every paragraph. The turn HEAD is
+                   the wrong anchor — HQ routinely opens an answer with a tool
+                   row, and a name over that names nobody's words — so the
+                   signature follows the first prose of the turn instead. */
+                const signHere = bare && signature !== undefined
+                  && firstProseOfTurn(feed.items, visibleStartIndex + visibleIndex);
                 /* The launch prompt of a bare room is its mandate — the
                    system's words, not the operator's — so the room opens on
                    the first real turn. */
@@ -1093,7 +1106,7 @@ export function LogFeed({ file, showSvc, lineFilter, onStatus, paused, follow, s
                     data-feed-source-id={"sourceId" in item ? item.sourceId : undefined}
                     className={compact ? "feed-cv" : undefined}
                   >
-                    <FeedItem item={item} speakText={speakText} turnHead={turnHead} />
+                    <FeedItem item={item} speakText={speakText} turnHead={turnHead} signature={signHere ? signature : undefined} />
                     {responseDurationMs !== undefined ? <ResponseDuration durationMs={responseDurationMs} /> : null}
                   </div>
                 );

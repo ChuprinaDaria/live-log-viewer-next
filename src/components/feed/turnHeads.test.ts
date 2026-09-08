@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 
 import type { FeedEntry, Item } from "./parse";
-import { isTurnHead } from "./turnHeads";
+import { firstProseOfTurn, isTurnHead } from "./turnHeads";
 
 const entry = (key: string, item: Item): FeedEntry => ({ anchorKey: null, key, item });
 const prose = (key: string, engine: "claude" | "codex" = "claude"): FeedEntry =>
@@ -41,4 +41,41 @@ test("an engine flip inside one run re-opens the header", () => {
   const entries = [prose("a", "claude"), prose("b", "codex"), prose("c", "codex")];
   expect(isTurnHead(entries, 1)).toBe(true);
   expect(isTurnHead(entries, 2)).toBe(false);
+});
+
+/*
+ * `firstProseOfTurn` — where a room's own signature goes. The turn HEAD is a
+ * tool row whenever the agent looks something up before it speaks, and HQ does
+ * that on most answers; a signature over a `ListAgents` row says nothing, and
+ * head-only would leave those answers unsigned altogether.
+ */
+
+/** The indices a signature would be rendered on. */
+const signed = (entries: readonly FeedEntry[]): number[] =>
+  entries.map((_, index) => index).filter((index) => firstProseOfTurn(entries, index));
+
+test("a turn that opens with a command signs its first words, not the command", () => {
+  const entries = [user("u"), tool("a"), prose("b"), prose("c")];
+  expect(isTurnHead(entries, 1)).toBe(true); // the head is the tool row
+  expect(signed(entries)).toEqual([2]);
+});
+
+test("a turn that opens with prose signs that block and no later one", () => {
+  expect(signed([user("u"), prose("a"), prose("b"), tool("c"), prose("d")])).toEqual([1]);
+});
+
+test("each operator input opens a turn the signature signs again", () => {
+  expect(signed([user("u"), prose("a"), user("v"), tool("b"), prose("c")])).toEqual([1, 4]);
+});
+
+test("quiet chrome before the words does not take the signature", () => {
+  expect(signed([user("u"), think("th"), prose("a")])).toEqual([2]);
+});
+
+test("a turn with no words at all is never signed", () => {
+  expect(signed([user("u"), tool("a"), tool("b")])).toEqual([]);
+});
+
+test("an engine flip re-opens the turn for the signature too", () => {
+  expect(signed([prose("a", "claude"), prose("b", "codex")])).toEqual([0, 1]);
 });
