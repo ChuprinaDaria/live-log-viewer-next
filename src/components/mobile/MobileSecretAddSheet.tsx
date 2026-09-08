@@ -6,23 +6,21 @@ import { useLocale } from "@/lib/i18n";
 
 import { useOrg } from "./firmsModel";
 import { showReceipt } from "./MobileReceipt";
-import type { SecretAddInput } from "./secretsModel";
+import type { SecretAddFailure, SecretAddInput } from "./secretsModel";
 import { MobileSheet } from "./MobileSheet";
 
 /*
- * The form that puts a key into the vault (TZ-UI: the secrets page, «вводимо
- * всі секрети»).
+ * The form that puts a key into the vault (TZ-UI: the secrets page).
  *
- * The page it opens from can only ever show ADDRESSES — machine, file,
- * variable — and that stays true after this sheet exists. The value travels
- * one way: out of the password field, into the POST, into a 0600 file the
- * console writes. It is never rendered, never returned, and never held in
- * React state, so nothing about this component can produce it a second time.
- * That is why the field is uncontrolled and read once, by ref, at submit — a
- * controlled input would put the key in a state tree, in every render, and in
- * every devtools snapshot of the phone.
+ * The page it opens from shows ADDRESSES — machine, file, variable — and that
+ * stays true after this sheet exists. The value travels one way: out of the
+ * password field, into the POST, into a 0600 file the console writes. It is
+ * never rendered, never returned, and never held in React state, which is why
+ * the field is uncontrolled and read once, by ref, at submit: a controlled
+ * input would put the key in the state tree, in every render, and in every
+ * devtools snapshot of the phone.
  *
- * No confirmation step (README §2 rule 9): the primary button acts, and the
+ * No confirmation step (README §2 rule 9): the primary button acts and the
  * receipt answers. The new row appears with «не перевірявся» — liveness is
  * check.py's word, not this form's.
  */
@@ -41,10 +39,13 @@ function slugify(text: string): string {
   return text.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 64);
 }
 
-/** The variable an id answers to by default: the console derives the same name
-    when none is given, so what the field shows is what would happen anyway. */
+/** The variable an id answers to by default. A variable cannot begin with a
+    digit and `parse_ref` reads back only `[A-Z][A-Z0-9_]*`, so `2fa_token`
+    gets a `K_` in front rather than becoming an unusable `2FA_TOKEN`. The
+    field shows the result — it is what ends up in the ref. */
 function envNameFor(slug: string): string {
-  return slug.toUpperCase().replace(/[^A-Z0-9_]/g, "_");
+  const upper = slug.toUpperCase().replace(/[^A-Z0-9_]/g, "_");
+  return /^[A-Z]/.test(upper) ? upper : upper ? `K_${upper}` : "";
 }
 
 function Field({ label, field, value, onChange, placeholder, list }: {
@@ -54,16 +55,9 @@ function Field({ label, field, value, onChange, placeholder, list }: {
   return (
     <label className={LABEL}>
       {label}
-      <input
-        value={value}
-        placeholder={placeholder}
-        list={list}
-        aria-label={label}
-        data-secret-field={field}
-        onChange={(event) => onChange(event.target.value)}
-        {...RAW}
-        className={FIELD}
-      />
+      <input value={value} placeholder={placeholder} list={list} aria-label={label}
+        data-secret-field={field} onChange={(event) => onChange(event.target.value)}
+        {...RAW} className={FIELD} />
     </label>
   );
 }
@@ -77,8 +71,8 @@ export function MobileSecretAddSheet({
       stays possible — a new provider is exactly what a new key often is. */
   providers: readonly string[];
   onClose: () => void;
-  /** The console's refusal text, or null when the key is in the vault. */
-  onSubmit: (input: SecretAddInput) => Promise<string | null>;
+  /** The console's refusal, or null when the key is in the vault. */
+  onSubmit: (input: SecretAddInput) => Promise<SecretAddFailure | null>;
 }) {
   const { t } = useLocale();
   const org = useOrg();
@@ -90,8 +84,9 @@ export function MobileSecretAddSheet({
   const [envName, setEnvName] = useState("");
   const [scope, setScope] = useState<Scope>("none");
   const [target, setTarget] = useState("");
+  const [replace, setReplace] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [failure, setFailure] = useState<string | null>(null);
+  const [failure, setFailure] = useState<SecretAddFailure | null>(null);
   /* Set the moment she types either field herself: a derived suggestion that
      keeps overwriting what was typed is worse than no suggestion. */
   const [slugOwn, setSlugOwn] = useState(false);
@@ -125,6 +120,9 @@ export function MobileSecretAddSheet({
          to another firm, and the tree here already knows which one it is. */
       ...(scope === "firm" && target ? { firm: target } : {}),
       ...(project ? { project: project.id, firm: project.firm } : {}),
+      /* Absent, not false, when it was not asked for: the console reads a flag
+         that is there, and «replace: false» is a flag that is there. */
+      ...(replace ? { replace: true } : {}),
     });
     setBusy(false);
     if (problem) {
@@ -140,6 +138,12 @@ export function MobileSecretAddSheet({
     onClose();
   };
 
+  /* The console answers a duplicate in CLI terms («додайте --replace»); the
+     route tags that one refusal with a code, and here it becomes the sentence
+     naming the checkbox above. Everything else passes through as it was said. */
+  const failureText = failure === null ? null
+    : failure.code === "secret_exists" ? t("secrets.exists") : failure.error;
+
   const scopes: readonly { key: Scope; label: string }[] = [
     { key: "none", label: t("secrets.scopeNone") },
     { key: "firm", label: t("secrets.scopeFirm") },
@@ -153,13 +157,8 @@ export function MobileSecretAddSheet({
       title={t("secrets.addTitle")}
       onClose={onClose}
       footer={
-        <button
-          type="button"
-          data-secret-submit
-          disabled={!ready}
-          onClick={() => void submit()}
-          className="min-h-11 flex-1 rounded-[12px] bg-accent px-3 text-label font-semibold text-white disabled:opacity-50"
-        >
+        <button type="button" data-secret-submit disabled={!ready} onClick={() => void submit()}
+          className="min-h-11 flex-1 rounded-[12px] bg-accent px-3 text-label font-semibold text-white disabled:opacity-50">
           {t("secrets.submit")}
         </button>
       }
@@ -181,19 +180,10 @@ export function MobileSecretAddSheet({
 
         <label className={LABEL}>
           {t("secrets.value")}
-          {/* Uncontrolled on purpose: no React state, no render, no snapshot
-              ever holds it. `autoComplete="off"` keeps the phone's keychain
-              out of it too. */}
-          <input
-            ref={value}
-            type="password"
-            defaultValue=""
-            data-secret-value
-            aria-label={t("secrets.value")}
-            autoComplete="off"
-            {...RAW}
-            className={FIELD}
-          />
+          {/* Uncontrolled on purpose: no state, no render, no snapshot ever
+              holds it; `autoComplete="off"` keeps the keychain out too. */}
+          <input ref={value} type="password" defaultValue="" data-secret-value
+            aria-label={t("secrets.value")} autoComplete="off" {...RAW} className={FIELD} />
           <span className="text-caption font-normal text-muted">{t("secrets.valueHint")}</span>
         </label>
 
@@ -232,7 +222,15 @@ export function MobileSecretAddSheet({
             </select>
           </label>
         )}
-        {failure ? <p role="status" data-secret-failure className="px-4 pt-2 text-label text-danger">{failure}</p> : null}
+        <button type="button" data-secret-replace role="switch" aria-checked={replace}
+          onClick={() => setReplace((was) => !was)}
+          className="mx-4 mt-2 flex min-h-11 items-center gap-2.5 text-left text-label font-semibold text-primary">
+          <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-[6px] border ${
+            replace ? "border-accent bg-accent text-white" : "border-border"
+          }`} aria-hidden>{replace ? "✓" : ""}</span>
+          {t("secrets.replace")}
+        </button>
+        {failureText ? <p role="status" data-secret-failure className="px-4 pt-2 text-label text-danger">{failureText}</p> : null}
       </div>
     </MobileSheet>
   );

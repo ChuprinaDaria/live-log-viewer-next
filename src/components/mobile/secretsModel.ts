@@ -155,22 +155,31 @@ export interface SecretAddInput {
   replace?: boolean;
 }
 
+/** Why an add did not go through: the sentence to fall back on, and a code
+    when the failure is one the screen has its own words for. The code exists
+    because the console answers in CLI terms — «додайте --replace» — and the
+    operator is holding a phone with a checkbox, not a terminal. */
+export interface SecretAddFailure {
+  error: string;
+  code?: string;
+}
+
 /** Add a key: the console writes the value into a private 0600 file and puts
-    only its ADDRESS into the vault. Resolves with the console's own refusal
-    text, or null when the key is in. Nothing of the value is kept here — not
-    in a variable that outlives this call, and not in the answer, which is the
-    inventory row. */
-export async function addSecret(input: SecretAddInput): Promise<string | null> {
+    only its ADDRESS into the vault. Resolves with the refusal, or null when
+    the key is in. Nothing of the value is kept here — not in a variable that
+    outlives this call, and not in the answer, which is the inventory row. */
+export async function addSecret(input: SecretAddInput): Promise<SecretAddFailure | null> {
   try {
     const response = await fetch("/api/secrets", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "add", ...input }),
     });
-    const body = await response.json() as { error?: string };
-    return response.ok ? null : (body.error ?? `HTTP ${response.status}`);
+    const body = await response.json() as { error?: string; code?: string };
+    if (response.ok) return null;
+    return { error: body.error ?? `HTTP ${response.status}`, ...(body.code ? { code: body.code } : {}) };
   } catch (cause) {
-    return cause instanceof Error ? cause.message : String(cause);
+    return { error: cause instanceof Error ? cause.message : String(cause) };
   }
 }
 

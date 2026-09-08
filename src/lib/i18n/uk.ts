@@ -2774,6 +2774,8 @@ export const uk: Record<keyof typeof en, Message> = {
   "secrets.scopeFirm": "фірмі",
   "secrets.scopeProject": "проєкту",
   "secrets.submit": "Додати",
+  "secrets.replace": "Перезаписати наявний",
+  "secrets.exists": "Такий секрет уже є — увімкни «Перезаписати наявний»",
   "secrets.added": "Додано: {name}",
   "hq.identity.title": "Підпис і аватар",
   "hq.identity.name": "Імʼя",

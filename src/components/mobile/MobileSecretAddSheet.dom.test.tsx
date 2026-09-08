@@ -193,7 +193,7 @@ test("a scope of firm or project comes from the org tree, and none is the defaul
 });
 
 test("a refusal stands on the form, the sheet stays, and the value field is emptied", async () => {
-  answer = { ok: false, status: 400, body: { error: "секрет cohere_mcp уже є — додайте --replace, щоб перезаписати" } };
+  answer = { ok: false, status: 400, body: { error: "фірми bluebird немає — спершу firm_create" } };
   const root = await mount();
   type(q(root, '[data-secret-field="id"]'), "cohere_mcp");
   type(q(root, '[data-secret-field="provider"]'), "cohere");
@@ -202,7 +202,7 @@ test("a refusal stands on the form, the sheet stays, and the value field is empt
   await settle();
 
   expect(closed).toBe(0);
-  expect(q(root, "[data-secret-failure]")!.textContent).toContain("--replace");
+  expect(q(root, "[data-secret-failure]")!.textContent).toContain("firm_create");
   /* Retyping it is cheaper than wondering whether the field still holds it. */
   expect((q(root, "[data-secret-value]") as unknown as { value: string }).value).toBe("");
   expect(receipts.getState()).toBeNull();
@@ -218,4 +218,60 @@ test("submit stays disabled until there is an id, a provider and a value", async
      on the address half and the route refuses an empty value by name. */
   expect(q(root, "[data-secret-submit]")!.hasAttribute("disabled")).toBe(false);
   expect(posts).toEqual([]);
+});
+
+test("a duplicate is answered in the page's own words, not with a CLI flag", async () => {
+  /* The console says «додайте --replace». The operator is holding a phone and
+     has a checkbox two rows up; quoting a command-line flag at her is the form
+     failing to answer its own question. */
+  answer = { ok: false, status: 400, body: { error: "секрет cohere_mcp уже є — додайте --replace, щоб перезаписати", code: "secret_exists" } };
+  const root = await mount();
+  type(q(root, '[data-secret-field="id"]'), "cohere_mcp");
+  type(q(root, '[data-secret-field="provider"]'), "cohere");
+  type(q(root, "[data-secret-value]"), VALUE);
+  click(q(root, "[data-secret-submit]"));
+  await settle();
+  expect(q(root, "[data-secret-failure]")!.textContent).toBe(translate("en", "secrets.exists"));
+  expect(closed).toBe(0);
+});
+
+test("«Перезаписати наявний» is what fixes a typo from the phone", async () => {
+  const root = await mount();
+  type(q(root, '[data-secret-field="id"]'), "cohere_mcp");
+  type(q(root, '[data-secret-field="provider"]'), "cohere");
+  type(q(root, "[data-secret-value]"), VALUE);
+  const replace = q(root, "[data-secret-replace]")!;
+  expect(replace).not.toBeNull();
+  expect(replace.getAttribute("aria-checked")).toBe("false");
+  click(replace);
+  expect(q(root, "[data-secret-replace]")!.getAttribute("aria-checked")).toBe("true");
+  click(q(root, "[data-secret-submit]"));
+  await settle();
+  expect(posts[0]!.body.replace).toBe(true);
+});
+
+test("replace is absent, not false, when it was not asked for", async () => {
+  const root = await mount();
+  type(q(root, '[data-secret-field="id"]'), "cohere_mcp");
+  type(q(root, '[data-secret-field="provider"]'), "cohere");
+  type(q(root, "[data-secret-value]"), VALUE);
+  click(q(root, "[data-secret-submit]"));
+  await settle();
+  expect("replace" in posts[0]!.body).toBe(false);
+});
+
+test("a slug that starts with a digit still derives a legal variable name", async () => {
+  /* `2FA_TOKEN` is not an environment variable name, and the console refuses
+     it. The form must not hand her a name that cannot work — and it must SHOW
+     what it did, because the derived name is what ends up in the ref. */
+  const root = await mount();
+  type(q(root, '[data-secret-field="id"]'), "2fa_token");
+  const derived = (q(root, '[data-secret-field="envName"]') as unknown as { value: string }).value;
+  expect(derived).toBe("K_2FA_TOKEN");
+  expect(/^[A-Z][A-Z0-9_]*$/.test(derived)).toBe(true);
+  type(q(root, '[data-secret-field="provider"]'), "test");
+  type(q(root, "[data-secret-value]"), VALUE);
+  click(q(root, "[data-secret-submit]"));
+  await settle();
+  expect(posts[0]!.body.envName).toBe("K_2FA_TOKEN");
 });

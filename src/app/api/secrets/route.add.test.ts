@@ -146,6 +146,58 @@ test("the console's own refusal reaches the caller, and never with the value in 
   expect(JSON.stringify(body)).not.toContain(VALUE);
 });
 
+test("a control character inside the value is refused — a .env line is shell code", async () => {
+  /* The console writes this file for `. file` on the target machine, so a
+     newline in a value is a second COMMAND, not an odd character. Both sides
+     refuse it; this is the near side. */
+  for (const value of ["first\nsecond", "carriage\rreturn", "tab\there", "bell\u0007", "del\u007f"]) {
+    const response = await post({ action: "add", secret: "k", value, provider: "cohere" });
+    expect(response.status, JSON.stringify(value)).toBe(400);
+    expect((await response.json() as { code?: string }).code).toBe("value_invalid");
+  }
+  expect(calls).toEqual([]);
+  /* One TRAILING newline is still the pipe's, not the operator's. */
+  await post({ action: "add", secret: "k", value: `${VALUE}\n`, provider: "cohere" });
+  expect(called("secret_add")!.stdinValue).toBe(VALUE);
+});
+
+test("an env name with a leading underscore is refused — parse_ref would not see it", async () => {
+  /* The console's `parse_ref` reads only [A-Z][A-Z0-9_]*. Accepting `_X` here
+     would write a ref whose variable `secrets_list` reports as null and spawn
+     skips in silence. */
+  const response = await post({ action: "add", secret: "k", value: VALUE, provider: "cohere", envName: "_LEADING" });
+  expect(response.status).toBe(400);
+  expect((await response.json() as { code?: string }).code).toBe("env_name_invalid");
+  expect(calls).toEqual([]);
+});
+
+test("a kind outside the four the console documents is refused here, not by a subprocess", async () => {
+  const response = await post({ action: "add", secret: "k", value: VALUE, provider: "cohere", kind: "certificate" });
+  expect(response.status).toBe(400);
+  expect((await response.json() as { code?: string }).code).toBe("kind_invalid");
+  await post({ action: "add", secret: "k", value: VALUE, provider: "cohere", kind: "oauth" });
+  expect(called("secret_add")!.params?.kind).toBe("oauth");
+});
+
+test("a duplicate carries a code, so the page can say it in the operator's language", async () => {
+  refusal = "секрет cohere_mcp уже є — додайте --replace, щоб перезаписати";
+  const response = await post({ action: "add", secret: "cohere_mcp", value: VALUE, provider: "cohere" });
+  const body = await response.json() as { error: string; code?: string };
+  expect(response.status).toBe(400);
+  expect(body.code).toBe("secret_exists");
+  /* Any other refusal stays what the console said, with no code invented. */
+  refusal = "фірми bluebird немає — спершу firm_create";
+  const other = await post({ action: "add", secret: "k", value: VALUE, provider: "cohere", firm: "bluebird" });
+  expect((await other.json() as { code?: string }).code).toBeUndefined();
+});
+
+test("annotate answers with the refreshed row too — one reader, not two", async () => {
+  const response = await post({ secret: "cohere_mcp", label: "Cohere · RAG" });
+  expect(response.status).toBe(200);
+  expect(called("secret_annotate")).toBeDefined();
+  expect((await response.json() as { secret?: { name?: string } }).secret?.name).toBe("cohere_mcp");
+});
+
 test("replace is passed as a flag, and only when it was asked for", async () => {
   await post({ action: "add", secret: "k", value: VALUE, provider: "cohere" });
   expect(called("secret_add")!.params?.replace).toBeUndefined();

@@ -115,22 +115,24 @@ export function MobileSecretsScreen({ host, renderSheet }: { host: MobileShellHo
               </div>
             ) : null}
 
-            {totals.total ? (
-              <>
-                <div className="flex items-center gap-2 px-1 pb-1.5 pt-3">
-                  <h2 className="text-label font-semibold text-muted">{t("secrets.sectionKeys")}</h2>
-                  <button
-                    type="button"
-                    data-secret-add-open
-                    onClick={() => { setShareFailure(null); setAdding(true); }}
-                    className="ml-auto min-h-11 rounded-[12px] px-2 text-label font-semibold text-accent"
-                  >
-                    {t("secrets.add")}
-                  </button>
-                </div>
-                <Filter value={filter} totals={totals} onChange={setFilter} />
-              </>
-            ) : null}
+            {/* The header and its «+ Секрет» are NOT conditional on there
+                being keys. An empty vault is exactly the state a fresh machine
+                starts in, and hanging the only way to fill it off the count of
+                what is already in it locked out the one operator who needed
+                it. The filter stays conditional — three state cells over zero
+                rows filter nothing. */}
+            <div className="flex items-center gap-2 px-1 pb-1.5 pt-3">
+              <h2 className="text-label font-semibold text-muted">{t("secrets.sectionKeys")}</h2>
+              <button
+                type="button"
+                data-secret-add-open
+                onClick={() => { setShareFailure(null); setAdding(true); }}
+                className="ml-auto min-h-11 rounded-[12px] px-2 text-label font-semibold text-accent"
+              >
+                {t("secrets.add")}
+              </button>
+            </div>
+            {totals.total ? <Filter value={filter} totals={totals} onChange={setFilter} /> : null}
 
             {shareFailure ? (
               <p role="status" data-secret-share-failure className="px-1 pt-2 text-label text-danger">{shareFailure}</p>

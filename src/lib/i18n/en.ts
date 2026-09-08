@@ -2862,6 +2862,8 @@ export const en = {
   "secrets.scopeFirm": "a firm",
   "secrets.scopeProject": "a project",
   "secrets.submit": "Add",
+  "secrets.replace": "Replace existing",
+  "secrets.exists": "This secret already exists — enable “Replace existing”",
   "secrets.added": "Added: {name}",
   "hq.identity.title": "Signature and avatar",
   "hq.identity.name": "Name",

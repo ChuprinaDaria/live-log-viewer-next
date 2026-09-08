@@ -358,11 +358,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     /* Answer with the row as the console now holds it, so the page cannot
        disagree with the store about who a key is shared with. */
-    const updated = await fleetctl<{ secrets: ConsoleSecret[] }>({
-      fn: "secrets_list", params: { query: secret },
-    });
-    const row = (updated.secrets ?? []).find((record) => record.id === secret);
-    return NextResponse.json({ secret: row ? fromConsole(row) : null }, { headers });
+    return NextResponse.json({ secret: await refreshed(secret) }, { headers });
   } catch (error) {
     return NextResponse.json({ error: fleetctlMessage(error) }, { status: fleetctlStatus(error), headers });
   }
@@ -373,15 +369,33 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     but a typo answering in Ukrainian from a subprocess is a worse answer than
     a 400 that names the field. */
 const SECRET_SLUG = /^[a-z0-9][a-z0-9_-]{0,63}$/;
-const SECRET_ENV_NAME = /^[A-Z_][A-Z0-9_]*$/;
+/* Exactly what the console's `parse_ref` reads back. A wider shape here (a
+   leading underscore, say) is accepted, written into `ref`, and then reported
+   by `secrets_list` as `env_name: null` — after which spawn skips the key
+   without a word. Two shapes for one thing is a silently lost secret. */
+const SECRET_ENV_NAME = /^[A-Z][A-Z0-9_]*$/;
+/* The four the console documents; anything else is refused here rather than
+   by a subprocess answering in Ukrainian. */
+const SECRET_KINDS = new Set(["token", "oauth", "password", "subscription"]);
+/* eslint-disable-next-line no-control-regex -- the point is the control range */
+const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/;
 
 /** A value bigger than this is a file, not a key — a pasted PEM bundle or a
     mis-picked upload. The console would write it happily; the limit is here so
     that it is refused by size rather than stored by accident. */
 const MAX_VALUE_BYTES = 8 * 1024;
 
-const bad = (error: string): NextResponse =>
-  NextResponse.json({ error }, { status: 400, headers });
+/** A refusal the page can act on: the sentence for a person, the code for the
+    screen, which turns it into its own language. */
+const bad = (code: string, error: string): NextResponse =>
+  NextResponse.json({ error, code }, { status: 400, headers });
+
+/** The console's own words for "that key is already in the vault". Matched
+    here, where the console's wording lives, so the phone can answer with its
+    own sentence instead of quoting a CLI flag at the operator. */
+function refusalCode(said: string): string | undefined {
+  return /уже є/.test(said) && /--replace/.test(said) ? "secret_exists" : undefined;
+}
 
 /**
  * Add a secret: the metadata as flags, the value over stdin.
@@ -392,13 +406,20 @@ const bad = (error: string): NextResponse =>
  * part of the key, and silently trimming spaces would corrupt a valid one.
  */
 async function addSecret(secret: string, body: Record<string, unknown>): Promise<NextResponse> {
-  if (!SECRET_SLUG.test(secret)) return bad("secret must be a slug: [a-z0-9][a-z0-9_-] up to 64 characters");
+  if (!SECRET_SLUG.test(secret)) return bad("slug_invalid", "secret must be a slug: [a-z0-9][a-z0-9_-] up to 64 characters");
 
-  if (typeof body.value !== "string") return bad("value is required");
+  if (typeof body.value !== "string") return bad("value_required", "value is required");
   const value = body.value.replace(/\r?\n$/, "");
-  if (!value.trim()) return bad("value is empty");
+  if (!value.trim()) return bad("value_empty", "value is empty");
+  /* The console writes this value into a file that the target machine SOURCES
+     (`. file`). A newline in it is a second command, a tab and a carriage
+     return are silent corruption. The console refuses them too; refusing here
+     means the operator is told by the form rather than by a subprocess. */
+  if (CONTROL_CHARACTER.test(value)) {
+    return bad("value_invalid", "value contains a control character; a sourced .env line cannot carry one");
+  }
   if (new TextEncoder().encode(value).length > MAX_VALUE_BYTES) {
-    return bad(`value is longer than ${MAX_VALUE_BYTES} bytes — that is a file, not a key`);
+    return bad("value_too_large", `value is longer than ${MAX_VALUE_BYTES} bytes — that is a file, not a key`);
   }
 
   const word = (input: unknown): string | undefined => {
@@ -406,10 +427,14 @@ async function addSecret(secret: string, body: Record<string, unknown>): Promise
     return trimmed ? trimmed : undefined;
   };
   const provider = word(body.provider);
-  if (!provider) return bad("provider is required");
+  if (!provider) return bad("provider_required", "provider is required");
   const envName = word(body.envName);
   if (envName !== undefined && !SECRET_ENV_NAME.test(envName)) {
-    return bad("envName must be an environment variable name: [A-Z_][A-Z0-9_]*");
+    return bad("env_name_invalid", "envName must be an environment variable name: [A-Z][A-Z0-9_]*");
+  }
+  const kind = word(body.kind);
+  if (kind !== undefined && !SECRET_KINDS.has(kind)) {
+    return bad("kind_invalid", `kind must be one of ${[...SECRET_KINDS].join(", ")}`);
   }
   const tags = Array.isArray(body.tags)
     ? body.tags.filter((tag): tag is string => typeof tag === "string" && tag.trim().length > 0)
@@ -426,7 +451,7 @@ async function addSecret(secret: string, body: Record<string, unknown>): Promise
            `--env-name`; an underscore here would reach argparse as a flag it
            does not know. */
         envName,
-        kind: word(body.kind),
+        kind,
         owner: word(body.owner),
         firm: word(body.firm),
         project: word(body.project),
@@ -439,7 +464,10 @@ async function addSecret(secret: string, body: Record<string, unknown>): Promise
     });
     return NextResponse.json({ secret: await refreshed(secret) }, { headers });
   } catch (error) {
-    return NextResponse.json({ error: fleetctlMessage(error) }, { status: fleetctlStatus(error), headers });
+    const said = fleetctlMessage(error);
+    const code = refusalCode(said);
+    return NextResponse.json({ error: said, ...(code ? { code } : {}) },
+      { status: fleetctlStatus(error), headers });
   }
 }
 
