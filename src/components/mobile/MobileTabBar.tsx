@@ -1,6 +1,6 @@
 "use client";
 
-import { Blocks, KeyRound, LayoutGrid, MessageSquare, Settings } from "lucide-react";
+import { LayoutGrid, MessageSquare, Settings } from "lucide-react";
 
 import { useKeyboardInset } from "@/hooks/useComposer";
 import { useLocale, type MessageKey } from "@/lib/i18n";
@@ -8,8 +8,7 @@ import { useLocale, type MessageKey } from "@/lib/i18n";
 import { topScreen, useMobileNav, useMobileNavStore, type MobileScreen } from "./mobileNav";
 
 /*
- * The app's sections as five labelled buttons (TZ-UI.md: dashboard chat,
- * secrets, MCP/skills, sessions — plus settings). Rendered by every shell at
+ * The app's sections as three daily destinations (chat, sessions and settings). Rendered by every shell at
  * the bottom of the stack; a tap is the store's sibling switch, so no history
  * grows. Deeper screens (a conversation, a pipeline) own the whole height and
  * the bar's ‹ is the way back; while the keyboard is up the bar yields to the
@@ -19,8 +18,6 @@ import { topScreen, useMobileNav, useMobileNavStore, type MobileScreen } from ".
 const TABS: { key: string; screen: MobileScreen; label: MessageKey; Icon: typeof MessageSquare }[] = [
   { key: "chat", screen: { kind: "orchestrator" }, label: "mobile2.tabs.chat", Icon: MessageSquare },
   { key: "sessions", screen: { kind: "board" }, label: "mobile2.tabs.sessions", Icon: LayoutGrid },
-  { key: "secrets", screen: { kind: "secrets" }, label: "mobile2.tabs.secrets", Icon: KeyRound },
-  { key: "mcp", screen: { kind: "mcp" }, label: "mobile2.tabs.mcp", Icon: Blocks },
   { key: "settings", screen: { kind: "settings" }, label: "mobile2.tabs.settings", Icon: Settings },
 ];
 
@@ -32,7 +29,7 @@ export function MobileTabBar() {
   if (state.stack.length !== 1 || keyboard > 0) return null;
   const current = topScreen(state).kind;
   return (
-    <nav data-mobile2-tabs aria-label={t("mobile2.tabs.aria")} className="grid shrink-0 grid-cols-5 border-t border-border bg-card pb-[env(safe-area-inset-bottom)]">
+    <nav data-mobile2-tabs aria-label={t("mobile2.tabs.aria")} className="grid shrink-0 grid-cols-3 border-t border-border bg-card pb-[env(safe-area-inset-bottom)]">
       {TABS.map(({ key, screen, label, Icon }) => {
         const active = screen.kind === current;
         return (

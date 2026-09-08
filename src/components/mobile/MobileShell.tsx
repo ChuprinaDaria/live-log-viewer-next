@@ -173,7 +173,7 @@ export function MobileShell({
   title,
   titleLabel,
   titleOpens,
-  back = false,
+  back: backProp,
   host,
   onOpenSearch,
   searchTestId,
@@ -216,6 +216,7 @@ export function MobileShell({
   const tabsAllowed = useContext(TabsContext);
   const tabs = tabsProp ?? tabsAllowed;
   const state = useMobileNav();
+  const back = backProp ?? state.stack.length > 1;
   useEffect(() => nav.attach(), [nav]);
   /* The shell this one is mounted inside, if any: it lends its host and its
      sheets, and it is who this shell claims the chrome from. */

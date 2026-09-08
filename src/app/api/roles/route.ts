@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { fleetctl, fleetctlInstalled, fleetctlMessage, fleetctlStatus } from "@/lib/fleetctl/client";
+import { ROLE_DEFAULTS } from "@/lib/roles/defaults";
 import { listRoles } from "@/lib/roles/registry";
 import { ROLE_OVERRIDES_SCHEMA_VERSION } from "@/lib/roles/store";
 import { ROLE_IDS, type RoleDefinition } from "@/lib/roles/types";
@@ -12,8 +13,8 @@ import { rejectCrossOrigin } from "@/lib/sameOrigin";
  * `defaults.ts` is the SEED the console was filled from once, not the source:
  * a role's engine, model, effort and prompt are data the operator edits, and
  * the console is the one writer of that data — its CLI, its MCP server and
- * this route are three doors onto the same store, so an edit here is visible
- * to an agent in a terminal and the other way round.
+ * this route read the same catalog. The board still edits only its supported
+ * seed IDs; additional console roles are explicitly read-only here.
  *
  * The route still answers when the console is absent: it falls back to the
  * built-in catalog merged with the overrides file and says so in `source`, so
@@ -41,6 +42,7 @@ interface ConsoleRole {
 }
 
 export interface RoleView extends RoleDefinition {
+  editable: boolean;
   /** The name the draft pane reads. */
   promptPreview: string;
   /** The operator has changed this role away from its seed. */
@@ -64,6 +66,7 @@ function viewOf(role: ConsoleRole, fallback: RoleDefinition | undefined): RoleVi
   const prompt = typeof role.promptScaffold === "string" ? role.promptScaffold : base?.promptScaffold ?? "";
   return {
     id: role.id as RoleDefinition["id"],
+    editable: (ROLE_IDS as readonly string[]).includes(role.id),
     name: role.name ?? base?.name ?? role.id,
     description: role.description ?? base?.description ?? "",
     config: { engine, model, effort },
@@ -85,7 +88,7 @@ async function consoleRoles(): Promise<RoleView[]> {
   const listed = await fleetctl<{ roles: { id: string }[] }>({ fn: "roles_list" });
   const ids = listed.roles.map((role) => role.id);
   const shown = await Promise.all(ids.map((id) => fleetctl<ConsoleRole>({ fn: "role_show", params: { role: id } })));
-  const defaults = new Map(listRoles().map((role) => [role.id as string, role]));
+  const defaults = new Map(ROLE_DEFAULTS.map((role) => [role.id as string, role]));
   return shown.flatMap((role) => {
     const view = viewOf(role, defaults.get(role.id));
     return view ? [view] : [];
@@ -93,6 +96,7 @@ async function consoleRoles(): Promise<RoleView[]> {
 }
 
 export async function GET(): Promise<NextResponse> {
+  let warning: "console-unavailable" | "invalid-overrides" | null = null;
   if (fleetctlInstalled()) {
     try {
       const roles = await consoleRoles();
@@ -100,14 +104,19 @@ export async function GET(): Promise<NextResponse> {
         return NextResponse.json({ schemaVersion: ROLE_OVERRIDES_SCHEMA_VERSION, source: "fleetctl", roles }, { headers });
       }
     } catch {
+      warning = "console-unavailable";
       /* Fall through to the built-in catalog: a role picker that answers is
          worth more than a page that fails because the console is busy. */
     }
   }
+  let fallback: readonly RoleDefinition[];
+  try { fallback = listRoles(); }
+  catch { fallback = ROLE_DEFAULTS; warning = "invalid-overrides"; }
   return NextResponse.json({
+    warning,
     schemaVersion: ROLE_OVERRIDES_SCHEMA_VERSION,
     source: "fallback",
-    roles: listRoles().map((role) => ({ ...role, promptPreview: role.promptScaffold, edited: false, updatedAt: null })),
+    roles: fallback.map((role) => ({ ...role, editable: false, promptPreview: role.promptScaffold, edited: false, updatedAt: null })),
   }, { headers });
 }
 
@@ -148,7 +157,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         : { fn: "role_edit", params, stdinParam: "prompt", stdinValue: prompt });
     }
     const updated = await fleetctl<ConsoleRole>({ fn: "role_show", params: { role } });
-    const defaults = listRoles().find((definition) => definition.id === role);
+    const defaults = ROLE_DEFAULTS.find((definition) => definition.id === role);
     return NextResponse.json({ role: viewOf(updated, defaults) }, { headers });
   } catch (error) {
     return NextResponse.json({ error: fleetctlMessage(error) }, { status: fleetctlStatus(error), headers });

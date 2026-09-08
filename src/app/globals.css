@@ -25,6 +25,18 @@ body {
   background: var(--tg-page-background, var(--color-canvas));
 }
 
+/* Settings screens contain forms and arbitrarily long lists. Their cards must
+   keep intrinsic height so the screen scrolls; overflow-hidden flex cards
+   otherwise shrink to a sliver and clip the form's inputs and buttons. */
+.settings-scroll > * {
+  flex-shrink: 0;
+  min-width: 0;
+}
+.settings-scroll :is(input, textarea, select) {
+  min-width: 0;
+  max-width: 100%;
+}
+
 /* Native <button> ships with `cursor: default`, so every custom control in the
    app reads as un-clickable until you hover a link. Restore a sane pointer for
    interactive elements, and switch to not-allowed when they're disabled. These

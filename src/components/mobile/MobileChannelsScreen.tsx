@@ -104,7 +104,7 @@ export function MobileChannelsScreen({ host, renderSheet }: { host: MobileShellH
 
   return (
     <MobileShell screen="channels" title={<MobileBarTitle>{t("channels.title")}</MobileBarTitle>} host={host} renderSheet={renderSheet}>
-      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-y-contain px-3 py-3" data-mobile2-channels>
+      <div className="settings-scroll flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-y-contain px-3 py-3" data-mobile2-channels>
         {channels.error ? (
           <div role="status" className="flex flex-col gap-2 px-1 text-label text-danger">
             <p>{channels.error === "UNREACHABLE" ? t("list.failed") : channels.error}</p>
