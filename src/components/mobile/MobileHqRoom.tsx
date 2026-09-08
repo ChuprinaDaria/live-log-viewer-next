@@ -8,7 +8,8 @@ import { LogFeed } from "@/components/LogFeed";
 import { RuntimePill } from "@/components/RuntimePill";
 import { TmuxComposer } from "@/components/TmuxComposer";
 import { useAgentCapabilities } from "@/components/useAgentCapabilities";
-import { accountIdFromPath, DEFAULT_ACCOUNT_ID } from "@/lib/accounts/badge";
+import { accountDisplayName, accountIdFromPath, DEFAULT_ACCOUNT_ID } from "@/lib/accounts/badge";
+import { useEngineAccounts } from "@/hooks/useEngineAccounts";
 import { useKeyboardInset } from "@/hooks/useComposer";
 import { useLocale } from "@/lib/i18n";
 import type { FileEntry } from "@/lib/types";
@@ -130,11 +131,15 @@ function HqRuntimePanel({ file }: { file: FileEntry }) {
   const { t } = useLocale();
   const { caps, structuredSession } = useAgentCapabilities(file);
   const account = accountIdFromPath(file.path);
+  const accounts = useEngineAccounts("claude");
+  /* The mailbox when the registry knows it; the registry word only as a last
+     resort — «default» told the operator nothing about whose quota this is. */
+  const accountName = accountDisplayName(accounts.accounts, account);
   const rows: { label: string; value: string }[] = [
     { label: t("mobile2.hq.engine"), value: engineLabel(file.engine) ?? "—" },
     { label: t("mobile2.hq.model"), value: file.model || t("draft.summaryModelDefault") },
     { label: t("mobile2.hq.effort"), value: file.effort || t("draft.summaryEffortDefault") },
-    { label: t("launch.account"), value: account === DEFAULT_ACCOUNT_ID ? t("mobile2.hq.accountDefault") : account },
+    { label: t("launch.account"), value: accountName === DEFAULT_ACCOUNT_ID ? t("mobile2.hq.accountDefault") : accountName },
   ];
   return (
     <div data-mobile2-hq-runtime className="shrink-0 border-b border-border bg-card px-4 py-2">

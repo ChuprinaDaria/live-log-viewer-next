@@ -28,6 +28,11 @@ export type ClaudeAccount = {
   authPresent: boolean;
   credentialState?: ClaudeCredentialRead["state"];
   createdAt: number;
+  /** The signed-in identity's e-mail, read from the home's `.claude.json`
+      (`oauthAccount.emailAddress`), or null when the home never logged in.
+      The operator thinks in mailboxes, not in registry ids: «default» says
+      nothing, the address says whose quota a session burns. */
+  email?: string | null;
 };
 
 type StoredAccount = { id: string; label: string; kind: "managed"; createdAt: number };
@@ -167,8 +172,26 @@ function credentialPresence(home: string): Pick<ClaudeAccount, "authPresent" | "
   const read = readClaudeCredentials(home);
   return { authPresent: read.state === "present", credentialState: read.state };
 }
-function account(stored: StoredAccount): ClaudeAccount { const home = managedHome(stored.id); return { ...stored, home, projectsDir: projectsDirFor(home), ...credentialPresence(home) }; }
-function main(): ClaudeAccount { const home = legacyClaudeHome(); return { id: DEFAULT_ID, label: "Main", kind: "legacy", home, projectsDir: projectsDirFor(home), ...credentialPresence(home), createdAt: 0 }; }
+/** The e-mail the CLI recorded for a home's login. The legacy home also
+    honours `$HOME/.claude.json`, which is where a plain `claude` (no
+    CLAUDE_CONFIG_DIR) keeps the same record. Never throws: a missing or
+    malformed file is «no identity», not an error. */
+export function claudeAccountEmail(home: string): string | null {
+  const candidates = [path.join(home, ".claude.json")];
+  if (path.resolve(home) === path.resolve(os.homedir(), ".claude")) candidates.push(path.join(os.homedir(), ".claude.json"));
+  for (const file of candidates) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(file, "utf8")) as { oauthAccount?: { emailAddress?: unknown } };
+      const email = parsed.oauthAccount?.emailAddress;
+      if (typeof email === "string" && email.includes("@")) return email.trim();
+    } catch {
+      /* unreadable or absent: try the next candidate */
+    }
+  }
+  return null;
+}
+function account(stored: StoredAccount): ClaudeAccount { const home = managedHome(stored.id); return { ...stored, home, projectsDir: projectsDirFor(home), ...credentialPresence(home), email: claudeAccountEmail(home) }; }
+function main(): ClaudeAccount { const home = legacyClaudeHome(); return { id: DEFAULT_ID, label: "Main", kind: "legacy", home, projectsDir: projectsDirFor(home), ...credentialPresence(home), createdAt: 0, email: claudeAccountEmail(home) }; }
 export function listClaudeAccounts(): ClaudeAccount[] { return [main(), ...readRegistry().registry.accounts.map(account)]; }
 export function activeClaudeAccountId(): string { const active = readRegistry().registry.active; return listClaudeAccounts().some((item) => item.id === active) ? active : DEFAULT_ID; }
 export function claudeAccountsMutationLocked(): boolean { return readRegistry().corrupt; }

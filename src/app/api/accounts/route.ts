@@ -126,6 +126,7 @@ export async function GET() {
     return {
       id: account.id,
       label: account.label,
+      email: account.email,
       kind: account.kind,
       authPresent: account.authPresent,
       loginPending: login ? LIVE_CLAUDE_LOGIN_PHASES.has(login.phase) : false,

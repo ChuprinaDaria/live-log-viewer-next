@@ -7,7 +7,8 @@ import { LaunchForm } from "@/components/machines/LaunchForm";
 import { loadProject, type ProjectDetail } from "@/components/mobile/firmsModel";
 import { hqFileOf, useHqSeat } from "@/components/mobile/hqSeat";
 import { cleanTitle, fmtAge } from "@/components/utils";
-import { accountIdFromPath, DEFAULT_ACCOUNT_ID } from "@/lib/accounts/badge";
+import { accountDisplayName, accountIdFromPath, DEFAULT_ACCOUNT_ID } from "@/lib/accounts/badge";
+import { useEngineAccounts } from "@/hooks/useEngineAccounts";
 import { useLocale } from "@/lib/i18n";
 import type { FileEntry } from "@/lib/types";
 
@@ -70,6 +71,9 @@ export function ProjectConsole({ project, files, onOpenFile, onOpenTranscript }:
     void reload();
   }, [reload]);
 
+  /* One registry read for every row: the mailbox behind each session's
+     account id, so «default» never reaches the screen when the address is known. */
+  const claudeAccounts = useEngineAccounts("claude");
   const live = projectAgents(files, project).filter((file) => file.activity === "live");
   const hqFile = hqFileOf(files, hq.status);
 
@@ -136,6 +140,7 @@ export function ProjectConsole({ project, files, onOpenFile, onOpenTranscript }:
         ) : (
           <ul className="flex flex-col gap-1">
             {live.map((file) => <AgentRow key={file.path} file={file} onOpenFile={onOpenFile}
+              accountName={accountDisplayName(claudeAccounts.accounts, accountIdFromPath(file.path))}
               onMove={() => setMove({ host: machineOf(file), tmux: "", nonce: Date.now() })} />)}
           </ul>
         )}
@@ -151,9 +156,8 @@ export function ProjectConsole({ project, files, onOpenFile, onOpenTranscript }:
   );
 }
 
-function AgentRow({ file, onOpenFile, onMove }: { file: FileEntry; onOpenFile: (file: FileEntry) => void; onMove: () => void }) {
+function AgentRow({ file, accountName, onOpenFile, onMove }: { file: FileEntry; accountName: string; onOpenFile: (file: FileEntry) => void; onMove: () => void }) {
   const { t } = useLocale();
-  const account = accountIdFromPath(file.path);
   const machine = machineOf(file);
   const meta = [engineLabel(file.engine), file.model].filter(Boolean).join(" · ");
   return (
@@ -162,7 +166,7 @@ function AgentRow({ file, onOpenFile, onMove }: { file: FileEntry; onOpenFile: (
         className="flex min-h-8 min-w-0 flex-1 flex-col items-start rounded-[8px] px-2 py-1 text-left hover:bg-quiet focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40">
         <span className="w-full truncate text-[12.5px] text-primary">{cleanTitle(file.title)}</span>
         <span className="w-full truncate text-[11px] text-muted">
-          {[meta, account === DEFAULT_ACCOUNT_ID ? "" : account, machine, fmtAge(file.mtime)].filter(Boolean).join(" · ")}
+          {[meta, accountName === DEFAULT_ACCOUNT_ID ? "" : accountName, machine, fmtAge(file.mtime)].filter(Boolean).join(" · ")}
         </span>
       </button>
       <button type="button" data-console-move={file.path} onClick={onMove}

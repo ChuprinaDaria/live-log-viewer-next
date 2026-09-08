@@ -127,6 +127,8 @@ export type AccountAuthHealth = "authenticated" | "signed_out" | "unknown" | "er
 export type AccountOption = {
   id: string;
   label: string;
+  /** Signed-in mailbox when the engine records one (Claude: `oauthAccount`). */
+  email?: string | null;
   /** Managed accounts own the sign-in/retry affordances; legacy ones never do. */
   kind?: "legacy" | "managed";
   authPresent: boolean;

@@ -21,3 +21,17 @@ export function accountIdFromPath(path: string | null | undefined): string {
   const match = ACCOUNT_PATH.exec(path);
   return match ? match[1]! : DEFAULT_ACCOUNT_ID;
 }
+
+/** What to call an account in front of the operator: the mailbox when the
+    registry knows it, else the registry label, else the raw id. «default»
+    is a registry word, not an identity — it never reaches the screen when a
+    better name exists. */
+export function accountDisplayName(
+  accounts: readonly { id: string; label?: string; email?: string | null }[],
+  accountId: string,
+): string {
+  const found = accounts.find((account) => account.id === accountId);
+  if (found?.email) return found.email;
+  if (found?.label && accountId === DEFAULT_ACCOUNT_ID) return found.label;
+  return accountId;
+}
