@@ -1,13 +1,18 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
-import type { CSSProperties, ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import type { CSSProperties, ReactNode, RefObject } from "react";
 
-import { Loader2, Play, Square } from "@/components/icons";
+import { createPortal } from "react-dom";
+
+import { ChevronDown, Loader2, Play, Square } from "@/components/icons";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useLocale } from "@/lib/i18n";
 import type { UseComposerReturn } from "@/hooks/useComposer";
 import { prewarmLiveToken } from "@/hooks/useDictation";
+
+import type { AgentMention } from "./composer/agentMentions";
+import { useAgentMentions } from "./composer/useAgentMentions";
 
 import { recallHistory } from "./composerHistory";
 import { Hint } from "./Hint";
@@ -69,6 +74,8 @@ export function composerSlotKind({ killed, offline, working, hasDraft }: {
 
 export interface ComposerBarProps {
   composer: UseComposerReturn;
+  mentionAgents?: readonly AgentMention[];
+  onMentionChoose?: (agent: AgentMention) => string;
   placeholder: string;
   textareaAriaLabel: string;
   imageAriaLabel: string;
@@ -133,30 +140,67 @@ export interface ComposerBarProps {
 
 const NO_HISTORY: readonly string[] = [];
 
-function SendMenu({ label, actions, onClose }: { label: string; actions: SendMenuAction[]; onClose: () => void }) {
+function SendMenu({ label, actions, onClose, anchor }: { label: string; actions: SendMenuAction[]; onClose: () => void; anchor: RefObject<HTMLSpanElement | null> }) {
   const rootRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    const away = (event: PointerEvent) => {
-      if (rootRef.current && !rootRef.current.contains(event.target as Node)) onClose();
+  useLayoutEffect(() => {
+    const trigger = anchor.current;
+    const menu = rootRef.current;
+    const win = trigger?.ownerDocument.defaultView;
+    if (!trigger || !menu || !win) return;
+    const position = () => {
+      const rect = trigger.getBoundingClientRect();
+      const viewport = win.visualViewport;
+      const top = (viewport?.offsetTop ?? 0) + 8;
+      const bottom = top + (viewport?.height ?? win.innerHeight) - 16;
+      menu.style.maxHeight = `${Math.max(44, bottom - top)}px`;
+      menu.style.left = `${Math.max(8, Math.min(rect.right - menu.offsetWidth, win.innerWidth - menu.offsetWidth - 8))}px`;
+      menu.style.top = `${Math.max(top, Math.min(rect.top - menu.offsetHeight - 6, bottom - menu.offsetHeight))}px`;
     };
-    const key = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("pointerdown", away);
-    window.addEventListener("keydown", key);
+    position();
+    menu.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus({ preventScroll: true });
+    win.addEventListener("resize", position);
+    win.addEventListener("scroll", position, true);
+    win.visualViewport?.addEventListener("resize", position);
     return () => {
-      window.removeEventListener("pointerdown", away);
-      window.removeEventListener("keydown", key);
+      win.removeEventListener("resize", position);
+      win.removeEventListener("scroll", position, true);
+      win.visualViewport?.removeEventListener("resize", position);
     };
-  }, [onClose]);
+  }, [anchor]);
 
-  return (
+  useEffect(() => {
+    const doc = anchor.current?.ownerDocument;
+    if (!doc) return;
+    const away = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node) && !anchor.current?.contains(event.target as Node)) onClose();
+    };
+    doc.addEventListener("pointerdown", away);
+    return () => doc.removeEventListener("pointerdown", away);
+  }, [anchor, onClose]);
+  const doc = anchor.current?.ownerDocument;
+  if (!doc) return null;
+
+  return createPortal(
     <div
       ref={rootRef}
       role="menu"
       aria-label={label}
-      className="absolute bottom-[calc(100%+6px)] right-0 z-40 w-[220px] rounded-surface border border-border bg-raised p-1.5 shadow-2"
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          onClose();
+          anchor.current?.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')?.focus({ preventScroll: true });
+        } else if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+          event.preventDefault();
+          const buttons = Array.from(rootRef.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? []);
+          const current = buttons.indexOf(doc.activeElement as HTMLButtonElement);
+          const next = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 : (current + (event.key === "ArrowDown" ? 1 : -1) + buttons.length) % buttons.length;
+          buttons[next]?.focus({ preventScroll: true });
+        }
+      }}
+      className="fixed z-[200] w-[220px] max-w-[calc(100vw-16px)] overflow-y-auto rounded-surface border border-border bg-raised p-1.5"
     >
       {/* Menu group-label: sentence-case label recipe (design doc §3.6). */}
       <div className="px-2 pb-1 pt-1.5 text-label font-semibold text-secondary">
@@ -172,7 +216,7 @@ function SendMenu({ label, actions, onClose }: { label: string; actions: SendMen
             action.onSelect();
             onClose();
           }}
-          className={`flex w-full items-start gap-2 rounded-control px-2 py-1.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-50 ${
+          className={`flex min-h-11 w-full items-start gap-2 rounded-control px-2 py-1.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-50 ${
             action.tone === "ok" ? "hover:bg-success/10" : "hover:bg-sunken"
           }`}
         >
@@ -183,7 +227,7 @@ function SendMenu({ label, actions, onClose }: { label: string; actions: SendMen
           </span>
         </button>
       ))}
-    </div>
+    </div>, doc.body,
   );
 }
 
@@ -195,6 +239,8 @@ function SendMenu({ label, actions, onClose }: { label: string; actions: SendMen
  */
 export function ComposerBar({
   composer,
+  mentionAgents,
+  onMentionChoose,
   placeholder,
   textareaAriaLabel,
   imageAriaLabel,
@@ -238,22 +284,18 @@ export function ComposerBar({
     dictationBusy,
     attachmentsBlocked,
   } = composer;
+  const mentions = useAgentMentions(displayText, inputRef, setText, mentionAgents, onMentionChoose);
   const { t } = useLocale();
   const isMobile = useIsMobile();
   const [sendMenuOpen, setSendMenuOpen] = useState(false);
+  const sendAnchor = useRef<HTMLSpanElement>(null);
   /* Empty-composer history recall (issue #561). -1 is "the operator's own
      draft"; any index at or above 0 is a recalled message, and typing drops
      straight back out of recall so navigation never fights editing. */
   const [historyIndex, setHistoryIndex] = useState(-1);
   const optionsRowId = useId();
-  const hasSecondaryRow = Boolean(leftSlot) || showImage;
-  /* The phone's composer unit (mobile v2 §2 rule 8, §3.4): the field on top and
-     ONE tools row inside the same box — the model/reasoning chip, attach,
-     dictate, and the send slot. What used to sit under the box (the #499 pill
-     row) and around it (the #419 attachment fold, the live-tail pill, the turn
-     status bar) is gone: the operator photographed three stacked rows above the
-     keyboard, and folding them into this one box is the point of the lane.
-     Desktop is untouched — it keeps the input row plus one inline options row. */
+  const keyboardHintId = useId();
+  // Every surface gives the text its full width, with everyday actions below.
   const hasSendMenu = sendMenuActions.length > 0;
   const imageSendBlocked = imageDisabled && attachments.images.length > 0;
   /* An attachment still decoding (or one that failed to read) blocks Send with a
@@ -306,6 +348,7 @@ export function ComposerBar({
       : `text-white ${sendIdleClassName}`;
   const sendControl = (
     <span
+      ref={sendAnchor}
       className="relative inline-flex shrink-0"
       onContextMenu={(event) => {
         if (!hasSendMenu || dictationRecording || slotActs) return;
@@ -363,8 +406,20 @@ export function ComposerBar({
           )}
         </button>
       </Hint>
-      {sendMenuOpen && hasSendMenu && sendMenuLabel ? (
-        <SendMenu label={sendMenuLabel} actions={sendMenuActions} onClose={() => setSendMenuOpen(false)} />
+      {hasSendMenu && !slotActs && !dictationRecording ? (
+        <button
+          type="button"
+          aria-label={sendMenuLabel ?? t("composer.moreSendOptions")}
+          aria-haspopup="menu"
+          aria-expanded={sendMenuOpen}
+          onClick={() => setSendMenuOpen((open) => !open)}
+          className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-control text-muted hover:bg-sunken focus-visible:ring-2 focus-visible:ring-accent/40"
+        >
+          <ChevronDown className="h-3.5 w-3.5" aria-hidden />
+        </button>
+      ) : null}
+      {sendMenuOpen && hasSendMenu ? (
+        <SendMenu anchor={sendAnchor} label={sendMenuLabel ?? t("composer.moreSendOptions")} actions={sendMenuActions} onClose={() => setSendMenuOpen(false)} />
       ) : null}
     </span>
   );
@@ -388,28 +443,11 @@ export function ComposerBar({
     </Hint>
   ) : null;
 
-  /* While recording, the mic collapses into a wide meter+timer chip and a
-     cancel button (see MicButtonView). Sharing the input's row with those and
-     the send button starved the live transcript into a narrow left column
-     (issue #188), so recording flips the input to a column: the text spans the
-     full width and the controls drop to a right-aligned row beneath it. Idle,
-     the controls sit inline at the field's right edge as before. */
-  const controls = (
-    <>
-      {/* Dictation is inert while the host is dead (§5): a spoken message could
-          never be delivered, so the mic disables alongside Send — no half-open
-          affordance that records into a void. */}
-      {voiceControl}
-      {micControl}
-      {sendControl}
-    </>
-  );
-
   /* The phone's tools row, INSIDE the box under the field: chip, attach,
       dictate, send slot (§2 rule 8, the §4.2 sketch). Recording takes the chip
       and the picker off the row so the meter has the width it needs. */
   const unitTools = (
-    <div data-mobile2-tools className="flex min-h-11 items-center gap-0.5">
+    <div data-mobile2-tools className="flex min-h-11 shrink-0 flex-wrap items-center gap-0.5">
       {dictationRecording ? null : leftSlot}
       {dictationRecording ? null : picker}
       {voiceControl}
@@ -421,6 +459,7 @@ export function ComposerBar({
   return (
     <>
       {voicePanel}
+      {mentions.popup}
       {/* On phones, staged images are the composer's first bounded row. The
           desktop tray keeps its established position below the controls. */}
       {isMobile && !onAttachFiles ? (
@@ -431,21 +470,13 @@ export function ComposerBar({
           onClearAll={attachments.clearAll}
         />
       ) : null}
-      {/* The input is the anchor (design doc §3.5): a single sunken field that
-          owns the mic and send controls. On the phone it is the composer UNIT —
-          the field on top, one tools row under it, both inside the same box
-          (mobile v2 §2 rule 8) — and the box is the only chrome the operator
-          sees above the keyboard. On the desktop, idle lays the controls out at
-          the right edge (row) and recording stacks them below the full-width
-          transcript (column), exactly as before. */}
+      {/* The field and its actions form one bounded unit on every surface. */}
       <div
         data-mobile2-composer={isMobile ? slotKind : undefined}
         className={
           isMobile
-            ? "flex flex-col rounded-surface border border-border bg-sunken px-2 pb-0.5 pt-1 focus-within:border-accent/55"
-            : `flex rounded-control border border-border bg-sunken focus-within:ring-2 focus-within:ring-accent/40 ${
-                dictationRecording ? "flex-col gap-1.5 p-2.5" : "items-end gap-1 py-1 pl-2.5 pr-1"
-              }`
+            ? "flex shrink-0 flex-col rounded-surface border border-border bg-sunken px-2 pb-0.5 pt-1 focus-within:border-accent/55"
+            : "flex flex-col gap-1 rounded-control border border-border bg-sunken p-2 focus-within:ring-2 focus-within:ring-accent/40"
         }
       >
         <textarea
@@ -453,16 +484,21 @@ export function ComposerBar({
              mirror when the field remounts — which it does whenever this bar
              moves between the card and the floating PiP document. */
           ref={attachInput}
+          {...mentions.aria}
           value={displayText}
-          rows={1}
+          rows={2}
+          aria-describedby={isMobile ? undefined : keyboardHintId}
           readOnly={Boolean(dictation.liveText)}
           onChange={(event) => {
             setHistoryIndex(-1);
             setText(event.target.value);
+            mentions.updateCaret(event.target, true);
           }}
           /* Focusing the composer often precedes a dictation; minting the live
              token here hides its round-trip from the eventual mic press. */
-          onFocus={prewarmLiveToken}
+          onFocus={() => { prewarmLiveToken(); mentions.onFocus(); }}
+          onBlur={mentions.onBlur}
+          onSelect={(event) => mentions.updateCaret(event.currentTarget)}
           onPaste={(event) => {
             /* EVERY pasted file, not only images (#1224). `kind` separates a
                file from the plain text of an ordinary paste, which must keep
@@ -496,6 +532,7 @@ export function ComposerBar({
             (onAttachFiles ?? attachments.addFiles)(files);
           }}
           onKeyDown={(event) => {
+            if (mentions.onKeyDown(event)) return;
             /* ArrowUp/ArrowDown recall previously queued and sent messages
                while the composer is empty (issue #561) — the shell convention.
                Once recall is active the arrows keep walking the list, so a
@@ -515,15 +552,15 @@ export function ComposerBar({
                 return;
               }
             }
-            /* Enter sends like the old single-line input; Shift+Enter makes a
-               new line. Composition guard keeps IME confirms from sending.
+            /* Desktop Enter sends; mobile Enter and Shift+Enter add a line.
+               Ctrl/Cmd+Enter also sends from a hardware keyboard on mobile. Composition guard keeps IME confirms from sending.
                Enter honors the exact admission gate of the Send button (PR
                #431): a blocked send — dead host, an attachment still decoding
                or failed, images disabled with images staged — must do nothing
                rather than submit and silently drop an attachment. During
                recording Enter means stop-and-send — a plain submit would fire
                off just the typed prefix and leave the recording running. */
-            if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+            if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229 && (!isMobile || event.ctrlKey || event.metaKey)) {
               event.preventDefault();
               if (sendBlocked || !effectiveCanSend || imageSendBlocked) return;
               setHistoryIndex(-1);
@@ -539,28 +576,22 @@ export function ComposerBar({
             isMobile
               /* 16 px so iOS never zooms the page to reach the field (§5). */
               ? "block w-full min-w-0 resize-none overflow-y-auto bg-transparent px-1 py-1 text-[16px] leading-[22px] text-primary placeholder:text-muted focus-visible:outline-none disabled:opacity-60"
-              : `min-w-0 resize-none overflow-y-auto bg-transparent py-1 text-ui leading-[18px] text-primary placeholder:text-muted focus-visible:outline-none disabled:opacity-60 ${
-                  dictationRecording ? "w-full" : "flex-1 self-center"
-                }`
+              : "block w-full min-w-0 resize-none overflow-y-auto bg-transparent py-1 text-ui leading-[20px] text-primary placeholder:text-muted focus-visible:outline-none disabled:opacity-60"
           }
         />
-        {isMobile ? unitTools : dictationRecording ? (
-          <div className="flex items-center justify-end gap-1">{controls}</div>
-        ) : (
-          controls
+        {isMobile ? unitTools : (
+          <div id={optionsRowId} data-testid="composer-options-row" className="flex flex-wrap items-center gap-1.5">
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">{leftSlot}</div>
+            <div className="ml-auto flex shrink-0 items-center gap-1">
+              {picker}
+              {voiceControl}
+              {micControl}
+              {sendControl}
+            </div>
+          </div>
         )}
       </div>
-      {/* Secondary controls, desktop only: one quiet borderless row under the
-          input, holding the runtime pill and the attachment picker. The phone
-          has neither row any more — the chip and the picker are cells of the
-          box's tools row (mobile v2 §2 rule 8), which is what removes the
-          «pill row above the keyboard» the operator photographed. */}
-      {!isMobile && hasSecondaryRow ? (
-        <div id={optionsRowId} data-testid="composer-options-row" className="flex items-center justify-between gap-1.5">
-          <div className="flex min-w-0 items-center gap-1.5">{leftSlot}</div>
-          {picker}
-        </div>
-      ) : null}
+      {!isMobile ? <p id={keyboardHintId} className="text-caption text-muted">{t("composer.keyboardHint")}</p> : null}
       {/* The task composer renders its own durable-ref strip; the in-memory one
           stays for the pane/draft composers that still upload at send time. */}
       {!isMobile && !onAttachFiles ? (

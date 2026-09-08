@@ -53,17 +53,16 @@ export function SelectedContextBadge({
   const described = tr("selectedContext.ariaSelected", { name, project: reference.project ?? "—" });
   const label = stale ? `${described} — ${tr("selectedContext.stale")}` : described;
   return (
-    <span
-      className={`inline-flex max-w-full items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] leading-tight ${
-        stale ? "bg-sunken text-muted line-through decoration-1" : "bg-sunken text-secondary"
-      } ${className}`}
-      aria-label={label}
-      title={label}
+    <details
+      className={`group/context max-w-full rounded-md bg-sunken text-secondary ${stale ? "text-muted line-through decoration-1" : ""} ${className}`}
       data-selected-context={reference.state}
       {...(stale ? { "data-selected-context-stale": "true" } : {})}
     >
-      <Eye className="h-3 w-3 shrink-0" aria-hidden />
-      <span className="min-w-0 truncate">{name}</span>
-    </span>
+      <summary aria-label={label} title={label} className="flex min-h-8 cursor-pointer list-none items-center gap-1 px-1.5 py-1 text-[11px] leading-tight [&::-webkit-details-marker]:hidden">
+        <Eye className="h-3 w-3 shrink-0" aria-hidden />
+        <span className="min-w-0 truncate group-open/context:whitespace-normal group-open/context:break-words">{name}</span>
+      </summary>
+      <p className="border-t border-border px-2 py-2 text-caption [overflow-wrap:anywhere]">{label}</p>
+    </details>
   );
 }

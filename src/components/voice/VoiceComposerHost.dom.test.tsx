@@ -157,7 +157,7 @@ afterEach(async () => {
 
 /** The Viewer, as far as this seam is concerned: the two Viewer-level owners, plus
     a board that may or may not currently be rendering the conversation's card. */
-function Viewer({ card }: { card: boolean }) {
+function Viewer({ card, hq = false }: { card: boolean; hq?: boolean }) {
   return (
     <>
       <VoiceComposerHost />
@@ -165,19 +165,19 @@ function Viewer({ card }: { card: boolean }) {
         relayResolutions.push(conversationId);
         return relayClient;
       }} />
-      {card ? <TmuxComposer file={file} /> : null}
+      {card ? <TmuxComposer file={file} hideRuntimeControl={hq} mentionFiles={hq ? [file] : undefined} /> : null}
     </>
   );
 }
 
-async function mountViewer(): Promise<(card: boolean) => Promise<void>> {
+async function mountViewer(hq = false): Promise<(card: boolean) => Promise<void>> {
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
   roots.push(root);
   const render = async (card: boolean) => {
     await act(async () => {
-      root.render(<Viewer card={card} />);
+      root.render(<Viewer card={card} hq={hq} />);
       for (let tick = 0; tick < 6; tick += 1) await new Promise((r) => setTimeout(r, 0));
     });
   };
@@ -215,6 +215,7 @@ test("with the card on screen there is exactly one composer, and it renders in t
      invisible until the card leaves. */
   expect(cardSlot()!.querySelector("textarea")).not.toBeNull();
   expect(parked()).toHaveLength(0);
+  expect(document.querySelector("[data-runtime-pill]")).not.toBeNull();
 });
 
 test("the card leaving MID-CALL keeps exactly one composer, one outbox and one dictation owner", async () => {
@@ -311,4 +312,12 @@ test("a card that leaves with NO call up takes its composer and its retained pro
      a conversation that is not on a call. */
   expect(composers()).toHaveLength(0);
   expect(getVoiceComposerCardPropsIds()).toEqual([]);
+});
+
+
+test("HQ keeps its mention catalog and suppresses the duplicate model control through the voice owner", async () => {
+  await mountViewer(true);
+  expect(composers()).toHaveLength(1);
+  expect(composers()[0]!.getAttribute("aria-autocomplete")).toBe("list");
+  expect(document.querySelector("[data-runtime-pill]")).toBeNull();
 });

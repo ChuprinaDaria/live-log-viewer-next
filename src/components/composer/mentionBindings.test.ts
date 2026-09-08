@@ -1,0 +1,26 @@
+import { expect, test } from "bun:test";
+import { bindAgentMention, readMentionBindings, resolveAgentMentions } from "./mentionBindings";
+
+const agent = (id: string, name = "Оглядач") => ({ id, name, project: "project-a", engine: "claude", role: "reviewer" });
+test("the draft shows a short name while the queued text carries the chosen ID", () => {
+  const chosen = bindAgentMention([], agent("conversation_b"));
+  expect(chosen.token).toBe("@Оглядач");
+  expect(resolveAgentMentions("Запитай @Оглядач про форму", [chosen])).toBe("Запитай [@Оглядач](#c=conversation_b) про форму");
+});
+test("same-named agents do not overwrite each other's binding", () => {
+  const first = bindAgentMention([], agent("conversation_a"));
+  const second = bindAgentMention([first], agent("conversation_b"));
+  expect(second.token).toBe("@Оглядач-2");
+  expect(resolveAgentMentions("@Оглядач-2 і @Оглядач", [first, second])).toBe("[@Оглядач](#c=conversation_b) і [@Оглядач](#c=conversation_a)");
+});
+test("a reload or rename preserves the ID, and edits do not resolve a partial name", () => {
+  const original = bindAgentMention([], agent("conversation_a"));
+  const saved = readMentionBindings(JSON.stringify([original]));
+  expect(bindAgentMention(saved, agent("conversation_a", "Нова назва"))).toEqual(original);
+  expect(resolveAgentMentions("@Оглядач-extra someone@Оглядач @Unknown", saved)).toBe("@Оглядач-extra someone@Оглядач @Unknown");
+  expect(resolveAgentMentions("@Оглядач!", saved)).toBe("[@Оглядач](#c=conversation_a)!");
+});
+test("a malformed stored table cannot invent a recipient", () => {
+  expect(readMentionBindings("broken")).toEqual([]);
+  expect(readMentionBindings('[{"token":"@Agent","id":null}]')).toEqual([]);
+});

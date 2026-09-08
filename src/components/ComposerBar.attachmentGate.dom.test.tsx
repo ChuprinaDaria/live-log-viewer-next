@@ -101,7 +101,7 @@ function pressEnter(host: HTMLElement) {
   const textarea = host.querySelector("textarea")!;
   const key = Object.keys(textarea).find((k) => k.startsWith("__reactProps$"))!;
   const props = (textarea as unknown as Record<string, { onKeyDown(event: unknown): void }>)[key]!;
-  flushSync(() => props.onKeyDown({ key: "Enter", shiftKey: false, nativeEvent: { isComposing: false }, preventDefault() {} }));
+  flushSync(() => props.onKeyDown({ key: "Enter", ctrlKey: true, shiftKey: false, nativeEvent: { isComposing: false }, preventDefault() {} }));
 }
 
 test("Send is blocked with a reason while an attachment is still decoding, then unblocks (#419)", async () => {
@@ -138,7 +138,7 @@ test("Send stays blocked on a failed read until it is removed or retried (#419)"
   expect(send(host).disabled).toBe(false);
 });
 
-test("Enter honors the attachment admission gate exactly like the Send button (PR #431)", async () => {
+test("Ctrl+Enter honors the attachment admission gate exactly like the Send button (PR #431)", async () => {
   const host = mount();
   paste(host, "reading.png");
   await tick();
@@ -157,7 +157,7 @@ test("Enter honors the attachment admission gate exactly like the Send button (P
   expect(submits).toHaveLength(1);
 });
 
-test("Enter stays inert while a failed attachment blocks Send (PR #431)", async () => {
+test("Ctrl+Enter stays inert while a failed attachment blocks Send (PR #431)", async () => {
   const host = mount();
   paste(host, "bad.png");
   await tick();

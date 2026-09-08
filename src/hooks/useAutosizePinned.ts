@@ -9,6 +9,8 @@ export interface AutosizePinnedOptions {
   maxPx: number;
   /** Minimum field height in pixels (a multi-line default before any text). */
   minPx?: number;
+  /** Budget of the surrounding form, including context, attachments and tools. */
+  containerMaxPx?: number;
   /** True while a live dictation drives the field: pin to the newest words on
       every update regardless of the (readOnly) caret position. */
   pinned: boolean;
@@ -28,22 +30,39 @@ export interface AutosizePinnedOptions {
 export function useAutosizePinned(
   ref: React.RefObject<HTMLTextAreaElement | null>,
   value: string,
-  { maxPx, minPx = 0, pinned }: AutosizePinnedOptions,
+  { maxPx, minPx = 0, containerMaxPx, pinned }: AutosizePinnedOptions,
 ): void {
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
-    /* Collapsing to 0 before measuring lets the field shrink back when text is
-       deleted; it also resets scrollTop, so a mid-text edit's position is
-       captured first and restored after. */
-    const prevTop = el.scrollTop;
-    const atEnd = caretAtEnd(el.selectionStart, el.selectionEnd, el.value.length);
-    el.style.height = "0px";
-    el.style.height = clampHeight(el.scrollHeight, maxPx, minPx) + "px";
-    if (shouldPin({ pinned, caretAtEnd: atEnd })) {
-      el.scrollTop = el.scrollHeight;
-    } else {
-      el.scrollTop = prevTop;
-    }
-  }, [ref, value, maxPx, minPx, pinned]);
+    const form = containerMaxPx === undefined ? null : el.closest("form");
+    let chrome = 0;
+    const measure = () => {
+      const prevTop = el.scrollTop;
+      const atEnd = caretAtEnd(el.selectionStart, el.selectionEnd, el.value.length);
+      el.style.height = "0px";
+      // Measure every row around the collapsed field. A context badge or a
+      // staged attachment is real chrome too; a fixed tools-only allowance
+      // pushes Send below the form's bottom when the keyboard is closed.
+      chrome = form?.scrollHeight ?? 0;
+      const ceiling = form && containerMaxPx !== undefined
+        ? Math.min(maxPx, Math.max(44, containerMaxPx - chrome)) : maxPx;
+      el.style.height = clampHeight(el.scrollHeight, ceiling, minPx) + "px";
+      el.scrollTop = shouldPin({ pinned, caretAtEnd: atEnd }) ? el.scrollHeight : prevTop;
+    };
+    measure();
+    // A panel resize changes line wrapping without changing the draft. Observe
+    // width only: our own height writes must not start a resize feedback loop.
+    let width = el.getBoundingClientRect().width;
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => {
+      const next = el.getBoundingClientRect().width;
+      const nextChrome = form ? form.scrollHeight - el.offsetHeight : 0;
+      if (next === width && nextChrome === chrome) return;
+      width = next;
+      measure();
+    });
+    observer?.observe(el);
+    if (form) observer?.observe(form);
+    return () => observer?.disconnect();
+  }, [ref, value, maxPx, minPx, containerMaxPx, pinned]);
 }

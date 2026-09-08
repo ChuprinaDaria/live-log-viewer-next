@@ -499,7 +499,7 @@ export function OrchestratorPanel({
               onCancel={() => setRotateFrom(null)}
             />
           ) : file ? (
-            <OrchestratorConversation file={file} projectName={projectName} />
+            <OrchestratorConversation file={file} projectName={projectName} files={files} />
           ) : (
             <Centered>
               {state.bindFailure ? (

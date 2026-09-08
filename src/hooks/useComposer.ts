@@ -7,7 +7,7 @@ import { performVoiceSend } from "@/hooks/composerVoiceSend";
 import { useAutosizePinned } from "@/hooks/useAutosizePinned";
 import { useDictation } from "@/hooks/useDictation";
 import { useIsMobile } from "@/hooks/useIsMobile";
-import { COMPOSER_MAX_PX, keyboardInset, mobileComposerCeiling, visibleViewportHeight } from "@/lib/composerScroll";
+import { COMPOSER_MAX_PX, keyboardInset, mobileComposerCeiling, mobileComposerUnitMax, visibleViewportHeight } from "@/lib/composerScroll";
 import type { RuntimeImageCapability } from "@/lib/runtime/structuredContent";
 
 /* Live VISIBLE viewport height, tracked the same way as `useIsMobile`
@@ -228,6 +228,8 @@ export function useComposer({ initialText, persistText, submit, disabled = false
      stay visible; while typing it pins only when the caret is at the end. */
   useAutosizePinned(inputRef, displayText, {
     maxPx,
+    minPx: Math.min(maxPx, isMobile ? 52 : 48),
+    containerMaxPx: isMobile ? mobileComposerUnitMax(layoutH) : undefined,
     pinned: Boolean(dictation.liveText),
   });
 

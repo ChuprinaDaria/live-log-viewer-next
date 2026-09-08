@@ -905,11 +905,11 @@ export function LogFeed({ file, showSvc, lineFilter, onStatus, paused, follow, s
           ) : null
         ) : (
           <button
-            className={`absolute bottom-2 ${pillPos} z-10 inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-border bg-raised px-2.5 py-1 text-label font-semibold text-primary shadow-1 [@media(pointer:coarse)]:min-h-11 hover:border-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40`}
+            className={`absolute bottom-2 ${phone ? "right-2" : pillPos} z-10 inline-flex min-w-11 items-center justify-center gap-1 whitespace-nowrap rounded-full border border-border bg-raised px-2.5 py-1 text-label font-semibold text-primary shadow-1 [@media(pointer:coarse)]:min-h-11 hover:border-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40`}
             aria-label={t("feed.backToLive")}
             onClick={jumpToTail}
           >
-            <ArrowDown className="h-3.5 w-3.5" aria-hidden /> {newCount ? t("feed.newCount", { count: newCount }) : t("feed.down")}
+            <ArrowDown className="h-3.5 w-3.5" aria-hidden /> {newCount ? t("feed.newCount", { count: newCount }) : phone ? null : t("feed.down")}
           </button>
         )
       ) : null}
