@@ -5,6 +5,18 @@ import type { en } from "./en";
    the build if a key is missing or extra, keeping both locales in lockstep. */
 export const uk: Record<keyof typeof en, Message> = {
   "common.serverUnavailable": "сервер недоступний",
+  "channels.title": "Канали",
+  "channels.addTitle": "Підключити чат",
+  "channels.addTarget": "Кому: firm:<id> або project:<id>",
+  "channels.addLink": "Посилання на чат, канал або групу",
+  "channels.account": "Яким акаунтом читати",
+  "channels.noAccounts": "Немає жодної user-сесії — бот-токен чужі чати не читає",
+  "channels.connect": "Підключити",
+  "channels.disconnect": "Відключити {name}",
+  "channels.connected": "Підключені",
+  "channels.none": "Жодного каналу ще не підключено",
+  "channels.unreached": "збирач ще не дотягнувся",
+  "channels.notUsable": "Не годяться для читання: {count}",
   "common.loading": "завантаження…",
   "common.loadingCap": "Завантаження…",
   "common.cancel": "Скасувати",

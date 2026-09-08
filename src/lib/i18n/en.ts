@@ -6,6 +6,18 @@ import type { Dictionary } from ".";
 export const en = {
   // Common, reused across components
   "common.serverUnavailable": "server unavailable",
+  "channels.title": "Channels",
+  "channels.addTitle": "Connect a chat",
+  "channels.addTarget": "To: firm:<id> or project:<id>",
+  "channels.addLink": "Link to the chat, channel or group",
+  "channels.account": "Which account reads it",
+  "channels.noAccounts": "No user session enrolled — a bot token cannot read someone else\u2019s chat",
+  "channels.connect": "Connect",
+  "channels.disconnect": "Disconnect {name}",
+  "channels.connected": "Connected",
+  "channels.none": "No channel connected yet",
+  "channels.unreached": "the collector has not reached it yet",
+  "channels.notUsable": "Cannot read a chat: {count}",
   "common.loading": "loading…",
   "common.loadingCap": "Loading…",
   "common.cancel": "Cancel",

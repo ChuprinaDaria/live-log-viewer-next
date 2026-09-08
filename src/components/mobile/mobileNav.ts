@@ -33,7 +33,8 @@ export type MobileScreen =
   | { kind: "settings" }
   | { kind: "roles" }
   | { kind: "firms" }
-  | { kind: "permissions" };
+  | { kind: "permissions" }
+  | { kind: "channels" };
 export type MobileScreenKind = MobileScreen["kind"];
 export type MobileSheetName = "projects" | "attention" | "menu" | "host" | "search" | "seat" | "rotate" | "switch" | "model" | "stage";
 /** How the current state was reached; the shell picks its transition from it. */
