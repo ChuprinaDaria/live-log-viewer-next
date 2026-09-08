@@ -22,7 +22,7 @@ import { DraftAgentPane } from "@/components/DraftAgentPane";
 import { isWorkflowDraftId } from "@/components/workflows/workflowModel";
 import { WorkflowDraftPane } from "@/components/workflows/WorkflowDraftPane";
 import { RoundDeck } from "@/components/flows/RoundDeck";
-import { MIN_TAB_ROOT_TRANSCRIPT_SHARE, MIN_TRANSCRIPT_SHARE } from "./chatBudget";
+import { MIN_TRANSCRIPT_SHARE } from "./chatBudget";
 import { ChatEngineMark } from "./chatEngineMark";
 import { paneState, type PaneState } from "@/components/paneState";
 import type { BranchGroup } from "@/components/projectModel";
@@ -149,13 +149,6 @@ interface Props {
   onTransfer?: (file: FileEntry) => void;
   /** In-flow alert the project board renders above the leaf. */
   alert?: React.ReactNode;
-  /** The Чат tab's roster row, directly under the bar. Absent everywhere else. */
-  agentsStrip?: React.ReactNode;
-  /** The room's name on the Чат tab. When set this screen IS the tab root: the
-      title cell shows this name with the conversation's own meta line, opens
-      no switcher, the bar swipe is inert, and the shell reports the
-      `orchestrator` screen so the tab bar's current tab is Чат. */
-  roomTitle?: string;
   /** Engine-native subagent tray surface (issue #142). The DOCKED tray is gone
       with the rest of this screen's chrome (§3.4 spends 0 px on it): folded
       children are reached from the subagent rail over the pane and from the
@@ -185,7 +178,7 @@ interface Props {
  * not loaded — the same shell renders the board leaf, which lane 2 fills with
  * the board list.
  */
-export function MobileFocusView({ project, projectName, groups, manual, files, flows, reviewGroups = [], pipelines, surfacePipelines = [], tasks, sheetTasks, drafts, favorites, isolatedManualPaths = EMPTY_PATHS, loaded, focus, onSelect, onClose, onDraftClose, onDraftSpawned, onConversationOpened, shellHost = null, renderBoardSheet, onOpenSearch, hostTaskCount = 0, onHandoff, onTransfer, alert, agentsStrip, roomTitle }: Props) {
+export function MobileFocusView({ project, projectName, groups, manual, files, flows, reviewGroups = [], pipelines, surfacePipelines = [], tasks, sheetTasks, drafts, favorites, isolatedManualPaths = EMPTY_PATHS, loaded, focus, onSelect, onClose, onDraftClose, onDraftSpawned, onConversationOpened, shellHost = null, renderBoardSheet, onOpenSearch, hostTaskCount = 0, onHandoff, onTransfer, alert }: Props) {
   const { t } = useLocale();
   /* The screen is mounted INSIDE the project board's shell (lane 2 pushes it
      when a conversation reaches the top of the stack), so the badge, the
@@ -502,7 +495,7 @@ export function MobileFocusView({ project, projectName, groups, manual, files, f
     const start = swipeRef.current;
     swipeRef.current = null;
     const touch = event.changedTouches[0];
-    if (!start || !touch || !activeEntry || navState.sheet || roomTitle) return;
+    if (!start || !touch || !activeEntry || navState.sheet) return;
     const dx = touch.clientX - start.x;
     const dy = touch.clientY - start.y;
     if (Math.abs(dx) < SWIPE_MIN_X || Math.abs(dx) < Math.abs(dy) * 2) return;
@@ -517,7 +510,7 @@ export function MobileFocusView({ project, projectName, groups, manual, files, f
       offline={offline}
       stage={stage}
       bump={bumpPulse?.side ?? null}
-      renamed={roomTitle ?? (renamed && renamed.path === activeFile.path ? renamed.title : null)}
+      renamed={renamed && renamed.path === activeFile.path ? renamed.title : null}
     />
   ) : activeEntry ? (
     /* A deck or a draft names itself exactly as its switcher row does, so the
@@ -658,26 +651,25 @@ export function MobileFocusView({ project, projectName, groups, manual, files, f
          #353), stamped on the DOM they govern. */
     <div
       data-testid="mobile-chat-shell"
-      data-chat-min-share={roomTitle ? MIN_TAB_ROOT_TRANSCRIPT_SHARE : MIN_TRANSCRIPT_SHARE}
+      data-chat-min-share={MIN_TRANSCRIPT_SHARE}
       className="relative flex h-full max-h-[100dvh] min-h-0 min-w-0 max-w-[100dvw] flex-1 flex-col overflow-hidden overflow-x-clip"
       onTouchStart={onTouchStart}
       onTouchEnd={onTouchEnd}
       style={kbInset > 0 ? { paddingBottom: kbInset } : undefined}
     >
       <MobileShell
-        screen={roomTitle ? "orchestrator" : activeEntry ? "chat" : "board"}
+        screen={activeEntry ? "chat" : "board"}
         screenId={activeEntry?.id}
         title={title}
         titleLabel={activeEntry ? t("mobile2.chat.switcher") : t("mobile2.bar.switchProject")}
-        titleOpens={roomTitle ? undefined : activeEntry ? "switch" : host ? "projects" : undefined}
-        back={roomTitle ? false : canLeave}
+        titleOpens={activeEntry ? "switch" : host ? "projects" : undefined}
+        back={canLeave}
         host={host}
         onOpenSearch={activeEntry ? undefined : onOpenSearch}
         searchTestId="dash-search"
         renderSheet={renderSheet}
       >
         {alert}
-        {agentsStrip}
         {leaf}
       </MobileShell>
       {/* Rename edits the title cell in place (§4.2, #1348): the editor lays

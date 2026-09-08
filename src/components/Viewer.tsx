@@ -1070,6 +1070,7 @@ export function Viewer() {
         ) : (
           <ProjectDashboard
             files={dashboardFiles}
+            allFiles={files}
             flows={flows}
             pipelines={pipelines}
             pipelinesError={pipelinesError}

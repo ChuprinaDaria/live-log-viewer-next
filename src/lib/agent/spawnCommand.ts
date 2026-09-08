@@ -12,7 +12,7 @@ import { emptyLaunchProfile, validExplicitProject } from "@/lib/accounts/migrati
 import { freshSpecFor, type AgentEngine } from "@/lib/agent/cli";
 import { agentRegistry, identityMaterializationFence, SpawnChildLimitError, type SpawnRequest } from "@/lib/agent/registry";
 import { reasoningFromBody } from "@/lib/agent/efforts";
-import { grantedMcpServers, mcpServersForSession, normalizeSpawnMcpServers, SCHEDULED_REPORT_SESSION_CLASS, type McpSessionClass } from "@/lib/agent/mcpAllowlist";
+import { grantedMcpServers, HQ_SESSION_CLASS, mcpServersForSession, normalizeSpawnMcpServers, SCHEDULED_REPORT_SESSION_CLASS, type McpSessionClass } from "@/lib/agent/mcpAllowlist";
 import { normalizeSpawnPlugins, pluginAllowlistForSession, SCHEDULED_REPORT_PLUGINS, sessionOriginFor } from "@/lib/agent/pluginAllowlist";
 import { codexModelSupportsImages, defaultModelFor, modelFromBody, validateLaunchModel } from "@/lib/agent/models";
 import { directOperatorActivityAuthority } from "@/lib/agent/operatorAuthority";
@@ -456,6 +456,10 @@ export async function executeSpawnRequest(
     const reportClassGrant = internalGrant?.sessionClass === SCHEDULED_REPORT_SESSION_CLASS
       ? internalGrant
       : null;
+    /* The standing HQ seat: launched in-process by its own route, it holds the
+       whole grantable bound and the operator-root plugin surface, whatever the
+       origin classifier reads from its role. */
+    const hqClassGrant = internalGrant?.sessionClass === HQ_SESSION_CLASS ? internalGrant : null;
     /* An operator root carries the Computer Use grant by default; every
        delegated launch carries none, and the request can only narrow that. The
        report class carries none either: it names an exact capability surface,
@@ -464,14 +468,16 @@ export async function executeSpawnRequest(
       ? [...SCHEDULED_REPORT_PLUGINS]
       : pluginAllowlistForSession({
         engine,
-        origin: sessionOrigin,
+        origin: hqClassGrant ? "operator-root" : sessionOrigin,
         requested: requestedPlugins.value,
       });
     /* Same shape for MCP: a delegated launch holds the Viewer baseline whatever
        it asked for, so a granted connector cannot travel down a spawn chain. */
     const grantedServers = reportClassGrant
       ? grantedMcpServers(reportClassGrant.mcpServers)
-      : mcpServersForSession({ origin: sessionOrigin, requested: requestedMcpServers });
+      : hqClassGrant
+        ? grantedMcpServers(hqClassGrant.mcpServers)
+        : mcpServersForSession({ origin: sessionOrigin, requested: requestedMcpServers });
     const requestDigestForAccount = (accountId: string, preserveOperationalTitleReplay = false) => {
       const digests = spawnRequestDigests({
         engine,

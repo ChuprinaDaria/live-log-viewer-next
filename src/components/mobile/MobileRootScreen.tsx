@@ -6,15 +6,18 @@ import type { ReactNode } from "react";
 import { KeepAwakeMenuRow } from "@/components/KeepAwakeControl";
 import { SoundToggle } from "@/components/SoundToggle";
 import { useLocale } from "@/lib/i18n";
+import type { FileEntry } from "@/lib/types";
 
+import { MobileHqRoom } from "./MobileHqRoom";
 import { MobileBarTitle, MobileShell, type MobileShellHost, type SheetRenderer } from "./MobileShell";
 import { MobileSheetRow } from "./MobileSheet";
 import { useMobileNavStore, type MobileScreenKind } from "./mobileNav";
 
 /*
- * The tab bar's own roots (TZ-UI.md pages): settings assembled from the rows
- * the board menu used to hide, and an honest one-sentence screen for each page
- * that is not built yet. Nothing here pretends: no counters, no skeletons.
+ * The tab bar's own roots (TZ-UI.md pages): the HQ room, settings assembled
+ * from the rows the board menu used to hide, and an honest one-sentence
+ * screen for each page that is not built yet. Nothing here pretends: no
+ * counters, no skeletons.
  */
 
 export interface MobileRootContext {
@@ -23,19 +26,16 @@ export interface MobileRootContext {
   /** Whether this surface can show the host sheet (a project board can, the overview cannot). */
   hostSheet: boolean;
   hostTrailing?: ReactNode;
-  /** The live room: the seat's conversation screen, composed by the dashboard.
-      Present only when the seat is live and its transcript is here. */
-  orchestratorRoom?: ReactNode;
-  /** The seat's own reading, for the honest empty state. */
-  seatShape?: "invitation" | "seat";
-  /** Overview only: no project, so no seat. */
-  onPickProject?: () => void;
+  /** Every scanned file: the HQ seat's transcript lives outside any project. */
+  files: readonly FileEntry[];
+  /** The surface's agents strip for the room (a project has one). */
+  agentsStrip?: ReactNode;
 }
 
 export function renderMobileRootScreen(kind: MobileScreenKind, ctx: MobileRootContext): ReactNode | null {
   switch (kind) {
     case "settings": return <MobileSettingsScreen ctx={ctx} />;
-    case "orchestrator": return ctx.orchestratorRoom ?? <MobileChatEmptyScreen ctx={ctx} />;
+    case "orchestrator": return <MobileHqRoom files={ctx.files} host={ctx.host} renderSheet={ctx.renderSheet} strip={ctx.agentsStrip} />;
     case "secrets": return <MobileNotBuiltScreen kind={kind} ctx={ctx} />;
     case "mcp": return <MobileNotBuiltScreen kind={kind} ctx={ctx} />;
     default: return null;
@@ -62,28 +62,6 @@ function MobileSettingsScreen({ ctx }: { ctx: MobileRootContext }) {
           </div>
           <div className="px-2.5"><KeepAwakeMenuRow /></div>
         </div>
-      </div>
-    </MobileShell>
-  );
-}
-
-const ACTION = "inline-flex min-h-11 items-center rounded-control border border-accent px-4 text-body font-semibold text-accent active:bg-accent-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40";
-
-/** The Чат tab with no room to show: no project (overview), no seat yet, or a
-    seat that is not ready to talk. One sentence, one button, nothing else. */
-function MobileChatEmptyScreen({ ctx }: { ctx: MobileRootContext }) {
-  const { t } = useLocale();
-  const nav = useMobileNavStore();
-  const view = ctx.onPickProject
-    ? { sentence: t("mobile2.chat.pickProject"), action: t("mobile2.chat.pickProjectAction"), run: ctx.onPickProject }
-    : ctx.seatShape === "invitation"
-      ? { sentence: t("mobile2.chat.seatVacant"), action: t("mobile2.chat.seatCreate"), run: () => nav.openSheet("rotate") }
-      : { sentence: t("mobile2.chat.seatBusy"), action: t("mobile2.chat.openOrchestrator"), run: () => nav.openSheet("seat") };
-  return (
-    <MobileShell screen="orchestrator" title={<MobileBarTitle>{t("mobile2.board.orchestrator")}</MobileBarTitle>} host={ctx.host} renderSheet={ctx.renderSheet}>
-      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 px-6 text-center" data-mobile2-chat-empty>
-        <p className="max-w-[280px] text-body leading-relaxed text-secondary">{view.sentence}</p>
-        <button type="button" className={ACTION} onClick={view.run}>{view.action}</button>
       </div>
     </MobileShell>
   );

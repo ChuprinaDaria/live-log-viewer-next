@@ -64,7 +64,7 @@ import { MobileAgentsStrip } from "./mobile/MobileAgentsStrip";
 import { mobileAgentStrip } from "./mobile/mobileBoardModel";
 import { renderMobileRootScreen } from "./mobile/MobileRootScreen";
 import { MobileSheet, MobileSheetRow } from "./mobile/MobileSheet";
-import { seatCardView } from "./mobile/orchestratorRowState";
+import { hqFileOf, useHqSeat } from "./mobile/hqSeat";
 import { appendComposerDraft } from "./TmuxComposer";
 import { MobileAccountsScreen, MobileBarTitle, MobileShell, type MobileShellHost } from "./mobile/MobileShell";
 import { MobilePipelineScreen } from "./mobile/MobilePipelineScreen";
@@ -113,6 +113,9 @@ const EMPTY_TASKS: BoardTask[] = [];
 
 interface Props {
   files: FileEntry[];
+  /** Every scanned file, across projects: the HQ room's transcript lives
+      outside this project. Defaults to `files`. */
+  allFiles?: FileEntry[];
   flows: Flow[];
   pipelines: Pipeline[];
   /** Server-side pipelines store failed closed; pipelines above are empty. */
@@ -344,6 +347,7 @@ function EmptyProjectLeaf({
 
 function ProjectDashboardView({
   files,
+  allFiles,
   flows: rawFlows,
   pipelines: rawPipelines,
   pipelinesError,
@@ -1769,6 +1773,9 @@ function ProjectDashboardView({
   const mobileBoardModel = isMobile ? mobileBoardOf(mobileBoardProps) : null;
   /* The Чат tab's roster: the board's own triage order, seat excluded. */
   const mobileAgents = mobileBoardModel ? mobileAgentStrip(mobileBoardModel) : [];
+  /* The HQ room's transcript, for the «@» sheet's composer target. */
+  const hqSeat = useHqSeat();
+  const hqFile = hqFileOf(allFiles ?? files, hqSeat.status);
   /* The pipeline the stack names, when the scan still carries it (lane 7). */
   const mobilePipelineOnScreen = mobileTop.kind === "pipeline"
     ? activePipelines.find((pipeline) => pipeline.id === mobileTop.id) ?? null
@@ -1994,7 +2001,7 @@ function ProjectDashboardView({
               attrs={{ "data-mobile2-mention": row.path }}
               onSelect={() => {
                 close();
-                if (seatFile) appendComposerDraft(conversationIdentity(seatFile), `@${row.title} `);
+                if (hqFile) appendComposerDraft(conversationIdentity(hqFile), `@${row.title} `);
               }}
             />
           ))}
@@ -2055,28 +2062,8 @@ function ProjectDashboardView({
     onTransfer: (file: FileEntry) => { void addTransferDraft(file); },
     trayApi,
   };
-  /* The tab bar's own roots. The Чат tab is the seat's conversation as the
-     room, with the project's agents as a strip; without a live seat it is one
-     sentence and the existing seat/rotate sheet. */
-  const seatView = seatCardView(seatState, { conversationReady: Boolean(seatFile) });
-  const orchestratorRoom = isMobile && boardReady && seatView.tap === "conversation" && seatFile ? (
-    <MobileFocusView
-      {...mobileFocusProps}
-      focus={seatFile.path}
-      /* Mounted from the ROOT screen, outside the board's shell, so the chrome
-         the board leaf inherits is passed by hand. */
-      shellHost={mobileShell}
-      renderBoardSheet={renderMobileSheet}
-      roomTitle={t("mobile2.board.orchestrator")}
-      agentsStrip={
-        <MobileAgentsStrip
-          agents={mobileAgents}
-          onOpen={openBoardRow}
-          onMention={mobileAgents.length ? () => mobileNav.openSheet("mention") : undefined}
-        />
-      }
-    />
-  ) : null;
+  /* The tab bar's own roots. The Чат tab is the fleet's HQ room, with this
+     project's agents as a strip so the operator can open or @-mention them. */
   const mobileRootScreen = isMobile
     ? renderMobileRootScreen(mobileTop.kind, {
         host: mobileShell,
@@ -2088,8 +2075,14 @@ function ProjectDashboardView({
             {t("mobile2.menu.hostTasks", { count: dockedTasks.length })}
           </>
         ),
-        orchestratorRoom,
-        seatShape: seatView.shape,
+        files: allFiles ?? files,
+        agentsStrip: (
+          <MobileAgentsStrip
+            agents={mobileAgents}
+            onOpen={openBoardRow}
+            onMention={mobileAgents.length ? () => mobileNav.openSheet("mention") : undefined}
+          />
+        ),
       })
     : null;
   return (

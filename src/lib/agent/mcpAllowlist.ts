@@ -39,20 +39,39 @@ export const DEFAULT_SPAWN_MCP_SERVERS: readonly string[] = Object.freeze(["view
     the baseline every session holds, not a grant. Adding a name here grants
     it to the operator-root session class by default, so a name belongs here
     only once its credential boundary and revocation path exist. */
-export const GRANTABLE_MCP_SERVERS: readonly string[] = Object.freeze(["viewer", "telegram", ...operatorGrantedMcpServers()]);
+export const GRANTABLE_MCP_SERVERS: readonly string[] = Object.freeze([
+  "viewer", "telegram", ...operatorGrantedMcpServers("LLV_MCP_GRANT"), ...operatorGrantedMcpServers("LLV_HQ_MCP_GRANT"),
+]);
 
 /** The operator's own extension of the bound, for a single-operator box:
     `LLV_MCP_GRANT=sessionmem,jeeves-rag` grants those registered servers to
-    root sessions alongside the packaged ones. Absent, the bound is unchanged. */
-function operatorGrantedMcpServers(): string[] {
-  const raw = process.env.LLV_MCP_GRANT ?? "";
+    root sessions alongside the packaged ones; `LLV_HQ_MCP_GRANT` names the
+    servers only the standing HQ orchestrator holds (its Telegram, say).
+    Absent, the bound is unchanged. */
+function operatorGrantedMcpServers(variable: "LLV_MCP_GRANT" | "LLV_HQ_MCP_GRANT"): string[] {
+  const raw = process.env[variable] ?? "";
   return [...new Set(raw.split(",").map((name) => name.trim()).filter((name) => name && name !== "viewer" && name !== "telegram"))];
 }
 
-/** What an operator-launched root session receives when it does not opt out.
-    The operator's own root conversation is the session class the grantable
-    surface exists for, so it carries the whole bound by default. */
-export const OPERATOR_ROOT_MCP_SERVERS: readonly string[] = Object.freeze([...GRANTABLE_MCP_SERVERS]);
+/** What an operator-launched root session receives when it does not opt out:
+    the packaged servers and the operator's root extension — never the HQ-only
+    names, which one seat holds and no spawn request can select. */
+export const OPERATOR_ROOT_MCP_SERVERS: readonly string[] = Object.freeze([
+  "viewer", "telegram", ...operatorGrantedMcpServers("LLV_MCP_GRANT"),
+]);
+
+/**
+ * The standing HQ orchestrator's session class: one seat, launched by the
+ * Viewer from the HQ route and nowhere else, holding the WHOLE bound —
+ * including the `LLV_HQ_MCP_GRANT` names no other session can reach. Like the
+ * report class it is named only through the in-process `internalGrant` seam,
+ * so no request body can claim it.
+ */
+export const HQ_SESSION_CLASS = "operator-hq" as const;
+
+export function hqMcpServers(policy: McpGrantPolicy = MCP_GRANT_POLICY): string[] {
+  return withViewer([...policy.grantable]);
+}
 
 /** What a delegated session (subagent, builder, reviewer, pipeline helper)
     receives: the baseline and nothing more. A delegated launch that asks for a
@@ -96,7 +115,7 @@ export const SCHEDULED_REPORT_SESSION_CLASS = "operator-scheduled-report" as con
 export const SCHEDULED_REPORT_MCP_SERVERS: readonly string[] = Object.freeze(["viewer", "telegram"]);
 
 /** Every session class the MCP grant recognises. */
-export type McpSessionClass = SessionOrigin | typeof SCHEDULED_REPORT_SESSION_CLASS;
+export type McpSessionClass = SessionOrigin | typeof SCHEDULED_REPORT_SESSION_CLASS | typeof HQ_SESSION_CLASS;
 
 /**
  * The bound plus its per-origin defaults, as one value.
