@@ -31,8 +31,12 @@ export interface MachinesRead {
   refresh: () => Promise<void>;
   /** Accounts enrolled on one machine; empty until asked. */
   accountsOn: (host: string) => Promise<{ profiles: string[]; error?: string }>;
+  /** The tmux sessions running on one machine; empty until asked. */
+  sessionsOn: (host: string) => Promise<{ sessions: SessionRow[]; error?: string }>;
   /** Resolves with the console's refusal, or the started session. */
   spawn: (input: SpawnInput) => Promise<{ error?: string; session?: SpawnResult }>;
+  /** Same shape as spawn: the work moves, the process does not. */
+  transfer: (input: TransferInput) => Promise<{ error?: string; session?: SpawnResult }>;
 }
 
 export interface SpawnInput {
@@ -44,6 +48,20 @@ export interface SpawnInput {
   prompt?: string;
   name?: string;
   cwd?: string;
+}
+
+/** A tmux session as the machine reports it. */
+export interface SessionRow {
+  tmux: string;
+  windows?: string;
+  created_at?: string;
+}
+
+/** Moving a session that already exists. `host` is where it goes; `session`
+    is the tmux name it has now, on `from_host` if that is not this machine. */
+export interface TransferInput extends SpawnInput {
+  session: string;
+  from_host?: string;
 }
 
 export interface SpawnResult {
@@ -96,7 +114,9 @@ export function useMachines(): MachinesRead {
     }
   }, []);
 
-  const spawn = useCallback(async (input: SpawnInput) => {
+  /* Starting and moving differ by one field in the body, so they share the
+     request: the route reads `session` and decides which it was asked for. */
+  const post = useCallback(async (input: SpawnInput | TransferInput) => {
     try {
       const response = await fetch("/api/machines", {
         method: "POST",
@@ -111,7 +131,27 @@ export function useMachines(): MachinesRead {
     }
   }, []);
 
-  return { machines, error, loading, refresh: () => load(), accountsOn, spawn };
+  const sessionsOn = useCallback(async (host: string) => {
+    try {
+      const response = await fetch(`/api/machines?host=${encodeURIComponent(host)}&sessions=1`, { cache: "no-store" });
+      const body = await response.json() as { sessions?: SessionRow[]; error?: string };
+      if (!response.ok) return { sessions: [], error: body.error ?? `HTTP ${response.status}` };
+      return { sessions: body.sessions ?? [] };
+    } catch (cause) {
+      return { sessions: [], error: cause instanceof Error ? cause.message : String(cause) };
+    }
+  }, []);
+
+  const spawn = useCallback((input: SpawnInput) => post(input), [post]);
+
+  /* Transfer posts to the same route: the body carrying a `session` is what
+     tells the console to move work instead of starting it. */
+  const transfer = useCallback(
+    (input: TransferInput) => post(input),
+    [post],
+  );
+
+  return { machines, error, loading, refresh: () => load(), accountsOn, sessionsOn, spawn, transfer };
 }
 
 /** «this machine · <work root>» — what the machine is, in one line. */

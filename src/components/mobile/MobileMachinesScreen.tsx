@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { useLocale } from "@/lib/i18n";
 
 import { MobileBarTitle, MobileShell, type MobileShellHost, type SheetRenderer } from "./MobileShell";
-import { enginesPresent, machineLine, useMachines, type MachineRow, type SpawnResult } from "./machinesModel";
+import { enginesPresent, machineLine, useMachines, type MachineRow, type SessionRow, type SpawnResult } from "./machinesModel";
 import { useOrg } from "./firmsModel";
 
 /*
@@ -69,6 +69,15 @@ export function MobileMachinesScreen({ host, renderSheet }: { host: MobileShellH
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const [started, setStarted] = useState<SpawnResult | null>(null);
+  const [startedMoved, setStartedMoved] = useState(false);
+
+  /* Starting and moving are the same form with one extra question: which
+     session, and where it is now. A separate screen would have duplicated the
+     machine, project, engine and account pickers to change one verb. */
+  const [mode, setMode] = useState<"start" | "move">("start");
+  const [source, setSource] = useState("");
+  const [session, setSession] = useState("");
+  const [sessions, setSessions] = useState<SessionRow[]>([]);
 
   /* Accounts belong to the machine, so the picker is refilled whenever the
      machine changes and cleared while the answer is on its way. */
@@ -83,22 +92,40 @@ export function MobileMachinesScreen({ host, renderSheet }: { host: MobileShellH
     return () => { live = false; };
   }, [target, machines]);
 
+  /* Sessions belong to the source machine, same as accounts to the target. */
+  useEffect(() => {
+    setSession("");
+    setSessions([]);
+    if (!source) return;
+    let live = true;
+    void machines.sessionsOn(source).then((answer) => {
+      if (live) setSessions(answer.sessions);
+    });
+    return () => { live = false; };
+  }, [source, machines]);
+
   const chosen = machines.machines?.find((row) => row.id === target);
   const engines = chosen ? enginesPresent(chosen) : ["claude", "codex"];
-  const ready = target && project && !busy;
+  const moving = mode === "move";
+  const ready = Boolean(target && project && !busy && (!moving || (source && session)));
 
   const start = async () => {
     if (!ready) return;
     setBusy(true);
     setFailure(null);
-    const answer = await machines.spawn({
+    const common = {
       host: target, project, engine,
       ...(account ? { account } : {}),
-      ...(prompt.trim() ? { prompt } : {}),
-    });
+    };
+    /* A move carries no first prompt: the brief comes from the work that
+       already happened on the source machine. */
+    const answer = moving
+      ? await machines.transfer({ ...common, session, from_host: source })
+      : await machines.spawn({ ...common, ...(prompt.trim() ? { prompt } : {}) });
     setBusy(false);
     if (answer.error) { setFailure(answer.error); return; }
     setStarted(answer.session ?? null);
+    setStartedMoved(moving);
     setPrompt("");
   };
 
@@ -118,7 +145,7 @@ export function MobileMachinesScreen({ host, renderSheet }: { host: MobileShellH
           <>
             {started ? (
               <div role="status" data-spawn-started className="flex flex-col gap-1 rounded-surface border border-success/40 bg-success-soft px-3 py-2">
-                <p className="text-label font-semibold text-success">{t("machines.started", { name: started.tmux })}</p>
+                <p className="text-label font-semibold text-success">{t(startedMoved ? "machines.moved" : "machines.started", { name: started.tmux })}</p>
                 <p className="text-caption text-secondary">{started.host} · {started.cwd}</p>
                 {/* The one thing worth copying by hand: how to sit in it. */}
                 <code className="truncate text-caption text-secondary">{started.attach}</code>
@@ -129,6 +156,47 @@ export function MobileMachinesScreen({ host, renderSheet }: { host: MobileShellH
 
             <section className={`${CARD} p-3`}>
               <p className="pb-2 text-label font-semibold text-primary">{t("machines.startTitle")}</p>
+
+              <div className="flex gap-1.5 pb-3" role="group" data-machines-mode>
+                {(["start", "move"] as const).map((which) => (
+                  <button key={which} type="button" onClick={() => setMode(which)}
+                    aria-pressed={mode === which}
+                    className={`min-h-11 flex-1 rounded-[12px] px-3 text-label ${mode === which ? "bg-accent text-white" : "bg-quiet text-secondary"}`}>
+                    {t(which === "start" ? "machines.modeStart" : "machines.modeMove")}
+                  </button>
+                ))}
+              </div>
+
+              {moving ? (
+                <>
+                  <label className="block pb-1 text-caption text-muted">{t("machines.source")}</label>
+                  <div className="flex flex-col gap-1.5 pb-3">
+                    {machines.machines.map((row) => (
+                      <button key={row.id} type="button" onClick={() => setSource(row.id)}
+                        aria-pressed={source === row.id}
+                        className={`min-h-11 w-full rounded-[12px] px-3 text-left text-label ${source === row.id ? "bg-accent text-white" : "bg-quiet text-secondary"}`}>
+                        <span className="block truncate font-semibold">{row.id}</span>
+                      </button>
+                    ))}
+                  </div>
+
+                  <label className="block pb-1 text-caption text-muted">{t("machines.session")}</label>
+                  {source && sessions.length === 0 ? (
+                    <p className="pb-3 text-caption text-muted">{t("machines.noSessions")}</p>
+                  ) : (
+                    <div className="flex flex-col gap-1.5 pb-3" data-machines-sessions>
+                      {sessions.map((row) => (
+                        <button key={row.tmux} type="button" onClick={() => setSession(row.tmux)}
+                          aria-pressed={session === row.tmux}
+                          className={`min-h-11 w-full rounded-[12px] px-3 text-left text-label ${session === row.tmux ? "bg-accent text-white" : "bg-quiet text-secondary"}`}>
+                          <span className="block truncate font-semibold">{row.tmux}</span>
+                          {row.windows ? <span className="block truncate text-caption opacity-80">{row.windows}</span> : null}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </>
+              ) : null}
 
               <label className="block pb-1 text-caption text-muted">{t("machines.machine")}</label>
               <div className="flex flex-col gap-1.5 pb-3">
@@ -184,14 +252,18 @@ export function MobileMachinesScreen({ host, renderSheet }: { host: MobileShellH
                 </div>
               )}
 
-              <label className="block pb-1 text-caption text-muted">{t("machines.prompt")}</label>
-              <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)}
-                rows={3} aria-label={t("machines.prompt")}
-                className="mb-3 w-full rounded-[12px] border border-border bg-card px-3 py-2 text-body text-primary" />
+              {moving ? null : (
+                <>
+                  <label className="block pb-1 text-caption text-muted">{t("machines.prompt")}</label>
+                  <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)}
+                    rows={3} aria-label={t("machines.prompt")}
+                    className="mb-3 w-full rounded-[12px] border border-border bg-card px-3 py-2 text-body text-primary" />
+                </>
+              )}
 
               <button type="button" disabled={!ready} onClick={() => void start()}
                 className="min-h-11 w-full rounded-[12px] bg-accent px-3 text-label font-semibold text-white disabled:opacity-50">
-                {busy ? t("common.loading") : t("machines.start")}
+                {busy ? t("common.loading") : t(moving ? "machines.move" : "machines.start")}
               </button>
             </section>
 

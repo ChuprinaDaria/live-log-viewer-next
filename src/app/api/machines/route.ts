@@ -25,6 +25,8 @@ export const dynamic = "force-dynamic";
 const headers = { "Cache-Control": "no-store" };
 
 const SLUG = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+/* tmux session names are not slugs: they routinely carry dots and capitals. */
+const SESSION = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const ENGINES = ["claude", "codex"] as const;
 
 function noConsole(): NextResponse {
@@ -78,6 +80,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
  *   { host, project, engine?, account?, model?, prompt?, name?, cwd? }
  *       start a session on that machine
  *
+ *   { session, host, project, from_host?, ... }
+ *       move an existing session to that machine — `host` is the destination
+ *
+ * The two are one route because they are one intent with one difference: a
+ * transfer carries a brief from where the work already happened. Splitting
+ * them would have duplicated every field for the sake of the verb.
+ *
  * The prompt travels over stdin: a first prompt is routinely longer than an
  * argument list should carry, and the console documents that trap itself.
  */
@@ -113,7 +122,29 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   };
   const prompt = typeof body.prompt === "string" && body.prompt.trim() ? body.prompt : undefined;
 
+  /* Moving a session rather than starting one. The console reads the brief on
+     the source machine and starts the work on the target; nothing here tries
+     to move a running process, because a process is not what is worth moving. */
+  const session = typeof body.session === "string" ? body.session.trim() : "";
+  if (body.session !== undefined && !SESSION.test(session)) {
+    return NextResponse.json({ error: "session must be a tmux session name" }, { status: 400, headers });
+  }
+  const fromHost = text(body.from_host);
+  if (fromHost !== undefined && !SLUG.test(fromHost)) {
+    return NextResponse.json({ error: "from_host must be a machine name" }, { status: 400, headers });
+  }
+
   try {
+    if (session) {
+      /* The console names the destination `to_host`; passing `host` as well
+         would be a field it does not know. */
+      const { host: _destination, ...rest } = params;
+      const moved = await fleetctl({
+        fn: "session_transfer",
+        params: { ...rest, session, to_host: host, from_host: fromHost },
+      });
+      return NextResponse.json(moved, { headers });
+    }
     const result = await fleetctl(prompt === undefined
       ? { fn: "session_spawn", params }
       : { fn: "session_spawn", params, stdinParam: "prompt", stdinValue: prompt });
