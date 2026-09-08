@@ -115,6 +115,34 @@ export function groupByProvider(secrets: readonly SecretView[], filter: SecretsF
 /** The row's headline: the inventory's human name when it has one, the slug
     otherwise. A labelled row keeps its slug in the meta line, where it is
     evidence rather than a heading. */
+/** Share a key with a scope, or take it back. Resolves with the console's own
+    refusal text, or null when it went through. A value is never involved:
+    the vault holds an address, and the key reaches an agent by being sourced
+    on its machine at launch. */
+export async function shareSecret(
+  secret: string,
+  scope: string,
+  revoke = false,
+): Promise<string | null> {
+  try {
+    const response = await fetch("/api/secrets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ secret, [revoke ? "unshare" : "share"]: scope }),
+    });
+    const body = await response.json() as { error?: string };
+    return response.ok ? null : (body.error ?? `HTTP ${response.status}`);
+  } catch (cause) {
+    return cause instanceof Error ? cause.message : String(cause);
+  }
+}
+
+/** Where a key physically lives, in one line: machine, file, variable. This
+    is what the store always knew and the screen never said. */
+export function secretWhere(row: SecretView): string {
+  return [row.host, row.file, row.envName].filter(Boolean).join(" · ");
+}
+
 export function secretTitle(row: SecretView): string {
   return row.label?.trim() || row.name;
 }

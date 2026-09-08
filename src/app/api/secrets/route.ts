@@ -2,9 +2,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 
-import { fleetctl, fleetctlInstalled } from "@/lib/fleetctl/client";
+import { fleetctl, fleetctlInstalled, fleetctlMessage, fleetctlStatus } from "@/lib/fleetctl/client";
+import { rejectCrossOrigin } from "@/lib/sameOrigin";
 
 /*
  * The Secrets page's inventory (TZ-UI.md: the secrets page).
@@ -60,6 +61,16 @@ export interface SecretView {
   /** Quota or usage the checker recorded, as it wrote it. */
   limit?: string;
   checkedAt?: string;
+  /** The file the value sits in, and the environment variable it answers to.
+      Both come out of `ref`, which is an ADDRESS — the store holds no value
+      and neither does this. */
+  file?: string;
+  envName?: string;
+  /** Who this key was shared with, beyond the node that owns it:
+      `global`, `firm:<id>`, `project:<id>`. */
+  sharedWith?: string[];
+  /** Who owns it, when the inventory says. */
+  owner?: string;
 }
 
 export interface AccountView {
@@ -175,6 +186,14 @@ interface ConsoleSecret {
   checked_at?: string;
   firm?: string | null;
   project?: string | null;
+  /* Where the value physically lives, parsed by the console out of `ref`.
+     This is the answer to «which machine is this key on», which the store
+     always held and which never reached the screen. */
+  host?: string | null;
+  file?: string | null;
+  env_name?: string | null;
+  /* Nodes this key is shared with, beyond the one that owns it. */
+  shared_with?: string[];
 }
 
 function fromConsole(record: ConsoleSecret): SecretView | null {
@@ -190,6 +209,13 @@ function fromConsole(record: ConsoleSecret): SecretView | null {
     ...(text(record.checked_at) ? { checkedAt: text(record.checked_at)! } : {}),
     ...(text(record.firm) ? { firm: text(record.firm)! } : {}),
     ...(text(record.project) ? { project: text(record.project)! } : {}),
+    ...(text(record.host) ? { host: text(record.host)! } : {}),
+    ...(text(record.file) ? { file: text(record.file)! } : {}),
+    ...(text(record.env_name) ? { envName: text(record.env_name)! } : {}),
+    ...(Array.isArray(record.shared_with) && record.shared_with.length
+      ? { sharedWith: record.shared_with.filter((item): item is string => typeof item === "string") }
+      : {}),
+    ...(text(record.owner) ? { owner: text(record.owner)! } : {}),
   };
 }
 
@@ -244,4 +270,92 @@ function readInventory(): SecretsInventoryView | null {
     accounts: list(record.accounts, accountView),
     clis: list(record.clis, cliView),
   };
+}
+
+/**
+ * POST /api/secrets — the page's three writes, all through the console.
+ *
+ *   { secret, share: "global" | "firm:<id>" | "project:<id>" }   share it
+ *   { secret, unshare: "…" }                                      take it back
+ *   { secret, label?, purpose?, owner?, firm?, project?, tags? }  annotate
+ *
+ * A VALUE is never accepted here and never returned. The console does not
+ * read one either: the vault holds an address (`host:/path/.env:NAME`), and
+ * a key reaches an agent by being sourced on that machine at launch, not by
+ * travelling through this route.
+ */
+export async function POST(request: NextRequest): Promise<NextResponse> {
+  const rejection = rejectCrossOrigin(request);
+  if (rejection) { rejection.headers.set("Cache-Control", "no-store"); return rejection; }
+  if (!fleetctlInstalled()) {
+    return NextResponse.json(
+      { error: "the operator console is not installed on this machine" },
+      { status: 501, headers },
+    );
+  }
+
+  let body: Record<string, unknown>;
+  try {
+    body = (await request.json()) as Record<string, unknown>;
+  } catch {
+    return NextResponse.json({ error: "invalid JSON" }, { status: 400, headers });
+  }
+
+  const secret = typeof body.secret === "string" ? body.secret.trim() : "";
+  if (!secret) return NextResponse.json({ error: "secret is required" }, { status: 400, headers });
+
+  /* A value must never arrive here even by accident — refusing loudly is
+     better than quietly dropping the field and leaving the caller to believe
+     it was stored. */
+  if ("value" in body || "token" in body || "password" in body) {
+    return NextResponse.json(
+      { error: "this route stores metadata, never a value; put the value in its own file and point `ref` at it" },
+      { status: 400, headers },
+    );
+  }
+
+  const SCOPE = /^(global|(firm|project):[a-z0-9][a-z0-9_-]{0,63})$/;
+  const scope = (value: unknown): string | null =>
+    typeof value === "string" && SCOPE.test(value.trim()) ? value.trim() : null;
+
+  try {
+    const share = scope(body.share);
+    const unshare = scope(body.unshare);
+    if (body.share !== undefined && !share) {
+      return NextResponse.json({ error: "share must be global, firm:<id> or project:<id>" }, { status: 400, headers });
+    }
+    if (body.unshare !== undefined && !unshare) {
+      return NextResponse.json({ error: "unshare must be global, firm:<id> or project:<id>" }, { status: 400, headers });
+    }
+
+    if (share) await fleetctl({ fn: "secret_share", params: { secret, target: share } });
+    else if (unshare) await fleetctl({ fn: "secret_unshare", params: { secret, target: unshare } });
+    else {
+      const text2 = (value: unknown): string | undefined =>
+        typeof value === "string" ? value : undefined;
+      const params = {
+        secret,
+        label: text2(body.label),
+        purpose_short: text2(body.purpose),
+        owner: text2(body.owner),
+        firm: text2(body.firm),
+        project: text2(body.project),
+        tags: Array.isArray(body.tags) ? body.tags.filter((t): t is string => typeof t === "string").join(",") : undefined,
+      };
+      if (Object.entries(params).every(([key, value]) => key === "secret" || value === undefined)) {
+        return NextResponse.json({ error: "nothing to change" }, { status: 400, headers });
+      }
+      await fleetctl({ fn: "secret_annotate", params });
+    }
+
+    /* Answer with the row as the console now holds it, so the page cannot
+       disagree with the store about who a key is shared with. */
+    const updated = await fleetctl<{ secrets: ConsoleSecret[] }>({
+      fn: "secrets_list", params: { query: secret },
+    });
+    const row = (updated.secrets ?? []).find((record) => record.id === secret);
+    return NextResponse.json({ secret: row ? fromConsole(row) : null }, { headers });
+  } catch (error) {
+    return NextResponse.json({ error: fleetctlMessage(error) }, { status: fleetctlStatus(error), headers });
+  }
 }

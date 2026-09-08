@@ -10,6 +10,8 @@ import {
   groupByProvider,
   lastCheckedAt,
   secretTitle,
+  secretWhere,
+  shareSecret,
   summarize,
   useSecretsInventory,
   type AccountView,
@@ -53,9 +55,19 @@ function stateLabel(t: TFunction, state: SecretState): string {
 
 export function MobileSecretsScreen({ host, renderSheet }: { host: MobileShellHost | null; renderSheet?: SheetRenderer }) {
   const { t } = useLocale();
-  const { inventory, error, loading } = useSecretsInventory(true);
+  const { inventory, error, loading, refresh } = useSecretsInventory(true);
   const [filter, setFilter] = useState<SecretsFilter>("all");
   const [opened, setOpened] = useState<ReadonlySet<string>>(new Set());
+  /* One row open at a time: a list of 82 keys with every panel unfolded is
+     not a list any more. */
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [shareFailure, setShareFailure] = useState<string | null>(null);
+
+  const share = async (secret: string, scope: string, revoke: boolean) => {
+    const problem = await shareSecret(secret, scope, revoke);
+    setShareFailure(problem);
+    if (!problem) await refresh();
+  };
 
   const secrets = inventory?.secrets ?? [];
   const totals = summarize(secrets);
@@ -107,6 +119,9 @@ export function MobileSecretsScreen({ host, renderSheet }: { host: MobileShellHo
               </>
             ) : null}
 
+            {shareFailure ? (
+              <p role="status" data-secret-share-failure className="px-1 pt-2 text-label text-danger">{shareFailure}</p>
+            ) : null}
             {totals.total === 0 ? (
               <p className="px-1 py-6 text-center text-body text-secondary" data-mobile2-secrets-empty="none">{t("secrets.emptyNone")}</p>
             ) : groups.length === 0 ? (
@@ -125,6 +140,9 @@ export function MobileSecretsScreen({ host, renderSheet }: { host: MobileShellHo
                     open={filter !== "all" || opened.has(group.provider)}
                     showDead={filter === "all"}
                     onToggle={filter === "all" ? () => toggle(group.provider) : null}
+                    expanded={expanded}
+                    onExpand={(name) => { setShareFailure(null); setExpanded(name); }}
+                    onShare={(secret, scope, revoke) => void share(secret, scope, revoke)}
                   />
                 ))}
               </div>
@@ -184,7 +202,12 @@ function Filter({ value, totals, onChange }: { value: SecretsFilter; totals: Ret
   );
 }
 
-function Group({ group, open, showDead, onToggle }: { group: SecretGroup; open: boolean; showDead: boolean; onToggle: (() => void) | null }) {
+function Group({ group, open, showDead, onToggle, expanded, onExpand, onShare }: {
+  group: SecretGroup; open: boolean; showDead: boolean; onToggle: (() => void) | null;
+  expanded: string | null;
+  onExpand: (name: string | null) => void;
+  onShare: (secret: string, scope: string, revoke: boolean) => void;
+}) {
   const { t } = useLocale();
   const header = (
     <>
@@ -211,37 +234,100 @@ function Group({ group, open, showDead, onToggle }: { group: SecretGroup; open: 
       )}
       {open ? (
         <ul className="flex flex-col divide-y divide-border border-t border-border bg-sunken">
-          {group.rows.map((row) => <Row key={`${row.provider}/${row.name}`} row={row} />)}
+          {group.rows.map((row) => (
+            <Row key={`${row.provider}/${row.name}`} row={row}
+              expanded={expanded === row.name}
+              onToggle={() => onExpand(expanded === row.name ? null : row.name)}
+              onShare={(scope, revoke) => onShare(row.name, scope, revoke)} />
+          ))}
         </ul>
       ) : null}
     </div>
   );
 }
 
-/* A row is text, never a target: nothing on this page can be tapped into
-   revealing anything, and a stray tap on a list of secrets should do nothing
-   at all. */
-function Row({ row }: { row: SecretView }) {
+/* A row USED to be text and nothing else: «nothing on this page can be tapped
+   into revealing anything». That rule was right when the page could only show
+   a key's name — a tap could only ever have exposed something.
+
+   It can now do something instead: say where the key physically lives, and
+   share it with a project, a firm, or every project at once. Still nothing is
+   revealed. The vault holds an ADDRESS — machine, file, variable name — and
+   the value reaches an agent by being sourced on that machine at launch,
+   never by passing through this screen.
+   
+   Expanding is explicit, one row at a time, and a stray tap costs a closed
+   panel rather than an exposure. */
+function Row({ row, expanded, onToggle, onShare }: {
+  row: SecretView;
+  expanded: boolean;
+  onToggle: () => void;
+  onShare: (scope: string, revoke: boolean) => void;
+}) {
   const { t } = useLocale();
   const meta = [
     row.label ? row.name : null,
-    row.host,
     row.kind && row.kind !== "token" ? row.kind : null,
     row.masked,
     row.limit ? t("secrets.limit", { value: row.limit }) : null,
-    /* Where this key belongs, once the operator has bound it in the console:
-       the project if it has one, the firm otherwise. */
     row.project ?? row.firm ?? null,
   ].filter(Boolean).join(" · ");
+  const where = secretWhere(row);
   return (
-    <li className="flex min-h-14 flex-col justify-center px-3 py-2.5 pl-5" data-mobile2-secret={row.name} data-mobile2-secret-state={row.state}>
-      <div className="flex items-start gap-2">
-        <span className={`min-w-0 flex-1 truncate text-body text-primary ${row.label ? "" : "font-mono text-caption"}`}>{secretTitle(row)}</span>
-        <span className={`shrink-0 text-caption ${STATE_TONE[row.state]}`}>{stateLabel(t, row.state)}</span>
-      </div>
-      {meta ? <p className="mt-0.5 truncate font-mono text-caption text-muted">{meta}</p> : null}
-      {row.purpose ? <p className="mt-0.5 line-clamp-2 text-caption leading-snug text-secondary">{row.purpose}</p> : null}
+    <li data-mobile2-secret={row.name} data-mobile2-secret-state={row.state}>
+      <button type="button" onClick={onToggle} aria-expanded={expanded}
+        className="flex min-h-14 w-full flex-col justify-center px-3 py-2.5 pl-5 text-left active:bg-sunken">
+        <div className="flex w-full items-start gap-2">
+          <span className={`min-w-0 flex-1 truncate text-body text-primary ${row.label ? "" : "font-mono text-caption"}`}>{secretTitle(row)}</span>
+          <span className={`shrink-0 text-caption ${STATE_TONE[row.state]}`}>{stateLabel(t, row.state)}</span>
+        </div>
+        {meta ? <p className="mt-0.5 w-full truncate font-mono text-caption text-muted">{meta}</p> : null}
+        {/* Machine, file and variable — the answer to «where is this key». */}
+        {where ? <p className="mt-0.5 w-full truncate font-mono text-caption text-muted">{where}</p> : null}
+        {row.sharedWith?.length ? (
+          <p className="mt-0.5 w-full truncate text-caption text-accent">
+            {t("secrets.sharedWith", { list: row.sharedWith.join(", ") })}
+          </p>
+        ) : null}
+        {row.purpose ? <p className="mt-0.5 line-clamp-2 text-caption leading-snug text-secondary">{row.purpose}</p> : null}
+      </button>
+      {expanded ? <ShareBox row={row} onShare={onShare} /> : null}
     </li>
+  );
+}
+
+/** Three scopes, exactly as the spec names them: every project, one firm, one
+    project. The target is typed for a firm or a project because the org tree
+    lives on its own screen and a second copy of that picker would be a second
+    thing to keep correct; the console refuses an unknown id by name. */
+function ShareBox({ row, onShare }: { row: SecretView; onShare: (scope: string, revoke: boolean) => void }) {
+  const { t } = useLocale();
+  const [target, setTarget] = useState("");
+  const shared = row.sharedWith ?? [];
+  const isGlobal = shared.includes("global");
+  return (
+    <div className="flex flex-col gap-2 border-t border-border bg-quiet px-5 py-3" data-secret-share={row.name}>
+      <button type="button" onClick={() => onShare("global", isGlobal)}
+        className={`min-h-11 rounded-[12px] px-3 text-label font-semibold ${isGlobal ? "bg-accent text-white" : "bg-card text-secondary"}`}>
+        {t(isGlobal ? "secrets.unshareGlobal" : "secrets.shareGlobal")}
+      </button>
+      <div className="flex gap-1.5">
+        <input value={target} onChange={(event) => setTarget(event.target.value)}
+          placeholder="project:money" aria-label={t("secrets.shareTarget")}
+          className="min-h-11 min-w-0 flex-1 rounded-[12px] border border-border bg-card px-3 text-body text-primary" />
+        <button type="button" disabled={!target.trim()} onClick={() => { onShare(target.trim(), false); setTarget(""); }}
+          className="min-h-11 shrink-0 rounded-[12px] bg-accent px-3 text-label font-semibold text-white disabled:opacity-50">
+          {t("secrets.share")}
+        </button>
+      </div>
+      {shared.filter((scope) => scope !== "global").map((scope) => (
+        <button key={scope} type="button" onClick={() => onShare(scope, true)}
+          className="flex min-h-11 items-center justify-between rounded-[12px] bg-card px-3 text-label text-secondary">
+          <span className="truncate">{scope}</span>
+          <span className="shrink-0 text-caption text-danger">{t("secrets.unshare")}</span>
+        </button>
+      ))}
+    </div>
   );
 }
 

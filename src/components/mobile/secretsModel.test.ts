@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { groupByProvider, lastCheckedAt, matchesFilter, secretTitle, summarize, type SecretView } from "@/components/mobile/secretsModel";
+import { groupByProvider, lastCheckedAt, matchesFilter, secretTitle, secretWhere, summarize, type SecretView } from "@/components/mobile/secretsModel";
 
 /* The order is alphabetical and stable, so a position can be learned; the dead
    keys are reached by the filter and counted on each group's header. The title
@@ -52,4 +52,19 @@ test("the header dates the inventory by its freshest check, not its first", () =
     secret("c", "p", "unchecked"),
   ])).toBe("2026-09-08 04:01:17");
   expect(lastCheckedAt([secret("a", "p", "unchecked")])).toBeNull();
+});
+
+/* Where a key lives is the question the store always answered and the screen
+   never asked: `ref` carries machine, file and variable name. */
+test("a key says which machine, file and variable it lives in", () => {
+  const row = {
+    name: "clickup_dasha", provider: "clickup", state: "alive" as const,
+    host: "ryzen", file: "/srv/x/.env", envName: "CLICKUP_TOKEN",
+  };
+  expect(secretWhere(row)).toBe("ryzen · /srv/x/.env · CLICKUP_TOKEN");
+});
+
+test("a key whose ref names no machine or variable says only what it knows", () => {
+  expect(secretWhere({ name: "a", provider: "p", state: "unchecked" as const })).toBe("");
+  expect(secretWhere({ name: "a", provider: "p", state: "unchecked" as const, host: "walter" })).toBe("walter");
 });
