@@ -14,6 +14,7 @@ import { CopyButton } from "./CopyButton";
 import { InboxImageCard } from "./InboxImage";
 import { md, mdBlocks } from "./markdown";
 import { useMessageProvenance, type ProvenanceLookup } from "./messageProvenance";
+import { TurnHeader } from "./TurnHeader";
 import { tr, type Item } from "./parse";
 import { BlobCard } from "./cards/BlobCard";
 import { CmdGroupCard } from "./cards/CmdGroupCard";
@@ -88,24 +89,25 @@ function internalCard(ts: unknown, text: string, senderRole: string | undefined)
   };
 }
 
-/* Mobile v2 (#1439, lane 4): the engine mark is the only avatar left on the
-   phone — a 16 px glyph in secondary colour beside the engine's name in the
-   message header (README §5). Proper nouns, so no locale entry. */
-const ENGINE_LABEL: Record<"codex" | "claude" | "openclaw", string> = {
-  claude: "Claude",
-  codex: "Codex",
-  openclaw: "OpenClaw",
-};
-
 /* Memoized: feed items are immutable after buildFeed, so a pane re-render
    (poll tick, camera state, files refresh) skips re-parsing markdown for
    every message that did not change. The provenance lookup arrives by context,
-   so a resolved map re-renders exactly the memoized consumers. */
-export const FeedItem = memo(function FeedItem({ item: sourceItem, speakText }: { item: Item; speakText?: string }) {
+   so a resolved map re-renders exactly the memoized consumers.
+
+   `turnHead` (TZ-UI.md stage 1): this row opens an agent turn, so on the
+   phone it carries the one who/model/account header — computed per-index in
+   the LogFeed map like `speakText`, never derived here. */
+export const FeedItem = memo(function FeedItem({ item: sourceItem, speakText, turnHead = false }: { item: Item; speakText?: string; turnHead?: boolean }) {
   const { t } = useLocale();
   const provenance = useMessageProvenance();
   const isMobile = useIsMobile();
   const item = resolveDeliveredItem(sourceItem, provenance);
+  /* A turn that opens with a command still names its author: the header rides
+     above the tool/group card. Prose heads render it inside their own branch
+     (it owns the speak/copy cluster there). */
+  const toolTurnHeader = isMobile && turnHead && (item.kind === "tool" || item.kind === "cmd-group")
+    ? <TurnHeader ts={item.kind === "cmd-group" ? item.t0 : item.ts} />
+    : null;
   /* Mobile v2 (#1439, lane 4): no avatar column on the phone, so nothing lines
      up with one — the `ml-9` chrome indent goes with it. */
   const indent = isMobile ? "" : "ml-9 ";
@@ -131,15 +133,21 @@ export const FeedItem = memo(function FeedItem({ item: sourceItem, speakText }: 
       const time = mobileClock(item.ts);
       return (
         <div className="group/msg" data-mobile-message="agent">
-          <div data-mobile-message-header className="flex h-11 w-full items-center gap-1.5 text-label text-muted">
-            <AvatarIcon className="h-4 w-4 shrink-0 text-secondary" aria-hidden />
-            <span className="font-semibold text-secondary">{ENGINE_LABEL[item.engine]}</span>
-            <span className="ml-auto flex shrink-0 items-center gap-1">
-              {time ? <span className="tabular-nums">{time}</span> : null}
-              {speakText ? <SpeakButton text={speakText} /> : null}
-              <CopyButton text={item.text} label={tr("feed.copyMd")} className={MESSAGE_ACTION} />
-            </span>
-          </div>
+          {/* TZ-UI.md stage 1: the head of a turn carries the full who/model/
+              account header; a continuation keeps only the right-hand cluster
+              — repeating the glyph and name on every block was the noise the
+              header exists to remove. */}
+          {turnHead ? (
+            <TurnHeader ts={item.ts} engine={item.engine} speakText={speakText} copyText={item.text} />
+          ) : (
+            <div data-mobile-message-header className="flex h-11 w-full items-center gap-1.5 text-label text-muted">
+              <span className="ml-auto flex shrink-0 items-center gap-1">
+                {time ? <span className="tabular-nums">{time}</span> : null}
+                {speakText ? <SpeakButton text={speakText} /> : null}
+                <CopyButton text={item.text} label={tr("feed.copyMd")} className={MESSAGE_ACTION} />
+              </span>
+            </div>
+          )}
           <div className="w-full whitespace-pre-wrap break-words text-title leading-[1.45]" data-tts-message={`${item.engine}:${item.ts}`}>
             <div className="contents" data-tts-body>{mdBlocks(item.text)}</div>
           </div>
@@ -247,10 +255,10 @@ export const FeedItem = memo(function FeedItem({ item: sourceItem, speakText }: 
       </div>
     );
   }
-  if (item.kind === "tool" && item.mcp) return <McpCallCard event={item} />;
-  if (item.kind === "tool" && item.wakeup) return <WakeupCard event={item} wakeup={item.wakeup} />;
-  if (item.kind === "tool") return <ToolCard event={item} />;
-  if (item.kind === "cmd-group") return <CmdGroupCard item={item} />;
+  if (item.kind === "tool" && item.mcp) return <>{toolTurnHeader}<McpCallCard event={item} /></>;
+  if (item.kind === "tool" && item.wakeup) return <>{toolTurnHeader}<WakeupCard event={item} wakeup={item.wakeup} /></>;
+  if (item.kind === "tool") return <>{toolTurnHeader}<ToolCard event={item} /></>;
+  if (item.kind === "cmd-group") return <>{toolTurnHeader}<CmdGroupCard item={item} /></>;
   if (item.kind === "tmsg") {
     const protocol = parseProtocolPayload(item.text);
     const long = item.text.length > 420 || item.text.split("\n").length > 6;

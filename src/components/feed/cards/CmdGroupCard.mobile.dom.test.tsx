@@ -1,3 +1,4 @@
+import { MOBILE_LAYOUT_QUERY } from "@/lib/attention/eligibility";
 import { afterEach, expect, test } from "bun:test";
 import { Window } from "happy-dom";
 import type { ReactElement } from "react";
@@ -22,7 +23,7 @@ let narrowViewport = false;
 
 const normalize = (query: string) => String(query).replace(/\s+/g, "");
 const matchMediaStub = (query: string) => ({
-  matches: normalize(query) === "(max-width:767px)" ? narrowViewport : false,
+  matches: normalize(query) === normalize(MOBILE_LAYOUT_QUERY) ? narrowViewport : false,
   media: String(query),
   onchange: null,
   addEventListener() {},
@@ -112,13 +113,19 @@ test("phone: a clean run of two folds to one 44 px line with counts and a time r
   expect(host.querySelector("details")).toBeNull();
 });
 
-test("phone: the fold expands in place to the readable blocks and folds back", () => {
+test("phone: the fold expands to a list of COLLAPSED rows; only the second tap opens one output", () => {
   narrowViewport = true;
   const host = mount(<CmdGroupCard item={settledGroup()} />);
   const fold = host.querySelector("[data-mobile-run-fold]")!;
   click(fold);
   expect(fold.getAttribute("aria-expanded")).toBe("true");
   expect(host.querySelector("ol")).toBeTruthy();
+  /* TZ-UI.md stage 1: one tap must NOT dump the commands' bodies — the rows
+     are their own disclosures, closed until tapped. */
+  expect(host.textContent).not.toContain("git status --short");
+  const row = host.querySelector("ol details")!;
+  expect(row.hasAttribute("open")).toBe(false);
+  click(row.querySelector("summary")!);
   expect(host.textContent).toContain("git status --short");
   /* Expanded in place: the fold line is still the first thing, above the blocks. */
   expect(host.querySelector("[data-mobile-run]")!.firstElementChild).toBe(fold);
@@ -196,6 +203,11 @@ test("phone: a run with a failure is one sunken block of 36 px items with the de
   click(target);
   expect(target.getAttribute("aria-expanded")).toBe("true");
   expect(block.querySelector("ol")).toBeTruthy();
+  /* Same two-level contract as the clean fold (TZ-UI.md stage 1): the opened
+     block lists collapsed rows; a specific failure opens on its own tap. */
+  expect(host.textContent).not.toContain("git status --short");
+  const row = block.querySelector("ol details")!;
+  click(row.querySelector("summary")!);
   expect(host.textContent).toContain("git status --short");
 });
 

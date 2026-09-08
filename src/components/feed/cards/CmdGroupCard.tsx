@@ -6,6 +6,8 @@ import { useIsMobile } from "@/hooks/useIsMobile";
 
 import { ChevronDown, ChevronRight } from "../../icons";
 import { hhmm } from "../../utils";
+import { EngineGlyph } from "../engineMark";
+import { useFeedIdentity } from "../feedIdentity";
 import { tr, type CmdGroupItem, type ToolEvent } from "../parse";
 import { elapsedDurationMs, formatDuration } from "../duration";
 import { coalesceFollowUps, groupNestedCalls } from "../toolBlocks";
@@ -19,6 +21,7 @@ import { MobileRunRow, PollRow, ToolBlockRow, ToolLine, isPendingQuestionCall, m
    the same tool id twice (a resume re-emits the tool_use), so the id alone is
    not a unique key. */
 function ReadableBlocks({ calls }: { calls: readonly ToolEvent[] }) {
+  const isMobile = useIsMobile();
   const blocks = groupNestedCalls(calls);
   return (
     <ol className="mb-1 mt-1 space-y-0.5">
@@ -29,12 +32,26 @@ function ReadableBlocks({ calls }: { calls: readonly ToolEvent[] }) {
         const children = coalesceFollowUps(block.children);
         return (
           <li key={`${block.parent.id}:${bi}`} className="min-w-0">
-            <ToolBlockRow event={block.parent} index={bi + 1} />
+            {/* TZ-UI.md stage 1: on the phone one tap on the group must NOT
+                dump every command's output at once (the "raw porridge"). The
+                opened group lists collapsed rows — the second tap opens the
+                one output the operator asked for. The desktop keeps the
+                always-open readable blocks. */}
+            {isMobile ? (
+              <ToolLine event={block.parent} index={bi + 1} showTime={false} topLevel={false} />
+            ) : (
+              <ToolBlockRow event={block.parent} index={bi + 1} />
+            )}
             {children.length ? (
-              <div className="ml-4 border-l border-border pl-2">
+              /* On 390px the border+padding indent cost 26px per level; a bare
+                 12px step is enough — the ↳ on each nested row carries the
+                 relationship (TZ-UI.md stage 1 §3.4). */
+              <div className={isMobile ? "ml-3" : "ml-4 border-l border-border pl-2"}>
                 {children.map((child, ci) =>
                   child.kind === "polls" ? (
                     <PollRow key={`poll:${ci}`} events={child.events} session={child.session} elapsedMs={child.elapsedMs} />
+                  ) : isMobile ? (
+                    <ToolLine key={`${child.event.id}:${ci}`} event={child.event} nested showTime={false} topLevel={false} />
                   ) : (
                     <ToolBlockRow key={`${child.event.id}:${ci}`} event={child.event} nested />
                   ),
@@ -67,6 +84,7 @@ function mobileToolSummary(calls: readonly ToolEvent[]): string {
 
 function MobileCmdGroup({ item }: { item: CmdGroupItem }) {
   const [open, setOpen] = useState(false);
+  const { engine } = useFeedIdentity();
   const calls = item.calls;
   const last = calls[calls.length - 1];
   const trailingRun = last && last.status === "run" ? last : null;
@@ -119,6 +137,10 @@ function MobileCmdGroup({ item }: { item: CmdGroupItem }) {
             ) : (
               <ChevronRight className="h-3.5 w-3.5 shrink-0" aria-hidden />
             )}
+            {/* TZ-UI.md stage 1 (§G): the fold row names its author too — past
+                the turn header, "who writes these commands" must survive a
+                scroll. */}
+            <EngineGlyph engine={engine} className="h-3.5 w-3.5" />
             <span className="min-w-0 flex-1 truncate text-secondary">
               {tr("render.actions", { count: done.length })}
               {tools ? " · " + tools : ""}

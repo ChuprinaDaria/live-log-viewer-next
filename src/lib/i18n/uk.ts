@@ -2365,6 +2365,9 @@ export const uk: Record<keyof typeof en, Message> = {
   "mobile2.feed.runFailed": { one: "{count} дія, невдалих: {failed} — розгортається на місці", few: "{count} дії, невдалих: {failed} — розгортається на місці", many: "{count} дій, невдалих: {failed} — розгортається на місці", other: "{count} дій, невдалих: {failed} — розгортається на місці" },
   "mobile2.feed.runFold": "{count} дій — розгортається на місці",
   "mobile2.feed.ownAnswerHint": "Або наберіть свою відповідь — вона піде як відповідь.",
+  "mobile2.feed.sessionModel": "модель сесії",
+  "mobile2.feed.expandCommand": "розгорнути",
+  "mobile2.feed.showAllLines": { one: "показати все ({count} рядок)", few: "показати все ({count} рядки)", many: "показати все ({count} рядків)", other: "показати все ({count} рядка)" },
   /* Mobile v2 board + host sheet (#1439, lane 2). */
   "mobile2.board.orchestrator": "Оркестратор",
   "mobile2.board.needsYou": "Потребує вас",

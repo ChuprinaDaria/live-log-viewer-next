@@ -5,10 +5,12 @@ import { useState } from "react";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { getLocale } from "@/lib/i18n";
 
-import { GlyphIcon, Loader2 } from "../../icons";
+import { ChevronRight, GlyphIcon, Loader2 } from "../../icons";
 import { hhmm } from "../../utils";
 import { ACTION_GUTTER, MESSAGE_ACTION } from "../actionStyles";
 import { CopyButton } from "../CopyButton";
+import { EngineGlyph } from "../engineMark";
+import { useFeedIdentity } from "../feedIdentity";
 import { tr, type ToolEvent, type ToolOutputBlock } from "../parse";
 import type { ArgChip } from "../tools";
 import { formatDuration, isFollowUpCall, toolDurationMs } from "../toolBlocks";
@@ -70,11 +72,15 @@ function exitLabel(event: ToolEvent): string | null {
    single wrapping line so it never stacks into its own multi-row card. Renders
    nothing when a call carries none of them (a plain non-shell tool). */
 function ToolMeta({ event }: { event: ToolEvent }) {
+  const isMobile = useIsMobile();
   const start = hhmm(event.ts);
   const end = event.endTs !== undefined ? hhmm(event.endTs) : "";
   const span = end && start ? tr("tools.ranAt", { start, end }) : "";
   const exit = exitLabel(event);
-  if (!event.cwd && !span && !exit) return null;
+  /* TZ-UI.md stage 1: on 390px the cwd is noise — it is the same for the whole
+     session and lives in the session header. Exit and span stay. */
+  const cwd = isMobile ? "" : event.cwd;
+  if (!cwd && !span && !exit) return null;
   return (
     <div className="mb-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-muted">
       {exit ? (
@@ -84,12 +90,12 @@ function ToolMeta({ event }: { event: ToolEvent }) {
         </span>
       ) : null}
       {span ? <span className="tabular-nums">{span}</span> : null}
-      {event.cwd ? (
+      {cwd ? (
         <span className="inline-flex min-w-0 max-w-full items-center gap-1">
-          <code className="min-w-0 truncate font-mono text-[11px] text-secondary" title={event.cwd}>
-            {event.cwd}
+          <code className="min-w-0 truncate font-mono text-[11px] text-secondary" title={cwd}>
+            {cwd}
           </code>
-          <CopyButton text={event.cwd} label={tr("tools.copyCwd")} className="shrink-0 p-0.5" />
+          <CopyButton text={cwd} label={tr("tools.copyCwd")} className="shrink-0 p-0.5" />
         </span>
       ) : null}
     </div>
@@ -101,12 +107,27 @@ function ToolMeta({ event }: { event: ToolEvent }) {
    user did not open), wrapped instead of scrolled so a long line stays fully
    visible and never forces document-level horizontal overflow on 390px. */
 function CommandBlock({ command }: { command: string }) {
+  const isMobile = useIsMobile();
+  const [expanded, setExpanded] = useState(false);
+  /* TZ-UI.md stage 1 (§3.3): a heredoc or a 300-char one-liner wraps into a
+     dozen rows and eats the 390px screen. Clamp to six lines with a plain
+     text trigger — no fade, no gradient. Desktop keeps the full command. */
+  const long = isMobile && (command.split("\n").length > 6 || command.length > 420);
   return (
     <div className="group/cmd relative">
-      <pre className={`max-w-full whitespace-pre-wrap [overflow-wrap:anywhere] py-0.5 font-mono text-ui text-primary ${ACTION_GUTTER}`}>
+      <pre className={`max-w-full whitespace-pre-wrap [overflow-wrap:anywhere] py-0.5 font-mono text-ui text-primary ${long && !expanded ? "line-clamp-6 " : ""}${ACTION_GUTTER}`}>
         <span className="select-none text-muted">$ </span>
         {command}
       </pre>
+      {long ? (
+        <button
+          type="button"
+          onClick={() => setExpanded((value) => !value)}
+          className="min-h-11 text-caption font-semibold text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+        >
+          {expanded ? tr("common.collapse") : tr("mobile2.feed.expandCommand")}
+        </button>
+      ) : null}
       <CopyButton
         text={command}
         label={tr("tools.copyCommand")}
@@ -121,6 +142,7 @@ function CommandBlock({ command }: { command: string }) {
    disclosures. Mounted lazily by {@link ToolLine} on first expand, so a long
    collapsed transcript keeps its DOM small (issue #9 §7/§8). */
 export function ToolBody({ event }: { event: ToolEvent }) {
+  const isMobile = useIsMobile();
   const hasDiff = event.body?.type === "diff";
   /* An interactive follow-up with an empty result carries no useful output, so
      its apology chip stays suppressed. A collapsible empty poll also omits its
@@ -130,7 +152,9 @@ export function ToolBody({ event }: { event: ToolEvent }) {
   const showOutput = !emptyFollowUp && (!hasDiff || Boolean(event.outputPreview.trim()));
   return (
     <div className="mb-1 mt-1 rounded-surface bg-sunken px-2.5 py-2">
-      <ToolChips chips={event.chips} />
+      {/* TZ-UI.md stage 1: the chips repeat arguments the command below already
+          shows; on 390px they wrap into extra rows, so the phone drops them. */}
+      {isMobile ? null : <ToolChips chips={event.chips} />}
       <ToolMeta event={event} />
       {event.command ? <CommandBlock command={event.command} /> : null}
       {event.orchestration ? <OrchestrationCard orchestration={event.orchestration} source={event.command} /> : null}
@@ -276,15 +300,21 @@ export function ToolLine({
   className = "",
   index,
   nested = false,
+  topLevel = true,
 }: {
   event: ToolEvent;
   showTime?: boolean;
   className?: string;
   index?: number;
   nested?: boolean;
+  /** TZ-UI.md stage 1: a top-level phone row carries the engine glyph (who
+      writes this command); a row inside an opened group does not — the group
+      above already answered. */
+  topLevel?: boolean;
 }) {
   const [mounted, setMounted] = useState(event.open);
   const isMobile = useIsMobile();
+  const { engine } = useFeedIdentity();
   /* Mobile v2 (#1439, lane 4; README §2.6): on the phone a tool line is one
      quiet closed line whatever the parser decided — an edit's diff (#90) or a
      failure's output opens by default only on the desktop. The operator's tap
@@ -321,6 +351,18 @@ export function ToolLine({
         {nested ? <span className="shrink-0 select-none text-muted" aria-hidden>↳</span> : null}
         {isMobile && running ? (
           <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin motion-reduce:animate-none" aria-hidden />
+        ) : isMobile ? (
+          /* The phone's collapsed row says it opens (chevron) and who wrote it
+             (engine glyph, top level only); inside a group the tool's own
+             glyph stays — the group answered the "who". */
+          <>
+            <ChevronRight className="h-3.5 w-3.5 shrink-0 transition-transform motion-reduce:transition-none group-open/tool:rotate-90" aria-hidden />
+            {topLevel && engine && engine !== "shell" ? (
+              <EngineGlyph engine={engine} className="h-3.5 w-3.5" />
+            ) : (
+              <GlyphIcon name={event.icon} className="h-3.5 w-3.5 shrink-0" />
+            )}
+          </>
         ) : (
           <GlyphIcon name={event.icon} className="h-3.5 w-3.5 shrink-0" />
         )}

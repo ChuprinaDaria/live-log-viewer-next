@@ -2436,6 +2436,9 @@ export const en = {
   "mobile2.feed.runFailed": { one: "{count} actions, {failed} failed — expands in place", other: "{count} actions, {failed} failed — expands in place" },
   "mobile2.feed.runFold": "{count} actions — expands in place",
   "mobile2.feed.ownAnswerHint": "Or type your own answer — it is sent as the reply.",
+  "mobile2.feed.sessionModel": "session model",
+  "mobile2.feed.expandCommand": "expand",
+  "mobile2.feed.showAllLines": { one: "show all ({count} line)", other: "show all ({count} lines)" },
   /* Mobile v2 board + host sheet (#1439, lane 2): the triage list the phone
      opens on, and the one place host detail lives. Append-only, keys prefixed
      mobile2.board.* / mobile2.host.* */

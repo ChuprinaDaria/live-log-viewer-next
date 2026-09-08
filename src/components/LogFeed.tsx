@@ -7,7 +7,7 @@ import { ArrowDown, ChevronUp, Sparkle } from "@/components/icons";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useRuntimeSessionForConversation } from "@/hooks/useRuntime";
 import { useToolActivityCues } from "@/hooks/useToolActivityCues";
-import { accountIdFromPath } from "@/lib/accounts/badge";
+import { DEFAULT_ACCOUNT_ID, accountIdFromPath } from "@/lib/accounts/badge";
 import { conversationIdentity, isLaunchPlaceholder } from "@/lib/accounts/identity";
 import { activeCardMigration, cardMigrationState, migrationHoldsDelivery, migrationTargetName } from "@/lib/accounts/migration";
 import { getLocale, translate, useLocale } from "@/lib/i18n";
@@ -39,6 +39,7 @@ import {
 import { createFeedSession, type FeedSession, type FeedSnapshot } from "./feed/parse";
 import { claimFeedSession, releaseFeedSession, takeFeedSession } from "./feed/sessionPool";
 import { FeedItem } from "./feed/FeedItem";
+import { FeedIdentityProvider, NO_FEED_IDENTITY, type FeedIdentity } from "./feed/feedIdentity";
 import { MessageProvenanceProvider, useDeliveredMessageProvenance } from "./feed/messageProvenance";
 import { RawLineProvider, type RawLineLookup } from "./feed/rawLine";
 import { ResponseDuration } from "./feed/ResponseDuration";
@@ -46,6 +47,7 @@ import { SuggestedReplies } from "./feed/SuggestedReplies";
 import { BoundedLru } from "./feed/scrollMemory";
 import { ConversationAttention } from "./runtime/ConversationAttention";
 import { speakableAnswer } from "./feed/speakableAnswer";
+import { isTurnHead } from "./feed/turnHeads";
 import { isSubagent } from "./projectModel";
 import { TaskHeader } from "./TaskHeader";
 import { TurnStatusBar } from "./TurnStatusBar";
@@ -228,6 +230,21 @@ export function LogFeed({ file, showSvc, lineFilter, onStatus, paused, follow, s
   const phone = useIsMobile();
   const { locale, t } = useLocale();
   const memoryKey = file ? conversationIdentity(file) : null;
+  /* TZ-UI.md stage 1: the session identity the phone's turn headers render
+     (engine / agent name / model / account). All four are session attributes;
+     unknown ones stay null so the header omits them — no placeholders. The
+     agent name is only a deliberate rename (autoTitle present means `title`
+     was chosen by the operator); a scanner summary is not a name. */
+  const feedIdentity = useMemo<FeedIdentity>(() => {
+    if (!file) return NO_FEED_IDENTITY;
+    const account = accountIdFromPath(file.path);
+    return {
+      engine: file.engine,
+      agentName: file.autoTitle !== undefined ? file.title : null,
+      model: file.model,
+      account: account === DEFAULT_ACCOUNT_ID ? null : account,
+    };
+  }, [file?.engine, file?.autoTitle, file?.title, file?.model, file?.path]);
   /* The conversation's own outbox (issue #561): submitted drafts render as
      optimistic user bubbles at the tail of THIS feed, before any transcript
      flush, and retire the moment their real bubble lands. */
@@ -858,6 +875,7 @@ export function LogFeed({ file, showSvc, lineFilter, onStatus, paused, follow, s
 
   return (
     <RawLineProvider value={getRawLine}>
+    <FeedIdentityProvider value={feedIdentity}>
     <MessageProvenanceProvider value={provenanceLookup}>
     <div className="flex min-h-0 flex-1 flex-col">
     {/* The pill anchors to the scroller wrapper — NOT the pane column — so the
@@ -1051,6 +1069,7 @@ export function LogFeed({ file, showSvc, lineFilter, onStatus, paused, follow, s
               visibleItems.map(({ anchorKey, key, item, responseDurationMs }, visibleIndex) => {
                 const answer = speakableAnswer(feed.items, visibleStartIndex + visibleIndex);
                 const speakText = answer?.firstIndex === visibleStartIndex + visibleIndex ? answer.text : undefined;
+                const turnHead = isTurnHead(feed.items, visibleStartIndex + visibleIndex);
                 return (
                   /* Session-stable keys: a row keeps its DOM node while the
                      window slides. Compact panes live on the zoomable canvas:
@@ -1064,7 +1083,7 @@ export function LogFeed({ file, showSvc, lineFilter, onStatus, paused, follow, s
                     data-feed-source-id={"sourceId" in item ? item.sourceId : undefined}
                     className={compact ? "feed-cv" : undefined}
                   >
-                    <FeedItem item={item} speakText={speakText} />
+                    <FeedItem item={item} speakText={speakText} turnHead={turnHead} />
                     {responseDurationMs !== undefined ? <ResponseDuration durationMs={responseDurationMs} /> : null}
                   </div>
                 );
@@ -1172,6 +1191,7 @@ export function LogFeed({ file, showSvc, lineFilter, onStatus, paused, follow, s
     ) : null}
     </div>
     </MessageProvenanceProvider>
+    </FeedIdentityProvider>
     </RawLineProvider>
   );
 }

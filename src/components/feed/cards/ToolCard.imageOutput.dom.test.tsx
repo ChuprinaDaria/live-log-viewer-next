@@ -209,15 +209,21 @@ test("phone at 390 px: a folded run of image Reads opens into readable blocks wh
   expect(fold.textContent).toContain("Read ×3");
   expect(chipOf(host)).toBeNull();
   expect(host.innerHTML).not.toContain(FRAME_DATA);
-  /* Opening the run shows every picture as a chip and still decodes none of them. */
+  /* Opening the run lists collapsed rows (TZ-UI.md stage 1, two-level tap);
+     nothing of the pictures is in the DOM yet. */
   click(fold);
+  expect(host.innerHTML).not.toContain(FRAME_DATA);
+  const rows = [...host.querySelectorAll("ol details summary")];
+  expect(rows).toHaveLength(3);
+  /* Opening one row shows ITS picture as a chip and still decodes nothing. */
+  click(rows[1]!);
   const chips = [...host.querySelectorAll("button")].filter((button) => button.textContent?.includes(en("common.show")));
-  expect(chips).toHaveLength(3);
+  expect(chips).toHaveLength(1);
   expect(chips.every((chip) => chip.getAttribute("class")?.includes("min-h-11"))).toBe(true);
   expect(host.querySelectorAll("img")).toHaveLength(0);
   expect(host.innerHTML).not.toContain(FRAME_DATA);
   /* One tap decodes exactly that picture, width-bounded so the 390 px page never scrolls sideways. */
-  click(chips[1]!);
+  click(chips[0]!);
   const imgs = host.querySelectorAll("img");
   expect(imgs).toHaveLength(1);
   expect(imgs[0]!.getAttribute("src")).toBe(FRAME_URI);

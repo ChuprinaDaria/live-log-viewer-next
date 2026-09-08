@@ -4,10 +4,12 @@ import type { ReactElement } from "react";
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 
+import { MOBILE_LAYOUT_QUERY } from "@/lib/attention/eligibility";
 import { en } from "@/lib/i18n/en";
 import { translate } from "@/lib/i18n";
 
 import { FeedItem } from "./FeedItem";
+import { FeedIdentityProvider } from "./feedIdentity";
 import type { Item, ToolEvent } from "./parse";
 
 /*
@@ -23,8 +25,11 @@ import type { Item, ToolEvent } from "./parse";
 let narrowViewport = false;
 
 const normalize = (query: string) => String(query).replace(/\s+/g, "");
+/* The stub answers the layout query the hook actually asks (MOBILE_LAYOUT_QUERY
+   from attention eligibility) — a literal here silently went stale when the
+   query moved off 767px and turned every phone test into a desktop render. */
 const matchMediaStub = (query: string) => ({
-  matches: normalize(query) === "(max-width:767px)" ? narrowViewport : false,
+  matches: normalize(query) === normalize(MOBILE_LAYOUT_QUERY) ? narrowViewport : false,
   media: String(query),
   onchange: null,
   addEventListener() {},
@@ -121,27 +126,31 @@ test("phone: an agent message has no avatar column and its content reads at 15 p
   expect(host.querySelector("[data-tts-body]")).toBeTruthy();
 });
 
-test("phone: the message header is a 44 px target above the prose, never over it", () => {
+test("phone: the turn header is a 44 px target above the prose, never over it", () => {
   narrowViewport = true;
-  const host = mount(<FeedItem item={prose()} speakText="The projection lives in one module." />);
+  const host = mount(<FeedItem item={prose()} speakText="The projection lives in one module." turnHead />);
   const message = host.querySelector('[data-mobile-message="agent"]')!;
+  const wrapper = host.querySelector("[data-mobile-turn-header]")!;
   const header = host.querySelector("[data-mobile-message-header]")!;
   /* 44 px tall, the whole width, and the first thing in the message. */
   expect(classOf(header)).toContain("h-11");
   expect(classOf(header)).toContain("w-full");
-  expect(message.firstElementChild).toBe(header);
+  expect(message.firstElementChild).toBe(wrapper);
+  expect(wrapper.firstElementChild).toBe(header);
   /* The prose starts under it: next sibling, in flow, no negative margin
      anywhere on the message that could pull the text up into the header. */
-  expect(header.nextElementSibling).toBe(host.querySelector("[data-tts-message]"));
-  for (const el of [message, header, host.querySelector("[data-tts-message]")!]) {
+  expect(wrapper.nextElementSibling).toBe(host.querySelector("[data-tts-message]"));
+  for (const el of [message, wrapper, header, host.querySelector("[data-tts-message]")!]) {
     expect(classOf(el)).not.toMatch(/(^|\s)-m[tby]?-/);
     expect(classOf(el)).not.toContain("absolute");
   }
   /* No vertical margin of its own: the header's height is the gap. */
   expect(classOf(message)).not.toContain("my-3");
-  /* The engine mark is the one avatar left: a 16 px glyph beside the name. */
+  /* The engine mark is the one avatar left: a 16 px glyph in the ENGINE color
+     — the single spot of color the stage-1 header allows. */
   const glyph = header.querySelector("svg");
   expect(classOf(glyph)).toContain("h-4");
+  expect(classOf(glyph)).toContain("text-claude");
   expect(header.textContent).toContain("Claude");
   /* The phone's clock is HH:MM (README §5): no seconds anywhere on the line. */
   expect(header.textContent).toContain("13:43");
@@ -153,6 +162,42 @@ test("phone: the message header is a 44 px target above the prose, never over it
   expect(actions).toBeTruthy();
   expect(classOf(actions.parentElement)).toContain("ml-auto");
   expect(host.querySelector("[data-tts-trigger]")).toBeNull();
+  /* No session identity in scope → no meta row at all (the honest-data rule:
+     absent field, absent element). */
+  expect(host.querySelector("[data-mobile-turn-meta]")).toBeNull();
+});
+
+test("phone: a continuation block repeats no glyph and no engine name — time and actions only", () => {
+  narrowViewport = true;
+  const host = mount(<FeedItem item={prose()} />);
+  const header = host.querySelector("[data-mobile-message-header]")!;
+  expect(host.querySelector("[data-mobile-turn-header]")).toBeNull();
+  expect(header.querySelector(".text-claude")).toBeNull();
+  expect(header.textContent).not.toContain("Claude");
+  expect(header.textContent).toContain("13:43");
+  expect(header.querySelector(`button[aria-label="${en["feed.copyMd"]}"]`)).toBeTruthy();
+});
+
+test("phone: the meta row shows exactly the session fields that exist, model as a chip", () => {
+  narrowViewport = true;
+  const host = mount(
+    <FeedIdentityProvider value={{ engine: "claude", agentName: "reviewer-lane-4", model: "opus", account: "acct-a" }}>
+      <FeedItem item={prose()} turnHead />
+    </FeedIdentityProvider>,
+  );
+  const header = host.querySelector("[data-mobile-message-header]")!;
+  /* Row 1 is taken by the agent's own name… */
+  expect(header.textContent).toContain("reviewer-lane-4");
+  /* …so row 2 names the engine, then the model chip and the account, smaller
+     and muted (TZ: "акаунт дрібнішим шрифтом, вторинним кольором"). */
+  const meta = host.querySelector("[data-mobile-turn-meta]")!;
+  expect(classOf(meta)).toContain("text-caption");
+  expect(classOf(meta)).toContain("text-muted");
+  expect(meta.textContent).toContain("Claude");
+  expect(meta.textContent).toContain("opus");
+  expect(meta.textContent).toContain("acct-a");
+  const chip = meta.querySelector(".bg-sunken")!;
+  expect(chip.textContent).toBe("opus");
 });
 
 test("phone: the user keeps the bubble at 86% and 15 px", () => {

@@ -44,7 +44,7 @@ export type ModelTint = { color: string; soft: string };
    (matching the old opaque softs) and a subtle dark tint on the dark theme, with
    no second per-theme literal (design doc §1.5). */
 const ENGINE_COLORS: Record<string, string> = {
-  codex: "#2f6fd0",
+  codex: "#0d8a72",
   claude: "#d97757",
   openclaw: "#b3407a",
 };

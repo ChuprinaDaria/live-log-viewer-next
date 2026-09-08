@@ -103,9 +103,11 @@
   --color-info: #0d9488; /* link / handoff teal */
   --color-info-soft: #e5f5f3;
 
-  /* Engine identity tints (kept; model-family shifts live in utils.ts). */
-  --color-codex: #2f6fd0;
-  --color-codex-soft: #e8f0fb;
+  /* Engine identity tints (kept; model-family shifts live in utils.ts).
+     Codex is teal per TZ-UI.md; 4.29:1 on white, so it colors glyphs and
+     fills only — never small text (the 4.5:1 floor). */
+  --color-codex: #0d8a72;
+  --color-codex-soft: #e6f4f0;
   --color-claude: #d97757;
   --color-claude-soft: #faeee9;
   --color-openclaw: #b3407a;
@@ -185,8 +187,8 @@
     --color-info: #2dd4bf;
     --color-info-soft: #10241f;
 
-    --color-codex: #6ba2e8;
-    --color-codex-soft: #152238;
+    --color-codex: #4cc4a7;
+    --color-codex-soft: #123029;
     --color-claude: #e08a6d;
     --color-claude-soft: #2b1c15;
     --color-openclaw: #e888b6;
@@ -242,8 +244,8 @@
   --color-info: #2dd4bf;
   --color-info-soft: #10241f;
 
-  --color-codex: #6ba2e8;
-  --color-codex-soft: #152238;
+  --color-codex: #4cc4a7;
+  --color-codex-soft: #123029;
   --color-claude: #e08a6d;
   --color-claude-soft: #2b1c15;
   --color-openclaw: #e888b6;
