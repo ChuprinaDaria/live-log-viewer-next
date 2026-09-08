@@ -137,6 +137,43 @@ export async function shareSecret(
   }
 }
 
+/** What the phone sends to add a key. The value is here and only here: it is
+    read out of the DOM at submit, handed to `fetch`, and never assigned to a
+    field of anything that outlives the call. */
+export interface SecretAddInput {
+  secret: string;
+  value: string;
+  provider: string;
+  label?: string;
+  envName?: string;
+  kind?: string;
+  owner?: string;
+  firm?: string;
+  project?: string;
+  purpose?: string;
+  tags?: string[];
+  replace?: boolean;
+}
+
+/** Add a key: the console writes the value into a private 0600 file and puts
+    only its ADDRESS into the vault. Resolves with the console's own refusal
+    text, or null when the key is in. Nothing of the value is kept here — not
+    in a variable that outlives this call, and not in the answer, which is the
+    inventory row. */
+export async function addSecret(input: SecretAddInput): Promise<string | null> {
+  try {
+    const response = await fetch("/api/secrets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "add", ...input }),
+    });
+    const body = await response.json() as { error?: string };
+    return response.ok ? null : (body.error ?? `HTTP ${response.status}`);
+  } catch (cause) {
+    return cause instanceof Error ? cause.message : String(cause);
+  }
+}
+
 /** Where a key physically lives, in one line: machine, file, variable. This
     is what the store always knew and the screen never said. */
 export function secretWhere(row: SecretView): string {
