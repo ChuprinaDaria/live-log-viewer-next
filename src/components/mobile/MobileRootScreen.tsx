@@ -9,6 +9,7 @@ import { useLocale } from "@/lib/i18n";
 import type { FileEntry } from "@/lib/types";
 
 import { MobileHqRoom } from "./MobileHqRoom";
+import { MobileFirmsScreen } from "./MobileFirmsScreen";
 import { MobileRolesScreen } from "./MobileRolesScreen";
 import { MobileSecretsScreen } from "./MobileSecretsScreen";
 import { MobileBarTitle, MobileShell, type MobileShellHost, type SheetRenderer } from "./MobileShell";
@@ -38,6 +39,7 @@ export function renderMobileRootScreen(kind: MobileScreenKind, ctx: MobileRootCo
     case "orchestrator": return <MobileHqRoom files={ctx.files} host={ctx.host} renderSheet={ctx.renderSheet} />;
     case "secrets": return <MobileSecretsScreen host={ctx.host} renderSheet={ctx.renderSheet} />;
     case "roles": return <MobileRolesScreen host={ctx.host} renderSheet={ctx.renderSheet} />;
+    case "firms": return <MobileFirmsScreen host={ctx.host} renderSheet={ctx.renderSheet} />;
     case "mcp": return <MobileNotBuiltScreen kind={kind} ctx={ctx} />;
     default: return null;
   }
