@@ -37,13 +37,26 @@ Object.assign(globalThis, {
 });
 
 const AT = (second: number) => `2026-09-02T10:00:${String(second).padStart(2, "0")}.000Z`;
-/* Two assistant records with nothing operator-side between them: one answer as
-   the feed sees it, two `prose` items. */
-const TRANSCRIPT = [
-  { type: "user", uuid: "u-ask", timestamp: AT(0), message: { role: "user", content: [{ type: "text", text: "Що по флоту?" }] } },
-  { type: "assistant", uuid: "a-1", timestamp: AT(1), message: { role: "assistant", content: [{ type: "text", text: "Перший абзац відповіді." }] } },
-  { type: "assistant", uuid: "a-2", timestamp: AT(2), message: { role: "assistant", content: [{ type: "text", text: "Другий абзац тієї самої відповіді." }] } },
-].map((line) => JSON.stringify(line));
+
+const ask = (uuid: string, second: number, text: string) =>
+  JSON.stringify({ type: "user", uuid, timestamp: AT(second), message: { role: "user", content: [{ type: "text", text }] } });
+const say = (uuid: string, second: number, text: string) =>
+  JSON.stringify({ type: "assistant", uuid, timestamp: AT(second), message: { role: "assistant", content: [{ type: "text", text }] } });
+/** A tool call the way HQ opens most of its answers — a lookup before words. */
+const call = (uuid: string, second: number, id: string) =>
+  JSON.stringify({
+    type: "assistant", uuid, timestamp: AT(second),
+    message: { role: "assistant", content: [{ type: "tool_use", id, name: "Bash", input: { command: "ls" } }] },
+  });
+
+/* One turn that opens with a tool and then speaks twice: one answer as the
+   feed sees it, one tool item and two `prose` items. */
+let TRANSCRIPT = [
+  ask("u-ask", 0, "Що по флоту?"),
+  call("a-0", 1, "toolu_1"),
+  say("a-1", 2, "Перший абзац відповіді."),
+  say("a-2", 3, "Другий абзац тієї самої відповіді."),
+];
 
 const previousFetch = globalThis.fetch;
 globalThis.fetch = (async () => ({ ok: false, status: 404, json: async () => ({}) } as Response)) as unknown as typeof fetch;
@@ -74,7 +87,12 @@ mock.module("@/hooks/useToolActivityCues", () => ({ ...actualToolCues, useToolAc
 const { LogFeed } = await import("./LogFeed");
 
 const roots = new Set<Root>();
-beforeEach(() => { setLocale("uk"); dom.sessionStorage.clear(); });
+const DEFAULT_TRANSCRIPT = TRANSCRIPT;
+beforeEach(() => {
+  setLocale("uk");
+  TRANSCRIPT = DEFAULT_TRANSCRIPT;
+  dom.sessionStorage.clear();
+});
 afterEach(() => {
   for (const root of roots) flushSync(() => root.unmount());
   roots.clear();
@@ -121,12 +139,33 @@ function render(props: { bare: boolean; signed: boolean }): HTMLElement {
 
 const rows = (host: HTMLElement) => [...host.querySelectorAll("[data-feed-signature]")];
 
-test("one answer split into two blocks is signed exactly once", () => {
+test("a turn that opens with a tool is signed once, over its first words", () => {
   const host = render({ bare: true, signed: true });
-  expect(host.querySelectorAll('[data-feed-kind="prose"]').length).toBe(2);
+  const prose = [...host.querySelectorAll('[data-feed-kind="prose"]')];
+  expect(prose).toHaveLength(2);
+  /* The turn really does open with the tool row — that is the case this rule
+     exists for, so the fixture must actually contain one. */
+  expect(host.querySelectorAll('[data-feed-kind="tool"], [data-feed-kind="cmd-group"]').length).toBeGreaterThan(0);
   const signed = rows(host);
   expect(signed).toHaveLength(1);
   expect(signed[0]!.textContent).toContain("Дітріх");
+  /* On the FIRST prose block, not on the tool row above it and not on the
+     second paragraph. */
+  expect(prose[0]!.contains(signed[0]! as unknown as Node)).toBe(true);
+  expect(prose[0]!.textContent).toContain("Перший абзац");
+});
+
+test("two turns are signed twice, once each", () => {
+  TRANSCRIPT = [
+    ask("u-1", 0, "Що по флоту?"),
+    call("a-0", 1, "toolu_1"),
+    say("a-1", 2, "Перша відповідь."),
+    ask("u-2", 3, "А далі?"),
+    say("a-2", 4, "Друга відповідь."),
+    say("a-3", 5, "Її продовження."),
+  ];
+  const host = render({ bare: true, signed: true });
+  expect(rows(host)).toHaveLength(2);
 });
 
 test("a feed with no signature is never signed", () => {
