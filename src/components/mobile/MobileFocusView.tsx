@@ -30,6 +30,7 @@ import { draftWorkingDirectory } from "@/components/projectModel";
 import { cleanTitle, engineBadge, effortTitle } from "@/components/utils";
 
 import { compactPipelineLayoutFlows } from "@/components/pipelines/pipelineModel";
+import { DEFAULT_ACCOUNT_ID, accountIdFromPath } from "@/lib/accounts/badge";
 import { conversationIdentity } from "@/lib/accounts/identity";
 import { useFavorites } from "@/components/favorites/FavoritesContext";
 import { useOrchestratorSeat } from "@/components/orchestrator/useOrchestratorSeat";
@@ -750,6 +751,7 @@ export function ChatBarTitle({ file, offline, stage, bump, renamed = null }: { f
   const model = file.model
     ? file.effort ? t("mobile2.chat.identity", { model: file.model, effort: file.effort }) : file.model
     : badge.label;
+  const account = accountIdFromPath(file.path);
   return (
     <span
       data-mobile2-chat-title
@@ -768,6 +770,17 @@ export function ChatBarTitle({ file, offline, stage, bump, renamed = null }: { f
             <span aria-hidden className="shrink-0 text-muted">·</span>
             <ChatEngineMark file={file} />
             <span className="min-w-0 truncate" title={effortTitle(file)}>{model}</span>
+            {/* Which subscription is paying for this one (TZ-UI: "акаунт,
+                дрібнішим шрифтом"). Printed as the transcript spells it rather
+                than reconstructed into an address: a dot-for-dash guess would
+                be a plausible-looking wrong answer, and the spec is explicit
+                that invented data is worse than none. Gives way before the
+                state phrase, like the model does. */}
+            {account === DEFAULT_ACCOUNT_ID ? null : (
+              <span data-mobile2-chat-account className="min-w-0 truncate text-caption font-normal text-muted" title={account}>
+                {account}
+              </span>
+            )}
             {stage?.current ? (
               <>
                 <span aria-hidden className="shrink-0 text-muted">·</span>
