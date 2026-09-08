@@ -119,8 +119,16 @@ function preserveDurableHiddenSpellings(
   const hiddenCanonicalPaths = new Set(
     next.prefs.hidden.map((item) => resolvePath(item, aliases)),
   );
+  /* A spelling the operator was already holding is worth restoring; a spelling
+     this very mutation has just aliased away is not. The second kind resolves
+     to the canonical path anyway, so keeping it adds nothing but a row — one
+     per migration generation, forever, which is how a drained two-card board
+     kept growing. The distinction is whose decision it was: an alias that
+     existed before this mutation means the spelling was held deliberately. */
+  const priorAliases = aliasesOf(previous);
+  const justAliased = (item: string) => aliases[item] !== undefined && priorAliases[item] === undefined;
   const preserved = previous.prefs.hidden.filter((item) => (
-    hiddenCanonicalPaths.has(resolvePath(item, aliases))
+    !justAliased(item) && hiddenCanonicalPaths.has(resolvePath(item, aliases))
   ));
   return {
     ...next,
