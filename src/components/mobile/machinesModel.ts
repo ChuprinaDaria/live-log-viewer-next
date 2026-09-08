@@ -48,6 +48,9 @@ export interface SpawnInput {
   prompt?: string;
   name?: string;
   cwd?: string;
+  /** Pull (or clone) fresh code before starting, instead of reusing what is
+      already checked out. */
+  fresh?: boolean;
 }
 
 /** A tmux session as the machine reports it. */
@@ -76,6 +79,9 @@ export interface SpawnResult {
   attach: string;
   prompt_delivered?: boolean;
   note?: string;
+  /** What the console did about the code before starting, when `fresh` asked
+      for it: `{ action: "pulled" }`, `{ action: "cloned" }`, and so on. */
+  code?: { action: string; detail?: string };
 }
 
 export function useMachines(): MachinesRead {

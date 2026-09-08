@@ -77,7 +77,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 /**
  * POST /api/machines
  *
- *   { host, project, engine?, account?, model?, prompt?, name?, cwd? }
+ *   { host, project, engine?, account?, model?, fresh?, prompt?, name?, cwd? }
  *       start a session on that machine
  *
  *   { session, host, project, from_host?, ... }
@@ -119,6 +119,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     model: text(body.model),
     name: text(body.name),
     cwd: text(body.cwd),
+    /* `session_spawn` and `session_transfer` both read this flag; the
+       transfer branch below spreads `params` verbatim (minus `host`), so one
+       line here covers both verbs. */
+    fresh: body.fresh === true,
   };
   const prompt = typeof body.prompt === "string" && body.prompt.trim() ? body.prompt : undefined;
 
