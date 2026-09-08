@@ -1,6 +1,6 @@
 "use client";
 
-import { Building2, Info, MessagesSquare, ShieldCheck, SlidersHorizontal, UserRound } from "lucide-react";
+import { Building2, Info, MessagesSquare, Server, ShieldCheck, SlidersHorizontal, UserRound } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { KeepAwakeMenuRow } from "@/components/KeepAwakeControl";
@@ -12,6 +12,7 @@ import { MobileHqRoom } from "./MobileHqRoom";
 import { MobileFirmsScreen } from "./MobileFirmsScreen";
 import { MobileMcpScreen } from "./MobileMcpScreen";
 import { MobileChannelsScreen } from "./MobileChannelsScreen";
+import { MobileMachinesScreen } from "./MobileMachinesScreen";
 import { MobilePermissionsScreen } from "./MobilePermissionsScreen";
 import { MobileRolesScreen } from "./MobileRolesScreen";
 import { MobileSecretsScreen } from "./MobileSecretsScreen";
@@ -45,6 +46,7 @@ export function renderMobileRootScreen(kind: MobileScreenKind, ctx: MobileRootCo
     case "firms": return <MobileFirmsScreen host={ctx.host} renderSheet={ctx.renderSheet} />;
     case "permissions": return <MobilePermissionsScreen host={ctx.host} renderSheet={ctx.renderSheet} />;
     case "channels": return <MobileChannelsScreen host={ctx.host} renderSheet={ctx.renderSheet} />;
+    case "machines": return <MobileMachinesScreen host={ctx.host} renderSheet={ctx.renderSheet} />;
     case "mcp": return <MobileMcpScreen host={ctx.host} renderSheet={ctx.renderSheet} />;
     default: return null;
   }
@@ -66,6 +68,7 @@ function MobileSettingsScreen({ ctx }: { ctx: MobileRootContext }) {
         {/* The configuration console's own pages: the role catalog and the org
             layer, both edited through fleetctl rather than beside it. */}
         <div className={card}>
+          <MobileSheetRow icon={<Server className="h-[18px] w-[18px]" aria-hidden />} label={t("machines.title")} attrs={{ "data-mobile2-go": "machines" }} onSelect={() => nav.push({ kind: "machines" })} />
           <MobileSheetRow icon={<SlidersHorizontal className="h-[18px] w-[18px]" aria-hidden />} label={t("roles.title")} attrs={{ "data-mobile2-go": "roles" }} onSelect={() => nav.push({ kind: "roles" })} />
           <MobileSheetRow icon={<Building2 className="h-[18px] w-[18px]" aria-hidden />} label={t("firms.title")} attrs={{ "data-mobile2-go": "firms" }} onSelect={() => nav.push({ kind: "firms" })} />
           <MobileSheetRow icon={<ShieldCheck className="h-[18px] w-[18px]" aria-hidden />} label={t("perms.title")} attrs={{ "data-mobile2-go": "permissions" }} onSelect={() => nav.push({ kind: "permissions" })} />
