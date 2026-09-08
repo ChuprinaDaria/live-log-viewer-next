@@ -10,6 +10,7 @@ import type { FileEntry } from "@/lib/types";
 
 import { MobileHqRoom } from "./MobileHqRoom";
 import { MobileFirmsScreen } from "./MobileFirmsScreen";
+import { MobileMcpScreen } from "./MobileMcpScreen";
 import { MobileRolesScreen } from "./MobileRolesScreen";
 import { MobileSecretsScreen } from "./MobileSecretsScreen";
 import { MobileBarTitle, MobileShell, type MobileShellHost, type SheetRenderer } from "./MobileShell";
@@ -40,7 +41,7 @@ export function renderMobileRootScreen(kind: MobileScreenKind, ctx: MobileRootCo
     case "secrets": return <MobileSecretsScreen host={ctx.host} renderSheet={ctx.renderSheet} />;
     case "roles": return <MobileRolesScreen host={ctx.host} renderSheet={ctx.renderSheet} />;
     case "firms": return <MobileFirmsScreen host={ctx.host} renderSheet={ctx.renderSheet} />;
-    case "mcp": return <MobileNotBuiltScreen kind={kind} ctx={ctx} />;
+    case "mcp": return <MobileMcpScreen host={ctx.host} renderSheet={ctx.renderSheet} />;
     default: return null;
   }
 }
@@ -76,15 +77,3 @@ function MobileSettingsScreen({ ctx }: { ctx: MobileRootContext }) {
   );
 }
 
-function MobileNotBuiltScreen({ kind, ctx }: { kind: "mcp"; ctx: MobileRootContext }) {
-  const { t } = useLocale();
-  const title = t("mobile2.tabs.mcp");
-  const sentence = t("mobile2.soon.mcp");
-  return (
-    <MobileShell screen={kind} title={<MobileBarTitle>{title}</MobileBarTitle>} host={ctx.host} renderSheet={ctx.renderSheet}>
-      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 px-6 text-center" data-mobile2-not-built={kind}>
-        <p className="max-w-[280px] text-body leading-relaxed text-secondary">{sentence}</p>
-      </div>
-    </MobileShell>
-  );
-}
