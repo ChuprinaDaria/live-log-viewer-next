@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRightLeft, Bot, Boxes, ChevronRight, CornerDownRight, Crown, FoldVertical, GitFork, Info, ListTree, PencilLine, RotateCw, Search, Square, SquareTerminal, X } from "lucide-react";
+import { ArrowRightLeft, Bot, Boxes, ChevronRight, CornerDownRight, Crown, FoldVertical, GitFork, Info, ListTree, PencilLine, RotateCw, Search, Share2, Square, SquareTerminal, X } from "lucide-react";
 
 import { useLocale } from "@/lib/i18n";
 import { cleanTitle } from "@/lib/title";
@@ -52,6 +52,7 @@ export function MobileConversationMenu({
   onRename,
   onToggleCrown,
   onHandoff,
+  onTransfer,
   onOpenHost,
   subagents = [],
   onOpenSubagent,
@@ -82,6 +83,8 @@ export function MobileConversationMenu({
   /** Drops a draft that continues this conversation (§4.2 «Hand off»). The
       board owns the draft, so the row only asks for it. */
   onHandoff?: () => void;
+  /** Drops a draft whose first prompt is sessionmem's portable brief (TZ-UI.md: transfer). */
+  onTransfer?: () => void;
   onOpenHost: () => void;
   /** This conversation's spawned children, as in-flow rows (README §6: the
       phone has no badge rail over the feed — #1439). Each row opens the
@@ -233,6 +236,14 @@ export function MobileConversationMenu({
               label={t("mobile2.chat.menuHandoff")}
               onSelect={act(onHandoff)}
               attrs={{ "data-mobile2-menu-row": "handoff" }}
+            />
+          ) : null}
+          {onTransfer ? (
+            <MobileSheetRow
+              icon={<Share2 className="h-[18px] w-[18px]" aria-hidden />}
+              label={t("mobile2.chat.menuTransfer")}
+              onSelect={act(onTransfer)}
+              attrs={{ "data-mobile2-menu-row": "transfer" }}
             />
           ) : null}
           {/* The supersedence chain (#383). On the desktop it is a chip in the

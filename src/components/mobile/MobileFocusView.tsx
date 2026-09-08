@@ -145,6 +145,8 @@ interface Props {
   /** Drops a draft that continues a conversation, for the menu's «Hand off»
       row (§4.2). The board owns the draft, so the screen only asks for it. */
   onHandoff?: (file: FileEntry) => void;
+  /** Drops a draft whose first prompt is sessionmem's portable brief of this conversation. */
+  onTransfer?: (file: FileEntry) => void;
   /** In-flow alert the project board renders above the leaf. */
   alert?: React.ReactNode;
   /** Engine-native subagent tray surface (issue #142). The DOCKED tray is gone
@@ -176,7 +178,7 @@ interface Props {
  * not loaded — the same shell renders the board leaf, which lane 2 fills with
  * the board list.
  */
-export function MobileFocusView({ project, projectName, groups, manual, files, flows, reviewGroups = [], pipelines, surfacePipelines = [], tasks, sheetTasks, drafts, favorites, isolatedManualPaths = EMPTY_PATHS, loaded, focus, onSelect, onClose, onDraftClose, onDraftSpawned, onConversationOpened, shellHost = null, renderBoardSheet, onOpenSearch, hostTaskCount = 0, onHandoff, alert }: Props) {
+export function MobileFocusView({ project, projectName, groups, manual, files, flows, reviewGroups = [], pipelines, surfacePipelines = [], tasks, sheetTasks, drafts, favorites, isolatedManualPaths = EMPTY_PATHS, loaded, focus, onSelect, onClose, onDraftClose, onDraftSpawned, onConversationOpened, shellHost = null, renderBoardSheet, onOpenSearch, hostTaskCount = 0, onHandoff, onTransfer, alert }: Props) {
   const { t } = useLocale();
   /* The screen is mounted INSIDE the project board's shell (lane 2 pushes it
      when a conversation reaches the top of the stack), so the badge, the
@@ -558,6 +560,7 @@ export function MobileFocusView({ project, projectName, groups, manual, files, f
           onRename={() => setRenameToken((token) => token + 1)}
           onToggleCrown={favoritesApi ? () => favoritesApi.toggle(conversationIdentity(activeFile)) : undefined}
           onHandoff={onHandoff ? () => onHandoff(activeFile) : undefined}
+          onTransfer={onTransfer ? () => onTransfer(activeFile) : undefined}
           onOpenHost={() => nav.openSheet("host")}
           subagents={subagents}
           onOpenSubagent={(path) => {

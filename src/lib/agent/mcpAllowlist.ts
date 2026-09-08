@@ -39,7 +39,15 @@ export const DEFAULT_SPAWN_MCP_SERVERS: readonly string[] = Object.freeze(["view
     the baseline every session holds, not a grant. Adding a name here grants
     it to the operator-root session class by default, so a name belongs here
     only once its credential boundary and revocation path exist. */
-export const GRANTABLE_MCP_SERVERS: readonly string[] = Object.freeze(["viewer", "telegram"]);
+export const GRANTABLE_MCP_SERVERS: readonly string[] = Object.freeze(["viewer", "telegram", ...operatorGrantedMcpServers()]);
+
+/** The operator's own extension of the bound, for a single-operator box:
+    `LLV_MCP_GRANT=sessionmem,jeeves-rag` grants those registered servers to
+    root sessions alongside the packaged ones. Absent, the bound is unchanged. */
+function operatorGrantedMcpServers(): string[] {
+  const raw = process.env.LLV_MCP_GRANT ?? "";
+  return [...new Set(raw.split(",").map((name) => name.trim()).filter((name) => name && name !== "viewer" && name !== "telegram"))];
+}
 
 /** What an operator-launched root session receives when it does not opt out.
     The operator's own root conversation is the session class the grantable

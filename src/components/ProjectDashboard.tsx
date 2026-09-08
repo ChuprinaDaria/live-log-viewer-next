@@ -1272,6 +1272,35 @@ function ProjectDashboardView({
     pendingFocusRef.current = "draft::" + id;
   };
 
+  /* «Перенести» (TZ-UI.md: session transfer): sessionmem writes a portable
+     brief of the conversation, and it becomes the first prompt of a fresh
+     draft — the operator picks the engine and the account there, so the
+     brief travels to Codex or to another profile without the transcript. */
+  const addTransferDraft = async (file: FileEntry) => {
+    onUserNavigate?.();
+    let answer: { brief?: string; error?: string } = {};
+    try {
+      const res = await fetch("/api/sessionmem/brief", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: file.path, target: file.engine === "codex" ? "codex" : "claude" }),
+      });
+      answer = await res.json() as { brief?: string; error?: string };
+    } catch {
+      answer = { error: "network" };
+    }
+    if (!answer.brief) {
+      showReceipt(t("transfer.failed", { reason: answer.error ?? "?" }));
+      return;
+    }
+    const id = newDraftId();
+    setDraftText(id, answer.brief);
+    setDraftCwd(id, file.cwd?.trim() || initialDraftCwd);
+    persistDrafts([...drafts, id]);
+    pendingFocusRef.current = "draft::" + id;
+    showReceipt(t("transfer.ready"));
+  };
+
   const removeDraft = (id: string) => {
     if (isWorkflowDraftId(id)) clearWorkflowDraftStorage(id);
     else clearDraftStorage(id);
@@ -2232,6 +2261,7 @@ function ProjectDashboardView({
                      host sheet's handoff handle — the last of the retired
                      shelf's contents — went with lane 10. */
                   onHandoff={addHandoffDraft}
+                  onTransfer={(file) => { void addTransferDraft(file); }}
                   trayApi={trayApi}
                 />
               ) : (
