@@ -161,3 +161,23 @@ test("a repository joins by its remote, whatever path it sits at on this machine
   expect(without?.project).toBe(withSuffix!.project);
   expect(orgAttributionFor(bridge, withSuffix!.project, null)?.project).toBe("viewer");
 });
+
+test("one project claims its checkouts on every machine it lives on", async () => {
+  /* The scanner cannot see a repository it holds no checkout of: reading a
+     transcript that ran elsewhere it hashes the cwd string, and that hash is
+     per-path. So a project needs to name each path it occupies. */
+  seedCache([
+    {
+      firm: "bluebird", firmName: "Blue Bird", project: "hub", projectName: "Hub",
+      path: "/srv/host-a/logger/hub", paths: ["/srv/host-b/projects/hub"], via: "path",
+    },
+  ]);
+
+  const bridge = await loadOrgBridge({ force: true });
+  const { directoryProjectId } = await import("./identity");
+
+  for (const where of ["/srv/host-a/logger/hub", "/srv/host-b/projects/hub"]) {
+    expect(orgAttributionFor(bridge, directoryProjectId(where), null)?.project).toBe("hub");
+    expect(orgAttributionFor(bridge, null, `${where}/src`)?.project).toBe("hub");
+  }
+});

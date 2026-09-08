@@ -44,6 +44,8 @@ export interface OrgAttribution {
   path: string;
   /** Its repository, when it has one — machine-independent, unlike the path. */
   repo?: string;
+  /** Where it sits on other machines. */
+  paths?: string[];
   /** How the join was made — useful when a row looks wrong. */
   via: "board-id" | "path";
 }
@@ -71,6 +73,13 @@ interface ConsoleProject {
       is not, so this is what joins a checkout on one host to the same project
       seen from another. */
   repo?: string | null;
+  /** Where the same project sits on OTHER machines.
+   *
+   * Needed because the scanner cannot see a repository it has no checkout of:
+   * reading a transcript that ran elsewhere, it falls back to hashing the cwd
+   * string, and that hash is per-path. The repo answers for hosts that have
+   * the checkout; this answers for the rest. */
+  paths?: string[] | null;
 }
 
 const CACHE_FILE = "org-bridge.json";
@@ -103,8 +112,9 @@ function claudeSlugForPath(resolvedPath: string): string {
  *  - the Claude folder slug, which is what the scanner falls back to when the
  *    transcript names no cwd. Without this one the join silently covers only
  *    sessions whose cwd survived, and those are the minority. */
-function boardIdsForPath(projectPath: string, repo?: string | null): string[] {
+function boardIdsForPath(projectPaths: string | string[], repo?: string | null): string[] {
   const ids: string[] = [];
+  const every = (Array.isArray(projectPaths) ? projectPaths : [projectPaths]).filter(Boolean);
   /* The repository identity, derived from the remote rather than from disk.
      This is the one that works across machines: the checkout may live at
      one path on this host and another on the next, and both mint this. */
@@ -112,14 +122,16 @@ function boardIdsForPath(projectPath: string, repo?: string | null): string[] {
     const identity = projectIdentityFromRemote(repo.trim());
     if (identity) ids.push(identity.project);
   }
-  const resolved = path.resolve(projectPath);
-  const repositoryRoot = repositoryRootForPath(resolved);
-  if (repositoryRoot) {
-    const identity = projectIdentityFromRepositoryRoot(repositoryRoot);
-    if (identity) ids.push(identity.project);
+  for (const candidate of every) {
+    const resolved = path.resolve(candidate);
+    const repositoryRoot = repositoryRootForPath(resolved);
+    if (repositoryRoot) {
+      const identity = projectIdentityFromRepositoryRoot(repositoryRoot);
+      if (identity) ids.push(identity.project);
+    }
+    ids.push(directoryProjectId(resolved));
+    ids.push(claudeSlugForPath(resolved));
   }
-  ids.push(directoryProjectId(resolved));
-  ids.push(claudeSlugForPath(resolved));
   return ids;
 }
 
@@ -137,17 +149,21 @@ function buildBridge(firms: ConsoleFirm[], projects: ConsoleProject[]): OrgBridg
       projectName: project.name?.trim() || project.id,
       path: projectPath,
       repo: project.repo?.trim() || "",
+      paths: (project.paths ?? []).filter((item) => item?.trim()),
       via: "board-id",
     };
-    if (!projectPath && !project.repo?.trim()) continue;
+    const everyPath = [projectPath, ...(project.paths ?? [])].filter((item) => item?.trim());
+    if (everyPath.length === 0 && !project.repo?.trim()) continue;
 
-    for (const id of boardIdsForPath(projectPath, project.repo)) {
+    for (const id of boardIdsForPath(everyPath, project.repo)) {
       /* A subfolder project and its parent can hash to the same directory id
          only if they name the same path, which the console already forbids.
          First writer still wins, so a duplicate never silently reassigns. */
       if (!byBoardId.has(id)) byBoardId.set(id, attribution);
     }
-    byPath.push({ path: path.resolve(projectPath), attribution: { ...attribution, via: "path" } });
+    for (const candidate of everyPath) {
+      byPath.push({ path: path.resolve(candidate as string), attribution: { ...attribution, via: "path" } });
+    }
   }
 
   byPath.sort((left, right) => right.path.length - left.path.length);
@@ -167,11 +183,14 @@ function readCache(): OrgBridge | null {
     const byBoardId = new Map<string, OrgAttribution>();
     const byPath: { path: string; attribution: OrgAttribution }[] = [];
     for (const row of envelope.rows) {
-      if (!row.path && !row.repo) continue;
-      for (const id of boardIdsForPath(row.path, row.repo)) {
+      const every = [row.path, ...(row.paths ?? [])].filter(Boolean);
+      if (every.length === 0 && !row.repo) continue;
+      for (const id of boardIdsForPath(every, row.repo)) {
         if (!byBoardId.has(id)) byBoardId.set(id, { ...row, via: "board-id" });
       }
-      if (row.path) byPath.push({ path: path.resolve(row.path), attribution: { ...row, via: "path" } });
+      for (const candidate of every) {
+        byPath.push({ path: path.resolve(candidate), attribution: { ...row, via: "path" } });
+      }
     }
     byPath.sort((left, right) => right.path.length - left.path.length);
     return { byBoardId, byPath, empty: byPath.length === 0, builtAt: envelope.builtAt };
