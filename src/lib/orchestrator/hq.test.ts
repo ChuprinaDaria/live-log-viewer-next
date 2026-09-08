@@ -23,5 +23,13 @@ test("a renamed seat gets the new name in its mandate", () => {
 });
 
 test("the prompt version moved with the name line", () => {
-  expect(HQ_PROMPT_VERSION).toBe(2);
+  expect(HQ_PROMPT_VERSION).toBe(3);
+});
+
+test("the access inventory is named only when configured, with the hand-out rule", () => {
+  expect(hqMandate(input)).not.toContain("access inventory");
+  const withDoc = hqMandate({ ...input, accessDoc: "/srv/secrets/ACCESS.md" });
+  expect(withDoc).toContain("/srv/secrets/ACCESS.md");
+  expect(withDoc).toContain("ONLY when the operator names that agent");
+  expect(withDoc).toContain("secret_share");
 });

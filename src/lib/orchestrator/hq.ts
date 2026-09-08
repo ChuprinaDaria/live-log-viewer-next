@@ -20,7 +20,7 @@ import { ORCHESTRATOR_INITIAL_STATUS_DIRECTIVE } from "./prompt";
 
 export const HQ_PROJECT = "fleet-hq";
 
-export const HQ_PROMPT_VERSION = 2;
+export const HQ_PROMPT_VERSION = 3;
 
 export const HQ_SPAWN_CONFIG = {
   engine: "claude",
@@ -39,6 +39,14 @@ export function hqCwd(): string {
 }
 
 /** The operator's Telegram chat the seat reports into, when configured. */
+/** The operator's access inventory — a 0600 file listing every secret's
+    address, the MCP servers and the machines. The seat learns where it is so
+    it can hand it to the agents the operator names; nothing else reads it. */
+export function hqAccessDoc(): string | null {
+  const doc = process.env.LLV_HQ_ACCESS_DOC?.trim();
+  return doc || null;
+}
+
 export function hqTelegramChat(): string | null {
   const chat = process.env.LLV_HQ_TELEGRAM_CHAT?.trim();
   return chat || null;
@@ -61,10 +69,13 @@ export function hqSshHosts(): string[] {
   }
 }
 
-export function hqMandate(input: { hostname: string; sshHosts: readonly string[]; telegramChat: string | null; mcpServers: readonly string[]; name: string }): string {
+export function hqMandate(input: { hostname: string; sshHosts: readonly string[]; telegramChat: string | null; mcpServers: readonly string[]; name: string; accessDoc?: string | null }): string {
   const machines = input.sshHosts.length
     ? `The other machines are the aliases in ~/.ssh/config: ${input.sshHosts.join(", ")}. Reach them with plain ssh (keys only); their agent transcripts live under ~/.claude/projects and ~/.codex/sessions there, and you may run \`sessionmem\` on this box against copies you pull over.`
     : "No other machines are configured in ~/.ssh/config yet; say so when asked to look beyond this box.";
+  const access = input.accessDoc
+    ? `The operator's access inventory (every secret's address, the MCP servers, the machines — never a value) is the file ${input.accessDoc}, mode 600, readable by every agent running as this user on this machine. Point an agent at it ONLY when the operator names that agent; on another machine copy it over ssh keeping mode 600, and say that you did. The values themselves reach an agent only through secret_share on its project or firm, never by pasting.`
+    : "";
   const telegram = input.telegramChat
     ? `The operator's Telegram chat is ${input.telegramChat}, reachable through the telegram-mcp tools (send_message, get_history). Write there only for what must reach them while they are away from this room — an outcome, a blocker, a question — one short message each, never a stream. Their messages on Telegram do not arrive here by themselves: when a wake or the operator asks you to check Telegram, read the chat's recent history and act on it.`
     : "No Telegram chat is configured for this seat (LLV_HQ_TELEGRAM_CHAT); this room is the only channel to the operator.";
@@ -81,6 +92,8 @@ The greeting above is a project seat's. Yours is one line, in the operator's lan
 You hold every MCP server this Viewer can grant: ${input.mcpServers.join(", ")}. sessionmem is the memory of every prior conversation (sessions_search, session_show, session_brief, session_resume); jeeves-rag is the operator's knowledge base; search_transcripts indexes every transcript on this box. Use them before you ask the operator something they have already answered somewhere.
 ${machines}
 GitHub is reachable with \`gh\`; the checkouts on this box are under the operator's work directory. ${telegram}
+
+${access}
 
 ## Projects are not sessions
 A project is a body of work — a repository, a client, a product. A session is one agent's conversation, and a project has many, across machines and engines. The Viewer groups sessions under projects by their working directory (list_conversations, board_snapshot), and that grouping is wrong wherever an agent ran from the wrong place. When the operator asks you to sort, inventory what exists (list_conversations here, sessionmem for history, ssh for the other machines, \`gh repo list\` for GitHub), decide which project each session belongs to, and report the sorting as a short table: project, sessions, machine, what each was doing. Do not move anything without saying what you moved.
