@@ -15,9 +15,9 @@
 - UI copy in Ukrainian AND English: every new key goes into BOTH `src/lib/i18n/uk.ts` and `src/lib/i18n/en.ts` (`MessageKey = keyof typeof en`, so a key missing in `en.ts` is a type error).
 - Light design language: white panels, `bg-card`, `border-border`, accent `text-accent`; no new icons beyond `lucide-react` / `./icons`; no decorative text.
 - No fake data: an empty section says so (`t("firms.nothingApplies")` style), never a placeholder number.
-- Never run the whole suite (`bun test` bare kills the operator's live host). Run only the files named in each task: `bun test src/components/desktop/<file>.test.tsx`.
+- Never run the whole suite (`bun test` bare kills the operator's live host). Run only the files named in each task. ESLint is broken in this checkout (React plugin vs ESLint 10) — use `bunx tsc --noEmit -p tsconfig.json` as the static gate instead.
 - Privacy gate on push: no e-mail addresses, no absolute `/home/<user>/…` paths, no `Co-authored-by` trailers in commits or files. Commit messages: one Ukrainian sentence saying what changed, like the repo's history.
-- Mobile behaviour is unchanged except Task 5's button and optgroup.
+- Mobile behaviour is unchanged except the shared launch form (Task 5) and the phone entry button (Task 7).
 - Desktop = `useIsMobile() === false` (`src/hooks/useIsMobile.ts`, `MOBILE_LAYOUT_QUERY`).
 
 ## Test harness (copy into every new dom test)
@@ -659,370 +659,117 @@ git commit -m "Десктоп відкривається на пульт і ча
 
 ---
 
-### Task 4: Project console (agents, skills, MCP, secrets, «Сказати HQ»)
+### Task 4: fleetctl — fresh code on the target, and what code each machine holds
 
-**Files:**
-- Create: `src/components/desktop/ProjectConsole.tsx`
-- Test: `src/components/desktop/ProjectConsole.dom.test.tsx`
-- Modify: `src/components/desktop/DesktopHome.tsx` (mount it), `src/lib/i18n/{uk,en}.ts`
+**Files (repo `/home/dchuprina/projects/agents`, i.e. `../` from fleet):**
+- Modify: `fleetctl/fleetlib/spawn.py` (`session_spawn`, `session_transfer`), `fleetctl/fleetlib/registry.py` (the two `Func` entries + one new), `fleetctl/README.md` (one paragraph under the sessions section)
+- Create: `fleetctl/fleetlib/code.py`, `fleetctl/tests/test_code.py`, `fleetctl/tests/test_spawn_fresh.py`
 
 **Interfaces:**
-- Consumes: `loadProject`, `ProjectDetail` (`firmsModel.ts`); `useMcpRegistry` (`mcpModel.ts`: `grant(kind, item, target, revoke?)`, `servers`, `skills`); `shareSecret(secret, scope, revoke?)` (`secretsModel.ts`); `useSecretsInventory(true)` (`secretsModel.ts`, returns `{ secrets: SecretView[] | null, … }` — read the file for the exact shape); `useHqSeat`, `hqFileOf` (`src/components/mobile/hqSeat.ts`); Task 1 functions; `engineLabel` (`src/components/feed/engineMark.tsx`), `accountIdFromPath` + `DEFAULT_ACCOUNT_ID` (`src/lib/accounts/badge.ts`), `cleanTitle` (`src/lib/title.ts`), `fmtAge`.
+- Consumes: `hosts.load/get/_probe/is_local`, `spawn._run(entry, cmd, timeout=…)` (returns an object with `.returncode/.stdout/.stderr`), `orgs.load/get_project` (project node has `path`, `paths`, `repo`).
+- Produces:
+  ```python
+  # fleetlib/code.py
+  def project_code(project: str, host: str | None = None) -> dict
+  # → {"project": id, "hosts": [{"host", "path", "exists": bool, "branch": str, "head": str, "dirty": bool, "detail": str}]}
+  #   one row per registered host (or the one named); a host that does not answer → exists False, detail = probe detail
+  def freshen(entry: dict, where: str, repo: str) -> dict
+  # → {"action": "cloned" | "pulled" | "unchanged" | "kept", "detail": str}
+  #   where missing & repo → git clone repo where ; where missing & no repo → raise NotFound (the existing message)
+  #   where is a git checkout → git pull --ff-only ; failure (diverged, dirty) → raise FleetError with git's stderr[:200], nothing launched
+  #   where exists but is not a checkout → "kept" (plain directory, launch as before)
+  ```
+  `session_spawn(..., fresh: bool = False)` and `session_transfer(..., fresh: bool = False)`: when `fresh`, call `freshen` before the directory check and put its result under `"code"` in the return dict. Registry: `Param("fresh", "bool", "оновити код перед стартом: pull, або clone якщо теки нема", default=False)` on both; new `Func("project_code", "Який код проєкту лежить на кожній машині: гілка, коміт, чи брудна тека", code.project_code, [Param("project", …, required=True), Param("host", "str", "лише ця машина")])`, read-only (`mutates=False`).
+  Git commands run on the target through `_run`, quoted with `shlex.quote`, e.g. `cd <where> && git rev-parse --is-inside-work-tree` / `git rev-parse --abbrev-ref HEAD` / `git rev-parse --short HEAD` / `git status --porcelain | head -1`.
+
+- [ ] **Step 1: Tests first.** `fleetctl/tests/test_code.py` monkeypatches `fleetlib.code._run` with a fake that records commands and answers from a dict keyed by substring (`"is-inside-work-tree" → "true"`, `"abbrev-ref" → "main"`, `"--short HEAD" → "abc1234"`, `"porcelain" → ""`), and `hosts.load` with two hosts (`walter` local, `ryzen` ssh). Cases: (a) `project_code` lists both hosts, walter exists with branch `main`, head `abc1234`, `dirty False`; ryzen `exists False` when its probe says unreachable. (b) `freshen` with missing dir and repo → issues `git clone <repo> <where>` and returns `cloned`. (c) missing dir, no repo → `NotFound`. (d) checkout → `git pull --ff-only`, returns `pulled`; pull failing (returncode 1) → `FleetError`. (e) plain directory → `kept`, no git command issued. `test_spawn_fresh.py`: monkeypatch `spawn._run`, `spawn.hosts._probe`, `spawn.hosts.engine_path`, `spawn.orgs.load`; assert `session_spawn(..., fresh=True)` calls `code.freshen` once before the tmux commands and echoes its result under `"code"`; `fresh=False` never calls it. Run: `cd ../fleetctl && python3 -m pytest tests -q` (if pytest is absent: `python3 -m unittest discover -s tests -q`; write the tests with `unittest` so both work).
+- [ ] **Step 2:** run, see them fail (ImportError / TypeError on `fresh`).
+- [ ] **Step 3:** implement `code.py`, the two `fresh` parameters, the registry entries, the README paragraph.
+- [ ] **Step 4:** tests pass; `cd ../fleetctl && ./fleetctl functions | grep -E "project_code|session_spawn"` shows the new function and the `--fresh` flag (`./fleetctl session_spawn --help`).
+- [ ] **Step 5:** commit in the agents repo: `git -C .. add fleetctl && git -C .. commit -m "Свіжий код перед стартом сесії: pull або clone, і що лежить на кожній машині"`.
+
+---
+
+### Task 5: Launch form shared by phone and desktop — machine, LLM, model, subscription
+
+**Files:**
+- Create: `src/components/machines/LaunchForm.tsx`, `src/components/machines/launchForm.ts` (the hook), `src/components/machines/LaunchForm.dom.test.tsx`
+- Modify: `src/components/mobile/MobileMachinesScreen.tsx` (becomes a thin shell around `LaunchForm`), `src/components/mobile/machinesModel.ts` (`SpawnInput.fresh?: boolean`), `src/app/api/machines/route.ts` (pass `fresh` through: `fresh: body.fresh === true`), `src/lib/i18n/{uk,en}.ts`
+
+**Interfaces:**
+- Consumes: `useMachines/useOrg/projectTree`, `ENGINE_MODELS` + `defaultModelFor` (`src/lib/agent/models.ts`), the console's `session_spawn(fresh)` from Task 4.
 - Produces:
   ```tsx
-  export interface ProjectConsoleProps {
-    project: string;              // console project id
-    files: readonly FileEntry[];
-    onOpenFile: (file: FileEntry) => void;
-    onCreateAgent: (project: string) => void;
+  export interface LaunchFormProps {
+    /** Console project id to start with; the picker stays editable. */
+    initialProject?: string;
+    /** "start" or "move"; move needs a source machine and a tmux session. */
+    initialMode?: "start" | "move";
+    initialSession?: { host: string; tmux: string };
+    /** Compact = desktop column (labels beside controls, 32px rows); default = phone (44px rows). */
+    compact?: boolean;
+    onStarted?: (result: SpawnResult, moved: boolean) => void;
   }
+  export function LaunchForm(props: LaunchFormProps): JSX.Element;
+  ```
+  Fields, in this order, each a labelled control with `aria-label` = its label: **Machine** (`machines.machine`, radio-like buttons from the registry, unreachable ones disabled with their `status.detail` as title), **Project** (`machines.project`, `<select>` with `<optgroup>` per firm), **LLM** (`machines.engine`, Claude / Codex from `enginesPresent(machine)`), **Model** (`machines.model` — NEW key: "Модель"/"Model", `<select>` over `ENGINE_MODELS[engine]`, default `defaultModelFor(engine)`; changing the engine resets it), **Subscription** (`machines.account` — the machine's profiles from `accountsOn`; label the empty choice `machines.machineDefault`), **Fresh code** (`machines.fresh` NEW: "Оновити код перед стартом (pull / clone)" / "Refresh code before start (pull / clone)", a checkbox, checked by default), **First prompt** (`machines.prompt`, hidden in move mode), and the verb button (`machines.start` / `machines.move`). The spawn call sends `{ host, project, engine, model, account?, fresh, prompt? }`. The result block after a start shows `started.cwd`, and `started.code?.action` when the console reports one (NEW key `machines.code`: "Код: {action}" / "Code: {action}").
+  Move mode keeps the existing source-machine + session pickers (moved verbatim from `MobileMachinesScreen`).
+  `MobileMachinesScreen` renders `<MobileShell screen="machines" …><LaunchForm initialProject={initialProject} /></MobileShell>` and nothing else of its own.
+
+- [ ] **Step 1: Failing test** (`LaunchForm.dom.test.tsx`, prelude from «Test harness»; `fetch` answers `/api/machines?probe=0` and `/api/machines` with `{ machines: [{ id: "walter", ssh: null, engines: ["claude","codex"], is_local: true, status: { reachable: true, detail: "" } }, { id: "ryzen", ssh: "ryzen", engines: ["claude"], status: { reachable: false, detail: "спить" } }] }`, `?host=walter&accounts=1` with `{ profiles: ["daria", "kostya"] }`, `/api/firms` + `/api/projects` as in Task 2; POST `/api/machines` records the body and answers `{ session: { host: "walter", project: "bot", engine: "claude", tmux: "fc-bot-1", cwd: "/w/bot", attach: "", code: { action: "pulled" } } }`):
+  - projects grouped by firm, `initialProject="money"` preselected;
+  - the ryzen button is disabled with title "спить";
+  - picking walter loads accounts; picking `kostya`;
+  - model select defaults to `opus`; switching LLM to Codex changes the default to `gpt-6-astra`;
+  - clicking «Запустити» POSTs `{ host: "walter", project: "money", engine: "codex", model: "gpt-6-astra", account: "kostya", fresh: true }` and the page shows "pulled".
+- [ ] **Step 2:** run, fails.
+- [ ] **Step 3:** implement; move the state/effects out of `MobileMachinesScreen.tsx` into `launchForm.ts` (`useLaunchForm(props)`) and the JSX into `LaunchForm.tsx`; delete the duplicated code from the mobile screen.
+- [ ] **Step 4:** `bun test src/components/machines/LaunchForm.dom.test.tsx`; `bunx eslint src/components/machines src/components/mobile/MobileMachinesScreen.tsx src/app/api/machines/route.ts`.
+- [ ] **Step 5:** commit: `Форма запуску одна на телефон і десктоп: машина, LLM, модель, підписка, свіжий код`.
+
+---
+
+### Task 6: Project console — launch first, sessions with «перенести», accordions for the rest
+
+**Files:**
+- Create: `src/components/desktop/ProjectConsole.tsx`, `src/components/desktop/ProjectConsole.dom.test.tsx`
+- Modify: `src/components/desktop/DesktopHome.tsx` (mount it under the tree; drop the `projectConsole` slot and the `onCreateAgent` prop — Viewer call site too), `src/app/api/projects/route.ts` (GET `?project=x&code=1` → `fleetctl({ fn: "project_code", params: { project } })`), `src/lib/i18n/{uk,en}.ts`
+
+**Interfaces:**
+- Consumes: `LaunchForm` (Task 5), Task 1 functions, `loadProject`, `useMcpRegistry`, `shareSecret`, `useSecretsInventory`, `useHqSeat` + `hqFileOf`, `engineLabel`, `accountIdFromPath` + `DEFAULT_ACCOUNT_ID`, `cleanTitle`, `fmtAge`.
+- Produces:
+  ```tsx
+  export interface ProjectConsoleProps { project: string; files: readonly FileEntry[]; onOpenFile: (file: FileEntry) => void }
   export function ProjectConsole(props: ProjectConsoleProps): JSX.Element;
   ```
-  Sending to HQ: `POST /api/tmux` with JSON `{ path: hqFile.path, text }` (the legacy conversation-host route; `text` is the message). The line: `t("desktop.tellHqLine", { firm: detail.firm, project: detail.name || detail.id, path: detail.path ?? "" })`.
-  Data attributes: `data-project-console`, `data-console-section="agents|skills|mcp|secrets"`, `data-console-agent="<path>"`, `data-console-row="<kind>:<item>"`, `data-console-revoke="<kind>:<item>"`, `data-console-add="<kind>"` (a `<select>` of registry items not yet effective; choosing one grants immediately), `data-console-tell-hq`, `data-console-create`.
+  Layout, top to bottom, inside `<section data-project-console>`:
+  1. Project name + firm, and «Сказати HQ» (`data-console-tell-hq`; POST `/api/tmux` `{ path: hqFile.path, text: t("desktop.tellHqLine", {firm, project, path}) }`; `t("desktop.tellHqNoSeat")` when there is no seat).
+  2. **«Запустити сесію»** — `<LaunchForm compact initialProject={project} />` open by default (`data-console-launch`).
+  3. **Сесії** — `projectAgents(files, project)`: live ones listed (`data-console-agent="<path>"`, title / engine · model / account small / machine when `machineOf` names one / age; tap → `onOpenFile`), each with a «перенести» button (`data-console-move="<path>"`) that re-renders the launch form in move mode with `initialSession={{ host: machineOf(file) || "walter", tmux: file.conversationId ?? "" }}` — read `FileEntry` for the field that carries the tmux/session id; if none exists on the entry, the button opens move mode with the source machine only and the session picker empty (honest, not invented).
+  4. Accordions, all collapsed by default, native `<details>` with `data-console-accordion="old|code|skills|mcp|secrets"`:
+     - **Старі сесії** — non-live entries of `projectAgents`, same row shape, newest first, capped at 30 with a count.
+     - **Код на машинах** — loads `GET /api/projects?project=<id>&code=1` on first open; one row per host: host, `branch @ head`, «брудна» badge when dirty, `detail` when it does not exist. NEW keys: `desktop.sectionCode` "Код на машинах"/"Code on machines", `desktop.codeMissing` "теки немає"/"no directory", `desktop.codeDirty` "незакомічені зміни"/"uncommitted changes".
+     - **Скіли / MCP / Секрети** — `effectiveRows` / `effectiveSecretRows` with source label («власний» / «від фірми X»), revoke on own rows (`data-console-revoke="<kind>:<item>"` → `registry.grant(kind, item, "project:<id>", true)` / `shareSecret(item, "project:<id>", true)`), an add `<select data-console-add="<kind>">` of registry items not yet effective.
+  i18n keys (uk / en): `desktop.launchTitle` "Запустити сесію"/"Start a session", `desktop.sectionSessions` "Сесії"/"Sessions", `desktop.sectionOld` "Старі сесії"/"Old sessions", `desktop.move` "перенести"/"move", `desktop.noAgents` "У проєкті ще немає сесій."/"No sessions in this project yet.", `desktop.sectionSkills` "Скіли"/"Skills", `desktop.sectionMcp` "MCP"/"MCP", `desktop.sectionSecrets` "Секрети"/"Secrets", `desktop.fromFirm` "від фірми"/"from firm", `desktop.own` "власний"/"own", `desktop.revoke` "зняти"/"revoke", `desktop.addGrant` "+ видати"/"+ grant", `desktop.tellHq` "Сказати HQ"/"Tell HQ", `desktop.tellHqLine` "Відкриваю проєкт {firm} → {project} ({path})"/"Opening project {firm} → {project} ({path})", `desktop.tellHqSent` "HQ отримав."/"HQ has it.", `desktop.tellHqNoSeat` "HQ не запущений."/"HQ is not running.", `desktop.detailFailed` "Проєкт не читається: {reason}"/"Project could not be read: {reason}", plus the three code keys above.
 
-i18n keys:
-```
-"desktop.sectionAgents": "Агенти" / "Agents"
-"desktop.sectionSkills": "Скіли" / "Skills"
-"desktop.sectionMcp": "MCP" / "MCP"
-"desktop.sectionSecrets": "Секрети" / "Secrets"
-"desktop.noAgents": "У проєкті ще немає сесій." / "No sessions in this project yet."
-"desktop.fromFirm": "від фірми" / "from firm"
-"desktop.own": "власний" / "own"
-"desktop.revoke": "зняти" / "revoke"
-"desktop.addGrant": "+ видати" / "+ grant"
-"desktop.tellHq": "Сказати HQ" / "Tell HQ"
-"desktop.tellHqLine": "Відкриваю проєкт {firm} → {project} ({path})" / "Opening project {firm} → {project} ({path})"
-"desktop.tellHqSent": "HQ отримав." / "HQ has it."
-"desktop.tellHqNoSeat": "HQ не запущений." / "HQ is not running."
-"desktop.createAgent": "Створити агента" / "Create agent"
-"desktop.detailFailed": "Проєкт не читається: {reason}" / "Project could not be read: {reason}"
-```
-
-- [ ] **Step 1: Write the failing test**
-
-```tsx
-/* prelude */
-import { setLocale } from "@/lib/i18n";
-import { ProjectConsole } from "./ProjectConsole";
-
-const realFetch = globalThis.fetch;
-const posts: { url: string; body: unknown }[] = [];
-globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-  const url = String(input);
-  if (init?.method === "POST") { posts.push({ url, body: JSON.parse(String(init.body)) }); return new Response(JSON.stringify({ ok: true }), { status: 200 }); }
-  const body =
-    url.startsWith("/api/projects?project=bot") ? { id: "bot", name: "bot", firm: "noologic", parent: null, path: "/w/bot", grants: { mcp: ["viewer"], skills: [] }, secrets: [], rules: 0,
-        effective: { mcp: [{ item: "viewer", from: "project:bot" }, { item: "obsidian", from: "firm:noologic" }], skills: [], rules: [], secrets: [{ secret: "tg_bot", from: "firm:noologic" }] } }
-    : url.startsWith("/api/mcp-registry") ? { servers: [{ name: "viewer", type: "http", granted_to: ["project:bot"], fleet_env: [] }, { name: "obsidian", type: "http", granted_to: ["firm:noologic"], fleet_env: [] }, { name: "firecrawl", type: "http", granted_to: [], fleet_env: [] }], skills: [{ id: "review", name: "review", description: "", granted_to: [] }], registry: "x" }
-    : url.startsWith("/api/secrets") ? { secrets: [] }
-    : url.startsWith("/api/orchestrator/hq") ? { seat: { conversationId: "hq1", path: "/hq/t.jsonl" }, pending: null, exists: true }
-    : {};
-  return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
-}) as typeof fetch;
-afterEach(() => { globalThis.fetch = realFetch; posts.length = 0; });
-const flush = () => new Promise((r) => setTimeout(r, 0));
-
-const hq = entry({ path: "/hq/t.jsonl", conversationId: "hq1" } as Partial<FileEntry>);
-const agent = entry({ path: "/a.jsonl", title: "Bot worker", model: "opus", activity: "live", org: { firm: "noologic", firmName: "Noologic", project: "bot", projectName: "bot", via: "path" } });
-
-test("lists agents and effective grants with their source, revokes own, tells HQ", async () => {
-  setLocale("uk");
-  const opened: string[] = [];
-  const el = mount(<ProjectConsole project="bot" files={[hq, agent]} onOpenFile={(f) => opened.push(f.path)} onCreateAgent={() => {}} />);
-  for (let i = 0; i < 4; i += 1) await act(flush);
-  expect(el.querySelector('[data-console-agent="/a.jsonl"]')?.textContent).toContain("Bot worker");
-  expect(el.querySelector('[data-console-row="mcp:viewer"]')?.textContent).toContain("власний");
-  expect(el.querySelector('[data-console-row="mcp:obsidian"]')?.textContent).toContain("від фірми");
-  expect(el.querySelector('[data-console-revoke="mcp:obsidian"]')).toBeNull();
-  expect(el.querySelector('[data-console-row="secrets:tg_bot"]')).not.toBeNull();
-  act(() => { (el.querySelector('[data-console-revoke="mcp:viewer"]') as HTMLButtonElement).click(); });
-  await act(flush);
-  expect(posts.find((p) => p.url === "/api/mcp-registry")?.body).toEqual({ kind: "mcp", item: "viewer", target: "project:bot", revoke: true });
-  act(() => { (el.querySelector("[data-console-tell-hq]") as HTMLButtonElement).click(); });
-  await act(flush);
-  const sent = posts.find((p) => p.url === "/api/tmux")?.body as { path: string; text: string };
-  expect(sent.path).toBe("/hq/t.jsonl");
-  expect(sent.text).toBe("Відкриваю проєкт noologic → bot (/w/bot)");
-  act(() => { (el.querySelector('[data-console-agent="/a.jsonl"]') as HTMLButtonElement).click(); });
-  expect(opened).toEqual(["/a.jsonl"]);
-});
-```
-
-`hqFileOf(files, status)` matches on the seat's `conversationId` / `path` — read `src/components/mobile/hqSeat.ts:133` and give the test entry whatever field it matches on.
-
-- [ ] **Step 2: Run to verify it fails** — `bun test src/components/desktop/ProjectConsole.dom.test.tsx`.
-
-- [ ] **Step 3: Implement**
-
-```tsx
-"use client";
-
-import { Plus } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-
-import { engineLabel } from "@/components/feed/engineMark";
-import { loadProject, type ProjectDetail } from "@/components/mobile/firmsModel";
-import { hqFileOf, useHqSeat } from "@/components/mobile/hqSeat";
-import { useMcpRegistry } from "@/components/mobile/mcpModel";
-import { shareSecret, useSecretsInventory } from "@/components/mobile/secretsModel";
-import { fmtAge } from "@/components/utils";
-import { accountIdFromPath, DEFAULT_ACCOUNT_ID } from "@/lib/accounts/badge";
-import { useLocale } from "@/lib/i18n";
-import { cleanTitle } from "@/lib/title";
-import type { FileEntry } from "@/lib/types";
-
-import { effectiveRows, effectiveSecretRows, machineOf, projectAgents, type EffectiveRow } from "./desktopHomeModel";
-
-/*
- * What acts on the chosen project, and who works in it. Everything here is
- * the console's answer (`project_show`) rendered with its origin: an inherited
- * grant is labelled «від фірми» and cannot be revoked from here, an own grant
- * can. Writes go through the same routes the phone's pages use.
- */
-
-export interface ProjectConsoleProps {
-  project: string;
-  files: readonly FileEntry[];
-  onOpenFile: (file: FileEntry) => void;
-  onCreateAgent: (project: string) => void;
-}
-
-const BTN = "inline-flex h-7 items-center gap-1 rounded-[8px] border border-border px-2 text-[11.5px] font-semibold text-secondary hover:border-accent/45 hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-50";
-
-export function ProjectConsole({ project, files, onOpenFile, onCreateAgent }: ProjectConsoleProps) {
-  const { t } = useLocale();
-  const [detail, setDetail] = useState<ProjectDetail | null>(null);
-  const [detailError, setDetailError] = useState<string | null>(null);
-  const [nonce, setNonce] = useState(0);
-  const registry = useMcpRegistry();
-  const secrets = useSecretsInventory(true);
-  const hq = useHqSeat();
-  const [hqNote, setHqNote] = useState<string | null>(null);
-
-  useEffect(() => {
-    let live = true;
-    setDetail(null);
-    setDetailError(null);
-    loadProject(project)
-      .then((answer) => { if (live) setDetail(answer); })
-      .catch((cause: unknown) => { if (live) setDetailError(cause instanceof Error ? cause.message : String(cause)); });
-    return () => { live = false; };
-  }, [project, nonce]);
-
-  const agents = useMemo(() => projectAgents(files, project), [files, project]);
-  const target = `project:${project}`;
-
-  const revoke = async (kind: "mcp" | "skills", item: string) => {
-    const error = await registry.grant(kind, item, target, true);
-    if (!error) setNonce((n) => n + 1);
-  };
-  const add = async (kind: "mcp" | "skills", item: string) => {
-    if (!item) return;
-    const error = await registry.grant(kind, item, target);
-    if (!error) setNonce((n) => n + 1);
-  };
-  const unshare = async (secret: string) => {
-    const error = await shareSecret(secret, target, true);
-    if (!error) setNonce((n) => n + 1);
-  };
-  const share = async (secret: string) => {
-    if (!secret) return;
-    const error = await shareSecret(secret, target);
-    if (!error) setNonce((n) => n + 1);
-  };
-
-  const tellHq = async () => {
-    const file = hqFileOf(files, hq.status);
-    if (!file || !detail) { setHqNote(t("desktop.tellHqNoSeat")); return; }
-    const text = t("desktop.tellHqLine", { firm: detail.firm, project: detail.name || detail.id, path: detail.path ?? "" });
-    const response = await fetch("/api/tmux", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path: file.path, text }) });
-    setHqNote(response.ok ? t("desktop.tellHqSent") : `HTTP ${response.status}`);
-  };
-
-  const mcpRows = effectiveRows(detail, "mcp");
-  const skillRows = effectiveRows(detail, "skills");
-  const secretRows = effectiveSecretRows(detail);
-  const have = (rows: EffectiveRow[]) => new Set(rows.map((row) => row.item));
-  const mcpChoices = (registry.servers ?? []).map((s) => s.name).filter((name) => !have(mcpRows).has(name));
-  const skillChoices = (registry.skills ?? []).map((s) => s.id).filter((id) => !have(skillRows).has(id));
-  const secretChoices = (secrets.secrets ?? []).map((s) => s.name).filter((name) => !have(secretRows).has(name));
-
-  return (
-    <section data-project-console className="flex flex-col gap-3 border-t border-border px-3 py-3">
-      <div className="flex items-center gap-2">
-        <button type="button" data-console-create className={`${BTN} border-accent text-accent`} onClick={() => onCreateAgent(project)}>
-          <Plus className="h-3.5 w-3.5" aria-hidden />{t("desktop.createAgent")}
-        </button>
-        <button type="button" data-console-tell-hq className={BTN} onClick={() => void tellHq()} disabled={!detail}>{t("desktop.tellHq")}</button>
-      </div>
-      {hqNote ? <p role="status" className="text-[11.5px] text-muted">{hqNote}</p> : null}
-      {detailError ? <p className="text-[11.5px] text-danger">{t("desktop.detailFailed", { reason: detailError })}</p> : null}
-
-      <Section name="agents" title={t("desktop.sectionAgents")}>
-        {agents.length === 0 ? <Empty text={t("desktop.noAgents")} /> : agents.map((file) => {
-          const account = accountIdFromPath(file.path);
-          const machine = machineOf(file);
-          return (
-            <button key={file.path} type="button" data-console-agent={file.path} onClick={() => onOpenFile(file)}
-              className="flex w-full flex-col items-start gap-0.5 rounded-[8px] px-2 py-1.5 text-left hover:bg-quiet focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40">
-              <span className="flex w-full items-center gap-1.5">
-                <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${file.activity === "live" ? "bg-success animate-pulse" : "bg-strong"}`} aria-hidden />
-                <span className="min-w-0 truncate text-[12.5px] font-semibold text-primary">{cleanTitle(file.title)}</span>
-                <span className="ml-auto shrink-0 text-[11px] text-muted">{fmtAge(file.mtime)}</span>
-              </span>
-              <span className="flex w-full items-center gap-1.5 text-[11px] text-muted">
-                <span>{engineLabel(file.engine) ?? file.engine}{file.model ? ` · ${file.model}` : ""}</span>
-                {account !== DEFAULT_ACCOUNT_ID ? <span className="truncate">{account}</span> : null}
-                {machine ? <span className="ml-auto">{machine}</span> : null}
-              </span>
-            </button>
-          );
-        })}
-      </Section>
-
-      <GrantSection name="skills" title={t("desktop.sectionSkills")} rows={skillRows} choices={skillChoices} onRevoke={(item) => void revoke("skills", item)} onAdd={(item) => void add("skills", item)} />
-      <GrantSection name="mcp" title={t("desktop.sectionMcp")} rows={mcpRows} choices={mcpChoices} onRevoke={(item) => void revoke("mcp", item)} onAdd={(item) => void add("mcp", item)} />
-      <GrantSection name="secrets" title={t("desktop.sectionSecrets")} rows={secretRows} choices={secretChoices} onRevoke={(item) => void unshare(item)} onAdd={(item) => void share(item)} />
-    </section>
-  );
-}
-
-function Section({ name, title, children }: { name: string; title: string; children: React.ReactNode }) {
-  return (
-    <div data-console-section={name} className="flex flex-col gap-0.5">
-      <h3 className="px-2 text-[11px] font-bold uppercase tracking-wide text-muted">{title}</h3>
-      {children}
-    </div>
-  );
-}
-
-function Empty({ text }: { text: string }) {
-  return <p className="px-2 py-1 text-[11.5px] text-muted">{text}</p>;
-}
-
-function GrantSection({ name, title, rows, choices, onRevoke, onAdd }: { name: "skills" | "mcp" | "secrets"; title: string; rows: EffectiveRow[]; choices: string[]; onRevoke: (item: string) => void; onAdd: (item: string) => void }) {
-  const { t } = useLocale();
-  return (
-    <Section name={name} title={title}>
-      {rows.length === 0 ? <Empty text={t("firms.nothingApplies")} /> : rows.map((row) => (
-        <div key={row.item} data-console-row={`${name}:${row.item}`} className="flex min-h-7 items-center gap-2 px-2 text-[12px]">
-          <span className="min-w-0 truncate text-primary">{row.item}</span>
-          <span className="shrink-0 text-[11px] text-muted">{row.own ? t("desktop.own") : `${t("desktop.fromFirm")} ${row.from.slice(row.from.indexOf(":") + 1)}`}</span>
-          {row.own ? (
-            <button type="button" data-console-revoke={`${name}:${row.item}`} className="ml-auto text-[11px] font-semibold text-danger hover:underline" onClick={() => onRevoke(row.item)}>{t("desktop.revoke")}</button>
-          ) : null}
-        </div>
-      ))}
-      {choices.length ? (
-        <select data-console-add={name} value="" aria-label={t("desktop.addGrant")} onChange={(event) => onAdd(event.target.value)}
-          className="mx-2 mt-1 h-7 rounded-[8px] border border-border bg-card px-1.5 text-[11.5px] text-secondary">
-          <option value="">{t("desktop.addGrant")}</option>
-          {choices.map((item) => <option key={item} value={item}>{item}</option>)}
-        </select>
-      ) : null}
-    </Section>
-  );
-}
-```
-
-Check `useSecretsInventory`'s return shape and `SecretView.name` in `secretsModel.ts` / `src/app/api/secrets/route.ts:44` and adjust the `secretChoices` line to what it actually exposes. `ProjectRow.path` is optional — `detail.path ?? ""` is right.
-
-- [ ] **Step 4: Mount in `DesktopHome`**: below `<OrgTree …/>` render `{selectedProject ? <ProjectConsole project={selectedProject} files={files} onOpenFile={onOpenFile} onCreateAgent={onCreateAgent} /> : null}` and drop the `projectConsole` prop.
-
-- [ ] **Step 5: Verify** — `bun test src/components/desktop/ProjectConsole.dom.test.tsx src/components/desktop/DesktopHome.dom.test.tsx` and `bunx eslint src/components/desktop`.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add src/components/desktop src/lib/i18n/uk.ts src/lib/i18n/en.ts
-git commit -m "Пульт проєкту: агенти, скіли, MCP і секрети з джерелом, і «Сказати HQ»"
-```
+- [ ] **Step 1: Failing test** (prelude; `fetch` answers `/api/projects?project=bot` with the Task-6-shaped detail `{ id:"bot", name:"bot", firm:"noologic", path:"/w/bot", effective:{ mcp:[{item:"viewer",from:"project:bot"},{item:"obsidian",from:"firm:noologic"}], skills:[], rules:[], secrets:[{secret:"tg_bot",from:"firm:noologic"}] } }`, `&code=1` with `{ hosts:[{ host:"walter", path:"/w/bot", exists:true, branch:"main", head:"abc1234", dirty:false, detail:"" }] }`, `/api/mcp-registry`, `/api/secrets`, `/api/orchestrator/hq` (seat `{ conversationId:"hq1", path:"/hq/t.jsonl" }`), `/api/machines*`, `/api/firms`, `/api/projects` as in Task 5's test; POSTs recorded). Files: an HQ entry, one live agent `org.project = "bot"`, one old agent. Assert: launch form present with project preselected `bot`; live agent row present and clicking it calls `onOpenFile`; old agent NOT in the live list but present after opening `[data-console-accordion="old"]`; opening `code` accordion fetches `&code=1` and shows `main @ abc1234`; `mcp:viewer` says «власний» and has a revoke button, `mcp:obsidian` says «від фірми» and has none; revoke POSTs `{ kind:"mcp", item:"viewer", target:"project:bot", revoke:true }`; «Сказати HQ» POSTs `{ path:"/hq/t.jsonl", text:"Відкриваю проєкт noologic → bot (/w/bot)" }`.
+- [ ] **Step 2:** run, fails. **Step 3:** implement. **Step 4:** `bun test src/components/desktop/ProjectConsole.dom.test.tsx src/components/desktop/DesktopHome.dom.test.tsx`; eslint on `src/components/desktop src/app/api/projects/route.ts`.
+- [ ] **Step 5:** commit: `Пульт проєкту: запуск на будь-якій машині першим, сесії з «перенести», решта в акордеонах`.
 
 ---
 
-### Task 5: «Створити агента» — one click, project pre-filled, firms as optgroups
+### Task 7: Mobile entry, desktop «перенести» in the board, and the plan's loose ends
 
 **Files:**
-- Modify: `src/components/mobile/MobileMachinesScreen.tsx` (props + project `<select>`), `src/components/desktop/DesktopHome.tsx` (right panel), `src/components/OverviewBoard.tsx` (mobile: a button above `grid`), `src/lib/i18n/{uk,en}.ts`
-- Test: `src/components/desktop/DesktopHome.dom.test.tsx` (extend), `src/components/mobile/MobileMachinesScreen.dom.test.tsx` (new, optgroup + initialProject)
-
-**Interfaces:**
-- `MobileMachinesScreen` gains `initialProject?: string`: `useState(initialProject ?? "")` for `project`, and a `useEffect` that sets it when the prop changes. Its project `<select>` groups by firm: `(org.firms ?? []).map(firm => <optgroup key label={firm.name || firm.id}>{projectTree(org.projects ?? [], firm.id).flatMap(({row, children}) => [row, ...children]).map(row => <option …>)}</optgroup>)`.
-- `DesktopHome` state `const [createFor, setCreateFor] = useState<string | null | undefined>(undefined)` (`undefined` = closed). `onCreateAgent` from `ProjectConsole` sets it. A header button `data-desktop-create` (label `t("desktop.createAgent")`) sets it to `selectedProject`. When not `undefined`, render the same fixed right panel `DesktopMenu` draws (copy its `<div className="fixed inset-0 z-50 flex justify-end bg-black/20">…` block with the close button, max-width 560) containing `<SuppressMobileTabs><MobileMachinesScreen host={null} initialProject={createFor ?? undefined} /></SuppressMobileTabs>`; Esc and the backdrop close it (`setCreateFor(undefined)`).
-- Mobile: in `OverviewBoard`'s `isMobile` branch, wrap `{grid}` as `<><button type="button" data-mobile2-create-agent … onClick={() => mobileNav.push({ kind: "machines" })}>{t("desktop.createAgent")}</button>{grid}</>` — a full-width 44px button with `mx-3 mt-3` and the accent outline used by `MobileHqRoom`'s `ACTION` constant.
-
-- [ ] **Step 1: Write the failing tests**
-
-Extend `DesktopHome.dom.test.tsx`:
-```tsx
-test("«Створити агента» opens the machines form on the right", async () => {
-  setLocale("uk");
-  const el = mount(<DesktopHome files={[]} selectedProject={null} onSelectProject={() => {}} onOpenBoard={() => {}} onOpenBoardProject={() => {}} onOpenFile={() => {}} onCreateAgent={() => {}} />);
-  await act(flush);
-  act(() => { (el.querySelector("[data-desktop-create]") as HTMLButtonElement).click(); });
-  await act(flush);
-  expect(el.querySelector("[data-desktop-create-panel]")).not.toBeNull();
-  expect(el.querySelector('select[aria-label="Проєкт"]')).not.toBeNull();
-});
-```
-(After Task 5 `onCreateAgent` is internal to DesktopHome; drop the prop from `DesktopHomeProps` and from the Viewer call site.)
-
-New `src/components/mobile/MobileMachinesScreen.dom.test.tsx`:
-```tsx
-/* prelude; fetch answering /api/machines?probe=0 → { machines: [] }, /api/firms → one firm "noologic" named "Noologic", /api/projects → bot + money (as in Task 2) */
-import { MobileMachinesScreen } from "./MobileMachinesScreen";
-test("projects are grouped by firm and the initial project is selected", async () => {
-  const el = mount(<MobileMachinesScreen host={null} initialProject="money" />);
-  await act(flush); await act(flush);
-  const select = el.querySelector('select[aria-label="Проєкт"]') as HTMLSelectElement;
-  expect(select.querySelector('optgroup[label="Noologic"]')).not.toBeNull();
-  expect(select.value).toBe("money");
-});
-```
-Read `MobileMachinesScreen.tsx` first: `useMachines` fetches `/api/machines` on mount; answer it with `{ machines: [] }`.
-
-- [ ] **Step 2: Run to verify they fail.**
-
-- [ ] **Step 3: Implement** the three edits described under Interfaces. Keys: reuse `desktop.createAgent` from Task 4; nothing new.
-
-- [ ] **Step 4: Verify** — `bun test src/components/desktop/DesktopHome.dom.test.tsx src/components/mobile/MobileMachinesScreen.dom.test.tsx src/components/OverviewBoard.render.test.tsx src/components/OverviewBoard.firstRun.dom.test.tsx` and `bunx eslint` on the four files.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add src/components/mobile/MobileMachinesScreen.tsx src/components/mobile/MobileMachinesScreen.dom.test.tsx src/components/desktop src/components/OverviewBoard.tsx src/components/Viewer.tsx src/lib/i18n/uk.ts src/lib/i18n/en.ts
-git commit -m "«Створити агента» на один клік, проєкт уже підставлений, фірми групами"
-```
+- Modify: `src/components/OverviewBoard.tsx` (mobile branch: a 44px «Запустити сесію» button above `grid` → `mobileNav.push({ kind: "machines" })`, `data-mobile2-launch`), `src/components/mobile/mobileNav.ts` (add `"machines"`, `"permissions"`, `"channels"` to `SCREEN_KINDS` so a reload on those screens restores them), `src/components/ProjectDashboard.tsx` + the desktop component that renders the handoff control (`grep -n "onHandoff" src/components/*.tsx`): thread `onTransfer` beside `onHandoff` and render a `data-transfer` button with `ArrowRightLeft`, calling the existing `addTransferDraft(file)` (ProjectDashboard ~line 1285); NEW key `transfer.label` "перенести на іншу машину / акаунт" / "move to another machine / account".
+- Test: `src/components/OverviewBoard.mobileLaunch.dom.test.tsx` (button present on the phone and pushes the machines screen — assert via `getMobileNav()` state), and a `*.transfer.dom.test.tsx` beside the component that gains `onTransfer` (button present with the prop, absent without, click calls it).
+- [ ] Steps: failing tests → implement → `bun test` the two new files plus `src/components/OverviewBoard.render.test.tsx src/components/mobile/mobileNav.test.ts` → eslint → commit `Запуск сесії з телефона на один тап, і «перенести» на десктопній дошці`.
 
 ---
 
-### Task 6: Agent conversation from the console, and «Перенести» on the desktop
+### Task 8: Build, deploy, look at it
 
-**Files:**
-- Modify: `src/components/Viewer.tsx` (done in Task 3: `onOpenFile` flips to the board without persisting), `src/components/ProjectDashboard.tsx` (~line 1281–1307 `addTransferDraft`, ~line 2333 where `onHandoff={addHandoffDraft}` is passed to the desktop scheme), `src/components/HandoffHandle.tsx` or `src/components/TaskHeader.tsx` (whichever renders the desktop handoff control — `grep -n "onHandoff" src/components/*.tsx`), `src/lib/i18n/{uk,en}.ts`
-- Test: `src/components/TaskHeader.transfer.dom.test.tsx` (new; mirror the structure of `TaskHeader.killConfirm.dom.test.tsx`)
-
-**Interfaces:**
-- The component that receives `onHandoff` on the desktop gains `onTransfer?: () => void` and renders, beside the handoff control, `<button data-transfer aria-label={t("transfer.label")} title={t("transfer.label")} onClick={onTransfer}>` with the `ArrowRightLeft` icon from `lucide-react`. `ProjectDashboard` passes `onTransfer={(file) => { void addTransferDraft(file); }}` at the same call site as `onHandoff` (line ~2333) and threads it through any intermediate component the same way `onHandoff` travels (follow the prop by grep; add `onTransfer` next to every `onHandoff`).
-- Behaviour after the click is the existing one: `addTransferDraft` writes a draft whose first prompt is sessionmem's brief and shows `t("transfer.ready")` (already in `uk.ts:2391`). The draft's own engine/account pickers are the account switch.
-
-i18n: `"transfer.label": "перенести на іншу машину / акаунт" / "move to another machine / account"`.
-
-- [ ] **Step 1: Write the failing test** — mount the component with `onTransfer` as a spy, assert `[data-transfer]` exists and the click calls it; mount without it, assert the button is absent.
-- [ ] **Step 2: Run to verify it fails.**
-- [ ] **Step 3: Implement** the prop, the button, and the threading from `ProjectDashboard`.
-- [ ] **Step 4: Verify** — the new test plus `bun test src/components/TaskHeader.killConfirm.dom.test.tsx src/components/ProjectDashboard.selection.dom.test.tsx`; `bunx eslint` on touched files.
-- [ ] **Step 5: Commit** — `git commit -m "«Перенести» є і на десктопі, з того самого брифа, що на телефоні"`.
-
----
-
-### Task 7: Build, deploy, look at it
-
-**Files:** none new.
-
-- [ ] **Step 1:** `bunx tsc --noEmit` clean; `bun run build` succeeds locally.
-- [ ] **Step 2:** `git push origin main` (the pre-push privacy gate runs; do not bypass it).
-- [ ] **Step 3:** On walter as `pi`: `cd ~/work/fleet && git pull --ff-only && export PATH=$HOME/.bun/bin:$PATH && bun run build`, then restart the server in tmux session `fleet` (read `.run-env.sh` there for the exact start line; `tmux send-keys -t fleet C-c` then the start command).
-- [ ] **Step 4:** Open `https://walter.tailfdf1ad.ts.net` at ≥1024px: console column + HQ room; pick a project; «Створити агента»; «Дошка» and «HQ · Чат» round trip. Screenshot to `../outbox/` for the operator.
+- [ ] **Step 1:** `bunx tsc --noEmit` clean; `bun run build` succeeds locally (fleet).
+- [ ] **Step 2:** STOP and ask the operator before pushing: `git push origin desktop-hq` then merge to main (the pre-push privacy gate runs; do not bypass it). The agents repo (fleetctl change) is pushed the same way.
+- [ ] **Step 3:** On walter as `pi`: `cd ~/work && git pull --ff-only` (fleetctl), then `cd ~/work/fleet && git pull --ff-only && export PATH=$HOME/.bun/bin:$PATH && bun run build`, restart the server in tmux session `fleet` (read `.run-env.sh` there for the exact start line).
+- [ ] **Step 4:** Open the tailnet URL at ≥1024px: console column + HQ room; pick a project; launch form with the four pickers; «Дошка» and «HQ · Чат» round trip. Screenshot to `../outbox/`.
