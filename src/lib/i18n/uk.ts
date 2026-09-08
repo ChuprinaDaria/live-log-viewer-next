@@ -2423,6 +2423,8 @@ export const uk: Record<keyof typeof en, Message> = {
   "mobile2.board.nothingRunning": "Зараз нічого не виконується.",
   "mobile.catalog.count": "{count} збережених записів, включно з історією",
   "mobile.catalog.unknown": "Збережені записи · розгорніть для завантаження",
+  "mobile.home.board": "Дошка",
+  "mobile.home.console": "Пульт",
   "mobile.catalog.hint": "Збережені записи розмов включають історію. Пошук охоплює всі проєкти.",
   "mobile.catalog.expired": "Термін дії цієї сторінки минув. Видимі записи збережено. Оновіть каталог, щоб завантажити новий список.",
   "mobile.catalog.refresh": "Оновити каталог",

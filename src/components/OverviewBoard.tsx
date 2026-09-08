@@ -1,5 +1,6 @@
 "use client";
 
+import { LayoutGrid } from "lucide-react";
 import { useMemo } from "react";
 
 import { useCoarsePointer } from "@/hooks/useCoarsePointer";
@@ -11,7 +12,10 @@ import type { Pipeline } from "@/lib/pipelines/types";
 import type { Workflow } from "@/lib/workflows/types";
 
 import { CatalogFailureNotice } from "./CatalogFailureNotice";
-import { FolderPlus, Search } from "./icons";
+import { FolderPlus, Search, SquareTerminal } from "./icons";
+import { MobileConsoleScreen } from "./mobile/MobileConsoleScreen";
+import { MobileMenuSheet, type MobileMenuEntry } from "./mobile/MobileMenuSheet";
+import { useMobileHome, writeMobileHome } from "./mobile/mobileHomeModel";
 import { renderMobileRootScreen } from "./mobile/MobileRootScreen";
 import { MobileAccountsScreen, MobileBarTitle, MobileShell, type MobileShellHost } from "./mobile/MobileShell";
 import { topScreen, useMobileNav, useMobileNavStore, type MobileSheetName } from "./mobile/mobileNav";
@@ -57,6 +61,13 @@ export function OverviewBoard({ files, projectCatalog, projectDisplayNames = {},
   const isMobile = useIsMobile();
   const mobileNav = useMobileNavStore();
   const mobileNavState = useMobileNav();
+  /* Which surface the phone's «Сесії» tab is (spec 2026-09-08). The desktop's
+     console became the better half of this product, so the phone lands on the
+     same one; the card board is the ⋯ menu's «Дошка» and is never gone. The
+     server render and the hydrating client render agree on the console; the
+     stored choice is read the moment hydration is over, and again whenever the
+     ⋯ menu's row writes it, so the two surfaces never disagree. */
+  const mobileHome = useMobileHome();
   const degraded = catalogFailures > 0;
   const cols = useColumns();
   const targetHeight = useCoarsePointer() ? COARSE_TARGET_HEIGHT : FINE_TARGET_HEIGHT;
@@ -228,12 +239,24 @@ export function OverviewBoard({ files, projectCatalog, projectDisplayNames = {},
     /* The phone (mobile v2 lane 1): the shell's bar with «Overview» as the
        title cell (it opens the project switcher), the badge and search; the
        device settings live on the tab bar's settings screen. */
-    const renderSheet = (name: MobileSheetName, close: () => void) => mobileShell?.renderSheet(name, close) ?? null;
+    /* The overview owns exactly one menu row — the swap between its two faces,
+       named after the one the operator is NOT looking at, the way the desktop
+       header's button is. Everything else in the sheet is still the Viewer's. */
+    const homeRow: MobileMenuEntry = mobileHome === "console"
+      ? { kind: "row", key: "home-mode", icon: <LayoutGrid className="h-[18px] w-[18px]" aria-hidden />, label: t("mobile.home.board"), onSelect: () => { mobileNav.closeSheet(); writeMobileHome("board"); } }
+      : { kind: "row", key: "home-mode", icon: <SquareTerminal className="h-[18px] w-[18px]" aria-hidden />, label: t("mobile.home.console"), onSelect: () => { mobileNav.closeSheet(); writeMobileHome("console"); } };
+    const renderSheet = (name: MobileSheetName, close: () => void) => {
+      if (name === "menu") return <MobileMenuSheet title={t("rail.overview")} entries={[homeRow]} onClose={close} />;
+      return mobileShell?.renderSheet(name, close) ?? null;
+    };
     /* The tab bar's roots (settings, the pages not built yet); the overview
        has no host sheet of its own. */
     const rootScreen = renderMobileRootScreen(topScreen(mobileNavState).kind, { host: mobileShell, renderSheet, hostSheet: false, files });
     if (rootScreen) return rootScreen;
     if (topScreen(mobileNavState).kind === "accounts") return <MobileAccountsScreen host={mobileShell} renderSheet={renderSheet} />;
+    if (mobileHome === "console") {
+      return <MobileConsoleScreen files={files} host={mobileShell} renderSheet={renderSheet} onOpenSearch={onOpenSearch} onSelectFile={onSelectFile} />;
+    }
     return (
       <MobileShell
         screen="board"

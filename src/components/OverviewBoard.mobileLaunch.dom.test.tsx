@@ -1,4 +1,4 @@
-import { afterAll, afterEach, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
 import { Window } from "happy-dom";
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
@@ -9,6 +9,7 @@ import type { FileEntry } from "@/lib/types";
 import { setRuntimeUiEnabledForTests } from "@/hooks/runtimeBus";
 import { MOBILE_LAYOUT_QUERY, mobileLayoutViewport } from "@/lib/attention/eligibility";
 
+import { writeMobileHome } from "./mobile/mobileHomeModel";
 import { getMobileNav, topScreen } from "./mobile/mobileNav";
 import { OverviewBoard } from "./OverviewBoard";
 
@@ -17,6 +18,9 @@ import { OverviewBoard } from "./OverviewBoard";
  * branch grows a full-width «Запустити сесію» button above the card grid; a
  * tap pushes the shared `machines` screen (MobileMachinesScreen), the same
  * screen the tab bar's root row already opens.
+ *
+ * The button belongs to the card board, which is one of the tab's two faces
+ * since the console landed; every render here stands on that face.
  */
 
 const dom = new Window({ url: "http://localhost/" });
@@ -75,6 +79,7 @@ function fileEntry(overrides: Partial<FileEntry> = {}): FileEntry {
 setRuntimeUiEnabledForTests(false);
 
 let root: Root | null = null;
+beforeEach(() => writeMobileHome("board"));
 afterEach(() => {
   if (root) flushSync(() => root?.unmount());
   root = null;

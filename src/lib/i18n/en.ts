@@ -2496,6 +2496,8 @@ export const en = {
   "mobile2.board.nothingRunning": "Nothing is running.",
   "mobile.catalog.count": "{count} stored entries, including history",
   "mobile.catalog.unknown": "Stored entries · expand to load",
+  "mobile.home.board": "Board",
+  "mobile.home.console": "Console",
   "mobile.catalog.hint": "Stored conversation entries include history. Search covers all projects.",
   "mobile.catalog.expired": "This page snapshot expired. Your visible entries are retained. Refresh to load a new list.",
   "mobile.catalog.refresh": "Refresh catalog",
