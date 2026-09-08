@@ -157,6 +157,16 @@ const MOTION: Record<string, string> = {
   switch: "starting:opacity-0",
 };
 
+/* A desktop surface renders the same screens with its own navigation, so it
+   suppresses the tab bar for everything mounted inside it. Context rather than
+   a prop drilled through every screen: the screens take `host` and
+   `renderSheet` and should not each learn where they are being shown. */
+const TabsContext = createContext(true);
+
+export function SuppressMobileTabs({ children }: { children: ReactNode }) {
+  return <TabsContext.Provider value={false}>{children}</TabsContext.Provider>;
+}
+
 export function MobileShell({
   screen,
   screenId,
@@ -168,6 +178,7 @@ export function MobileShell({
   onOpenSearch,
   searchTestId,
   menu = true,
+  tabs: tabsProp,
   renderSheet,
   dock,
   children,
@@ -190,6 +201,10 @@ export function MobileShell({
   searchTestId?: string;
   /** The ⋯ target: every screen opens the board menu over itself. */
   menu?: boolean;
+  /** Draw the bottom tab bar. Defaults to what the surrounding surface says:
+      a phone shows tabs at the bottom, a desktop shows the same destinations
+      down the side and would otherwise get two navigations for one. */
+  tabs?: boolean;
   /** The owner's sheets (the board menu, the host sheet); a name it does not
       own falls through to the host's. */
   renderSheet?: SheetRenderer;
@@ -198,6 +213,8 @@ export function MobileShell({
 }) {
   const { t } = useLocale();
   const nav = useMobileNavStore();
+  const tabsAllowed = useContext(TabsContext);
+  const tabs = tabsProp ?? tabsAllowed;
   const state = useMobileNav();
   useEffect(() => nav.attach(), [nav]);
   /* The shell this one is mounted inside, if any: it lends its host and its
@@ -323,7 +340,7 @@ export function MobileShell({
       ) : null}
       {/* The tab bar pays the safe-area inset once, for itself and the dock;
           it renders nothing above the bottom of the stack or under a keyboard. */}
-      {claimed ? null : <MobileTabBar />}
+      {claimed || !tabs ? null : <MobileTabBar />}
       {sheet}
     </div>
     </MobileShellChromeContext.Provider>
