@@ -23,16 +23,34 @@ export interface OrgTreeProps {
   onSelect: (project: string) => void;
   /** Open the session archive. */
   onOpenArchive: () => void;
+  /** Desktop column (32px rows) by default; the phone passes false for 44px.
+      This is the phone's primary navigation — every row here is a finger. */
+  compact?: boolean;
+  /** Announced once the org has answered: which project ids actually exist.
+      The phone uses it to forget a remembered id the org no longer has. */
+  onProjectsKnown?: (ids: readonly string[]) => void;
 }
 
-const ROW = "flex min-h-8 w-full items-center gap-1.5 rounded-[8px] px-2 text-left text-[12.5px] hover:bg-quiet focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40";
+const rowClasses = (compact: boolean) =>
+  `flex ${compact ? "min-h-8" : "min-h-11"} w-full items-center gap-1.5 rounded-[8px] px-2 text-left text-[12.5px] hover:bg-quiet focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40`;
 
-export function OrgTree({ selected, onSelect, onOpenArchive }: OrgTreeProps) {
+export function OrgTree({ selected, onSelect, onOpenArchive, compact = true, onProjectsKnown }: OrgTreeProps) {
   const { t } = useLocale();
   const org = useOrg();
+  const ROW = rowClasses(compact);
   /* Nothing while it is unknown: a count is either the archive's own or absent,
      never a zero this column made up. */
   const [archived, setArchived] = useState<number | null>(null);
+
+  /* The one thing this column knows that its owner does not: which project ids
+     the org actually has. A surface that remembers a selection needs it to tell
+     a stale id from a slow load — asking `/api/projects` a second time to find
+     out would be two copies of one poll. */
+  const projects = org.projects;
+  useEffect(() => {
+    if (!projects || !onProjectsKnown) return;
+    onProjectsKnown(projects.map((project) => project.id));
+  }, [projects, onProjectsKnown]);
 
   useEffect(() => {
     let alive = true;
@@ -61,9 +79,9 @@ export function OrgTree({ selected, onSelect, onOpenArchive }: OrgTreeProps) {
           </div>
           {projectTree(org.projects ?? [], firm.id).map(({ row, children }) => (
             <div key={row.id} className="flex flex-col">
-              <ProjectRow id={row.id} label={row.name || row.id} depth={0} selected={selected === row.id} onSelect={onSelect} />
+              <ProjectRow id={row.id} label={row.name || row.id} depth={0} selected={selected === row.id} onSelect={onSelect} rowClass={ROW} />
               {children.map((child) => (
-                <ProjectRow key={child.id} id={child.id} label={child.name || child.id} depth={1} selected={selected === child.id} onSelect={onSelect} />
+                <ProjectRow key={child.id} id={child.id} label={child.name || child.id} depth={1} selected={selected === child.id} onSelect={onSelect} rowClass={ROW} />
               ))}
             </div>
           ))}
@@ -80,10 +98,10 @@ export function OrgTree({ selected, onSelect, onOpenArchive }: OrgTreeProps) {
   );
 }
 
-function ProjectRow({ id, label, depth, selected, onSelect }: { id: string; label: string; depth: 0 | 1; selected: boolean; onSelect: (id: string) => void }) {
+function ProjectRow({ id, label, depth, selected, onSelect, rowClass }: { id: string; label: string; depth: 0 | 1; selected: boolean; onSelect: (id: string) => void; rowClass: string }) {
   return (
     <button type="button" data-org-project={id} aria-current={selected ? "true" : undefined}
-      className={`${ROW} ${depth ? "pl-7" : "pl-4"} ${selected ? "bg-accent/10 font-semibold text-accent" : "text-primary"}`}
+      className={`${rowClass} ${depth ? "pl-7" : "pl-4"} ${selected ? "bg-accent/10 font-semibold text-accent" : "text-primary"}`}
       onClick={() => onSelect(id)}>
       <span className="truncate">{label}</span>
     </button>

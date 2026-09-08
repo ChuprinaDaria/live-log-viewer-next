@@ -160,7 +160,7 @@ export function ProjectConsole({ project, files, onOpenFile, onOpenTranscript, c
           the tree switches A→B without unmounting this column, so without the
           key B renders A's git state under B's name. */}
       <ProjectAccordions key={project} project={project} detail={detail} onChanged={() => void reload()}
-        onOpenTranscript={onOpenTranscript} />
+        onOpenTranscript={onOpenTranscript} compact={compact} />
     </section>
   );
 }

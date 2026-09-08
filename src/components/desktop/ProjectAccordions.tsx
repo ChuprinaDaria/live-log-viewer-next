@@ -29,6 +29,9 @@ export interface ProjectAccordionsProps {
       the tab can already be standing on that exact `#f=` with the conversation
       nowhere on screen, and an unchanged hash fires no hashchange. */
   onOpenTranscript: (path: string) => void;
+  /** Desktop column (32px summaries, 24px chips) by default; the phone passes
+      false and every summary, chip and select becomes a 44px target. */
+  compact?: boolean;
 }
 
 /** One host's checkout, as `project_code` answers it. */
@@ -60,10 +63,12 @@ interface ArchiveCard {
 
 type Kind = "mcp" | "skills" | "secrets";
 
-const SUMMARY = "flex min-h-8 cursor-pointer list-none items-center px-2 text-[11.5px] font-semibold text-secondary hover:text-accent";
-const CHIP = "inline-flex h-6 shrink-0 items-center rounded-[6px] border border-border px-1.5 text-[11px] text-secondary hover:border-accent/45 hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40";
+const summaryClass = (compact: boolean) =>
+  `flex ${compact ? "min-h-8" : "min-h-11"} cursor-pointer list-none items-center px-2 text-[11.5px] font-semibold text-secondary hover:text-accent`;
+const chipClass = (compact: boolean) =>
+  `inline-flex ${compact ? "h-6" : "min-h-11"} shrink-0 items-center rounded-[6px] border border-border px-1.5 text-[11px] text-secondary hover:border-accent/45 hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40`;
 
-export function ProjectAccordions({ project, detail, onChanged, onOpenTranscript }: ProjectAccordionsProps) {
+export function ProjectAccordions({ project, detail, onChanged, onOpenTranscript, compact = true }: ProjectAccordionsProps) {
   const { t } = useLocale();
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [archive, setArchive] = useState<ArchiveCard[] | null>(null);
@@ -78,6 +83,8 @@ export function ProjectAccordions({ project, detail, onChanged, onOpenTranscript
   /* The inventory is only ever read to offer a key that is not shared yet, so
      it is not asked for until that panel is open. */
   const secrets = useSecretsInventory(open.secrets === true);
+  const SUMMARY = summaryClass(compact);
+  const CHIP = chipClass(compact);
 
   const loadArchive = useCallback(async () => {
     try {
@@ -113,7 +120,7 @@ export function ProjectAccordions({ project, detail, onChanged, onOpenTranscript
 
   return (
     <div className="flex flex-col gap-1">
-      <Accordion name="old" label={t("desktop.sectionArchive")} open={open.old === true}
+      <Accordion name="old" label={t("desktop.sectionArchive")} open={open.old === true} summaryClassName={SUMMARY}
         onToggle={() => toggle("old", () => { if (archive === null && archiveFailed === null) void loadArchive(); })}>
         {archiveFailed ? <p data-console-archive-failure className="text-[11.5px] text-muted">
             {archiveFailed.notInstalled ? t("archive.unavailable") : archiveFailed.text}
@@ -121,11 +128,11 @@ export function ProjectAccordions({ project, detail, onChanged, onOpenTranscript
           : archive === null ? <p className="text-[11.5px] text-muted">{t("common.loading")}</p>
           : archive.length === 0 ? <p className="text-[11.5px] text-muted">{t("archive.empty")}</p>
           : <ul className="flex flex-col gap-1">{archive.map((card) => (
-              <li key={card.sessionId}><ArchiveEntry card={card} onOpenTranscript={onOpenTranscript} /></li>
+              <li key={card.sessionId}><ArchiveEntry card={card} onOpenTranscript={onOpenTranscript} compact={compact} chipClassName={CHIP} /></li>
             ))}</ul>}
       </Accordion>
 
-      <Accordion name="code" label={t("desktop.sectionCode")} open={open.code === true}
+      <Accordion name="code" label={t("desktop.sectionCode")} open={open.code === true} summaryClassName={SUMMARY}
         onToggle={() => toggle("code", () => { if (code === null && !codeFailed) void loadCode(); })}>
         {codeFailed ? <p className="text-[11.5px] text-danger">{codeFailed}</p>
           : code === null ? <p className="text-[11.5px] text-muted">{t("common.loading")}</p>
@@ -143,27 +150,27 @@ export function ProjectAccordions({ project, detail, onChanged, onOpenTranscript
 
       {([["skills", t("desktop.sectionSkills")], ["mcp", t("desktop.sectionMcp")], ["secrets", t("desktop.sectionSecrets")]] as const).map(([kind, label]) => (
         <GrantSection key={kind} kind={kind} label={label} project={project} detail={detail}
-          registry={registry} secrets={secrets}
+          registry={registry} secrets={secrets} compact={compact} summaryClassName={SUMMARY} chipClassName={CHIP}
           open={open[kind] === true} onToggle={() => toggle(kind)} onChanged={onChanged} />
       ))}
     </div>
   );
 }
 
-function Accordion({ name, label, open, onToggle, children }: {
-  name: string; label: string; open: boolean; onToggle: () => void; children: React.ReactNode;
+function Accordion({ name, label, open, onToggle, summaryClassName, children }: {
+  name: string; label: string; open: boolean; onToggle: () => void; summaryClassName: string; children: React.ReactNode;
 }) {
   return (
     <details data-console-accordion={name} open={open} className="rounded-[8px] border border-border bg-card">
       {/* The open state is React's, so the native toggle is suppressed: one
           source of truth decides whether the panel has asked its route. */}
-      <summary className={SUMMARY} onClick={(event) => { event.preventDefault(); onToggle(); }}>{label}</summary>
+      <summary className={summaryClassName} onClick={(event) => { event.preventDefault(); onToggle(); }}>{label}</summary>
       <div className="border-t border-border px-2 py-2">{children}</div>
     </details>
   );
 }
 
-function ArchiveEntry({ card, onOpenTranscript }: { card: ArchiveCard; onOpenTranscript: (path: string) => void }) {
+function ArchiveEntry({ card, onOpenTranscript, compact, chipClassName }: { card: ArchiveCard; onOpenTranscript: (path: string) => void; compact: boolean; chipClassName: string }) {
   const { t } = useLocale();
   const lists: { label: string; items: string[] }[] = [
     { label: t("archive.did"), items: card.did },
@@ -174,7 +181,9 @@ function ArchiveEntry({ card, onOpenTranscript }: { card: ArchiveCard; onOpenTra
 
   return (
     <details data-console-archive-card={card.sessionId} className="rounded-[8px] bg-quiet px-2 py-1">
-      <summary className="cursor-pointer list-none text-[12px] text-primary">
+      {/* Desktop keeps the plain inline summary it always had; the phone needs
+          a 44px target, and a block that tall must centre its own line. */}
+      <summary className={`cursor-pointer list-none text-[12px] text-primary ${compact ? "" : "flex min-h-11 flex-wrap items-center"}`}>
         <span className="truncate">{card.title}</span>
         <span className="ml-1 text-[11px] text-muted">
           {[card.endedAt === null ? "" : fmtAge(card.endedAt), card.host].filter(Boolean).join(" · ")}
@@ -197,7 +206,7 @@ function ArchiveEntry({ card, onOpenTranscript }: { card: ArchiveCard; onOpenTra
           disk. The path goes to the Viewer's own resolver, which fetches a
           transcript outside the feed and says so itself when there is none —
           and which opens it even when the tab already sits on that hash. */}
-      <button type="button" data-console-transcript={card.sessionId} className={`${CHIP} mt-1`}
+      <button type="button" data-console-transcript={card.sessionId} className={`${chipClassName} mt-1`}
         onClick={() => { if (card.transcriptPath) onOpenTranscript(card.transcriptPath); }}>
         {t("archive.transcript")}
       </button>
@@ -211,10 +220,11 @@ function ArchiveEntry({ card, onOpenTranscript }: { card: ArchiveCard; onOpenTra
  * it back. An inherited row has no revoke button at all rather than a disabled
  * one: the place to drop a firm's grant is the firm.
  */
-function GrantSection({ kind, label, project, detail, registry, secrets, open, onToggle, onChanged }: {
+function GrantSection({ kind, label, project, detail, registry, secrets, open, onToggle, onChanged, compact, summaryClassName, chipClassName }: {
   kind: Kind; label: string; project: string; detail: ProjectDetail | null;
   registry: McpRegistryRead; secrets: SecretsRead;
   open: boolean; onToggle: () => void; onChanged: () => void;
+  compact: boolean; summaryClassName: string; chipClassName: string;
 }) {
   const { t } = useLocale();
   const [busy, setBusy] = useState(false);
@@ -240,7 +250,7 @@ function GrantSection({ kind, label, project, detail, registry, secrets, open, o
   };
 
   return (
-    <Accordion name={kind} label={label} open={open} onToggle={onToggle}>
+    <Accordion name={kind} label={label} open={open} onToggle={onToggle} summaryClassName={summaryClassName}>
       {rows.length === 0 ? (
         <p className="text-[11.5px] text-muted">{t("firms.nothingApplies")}</p>
       ) : (
@@ -257,7 +267,7 @@ function GrantSection({ kind, label, project, detail, registry, secrets, open, o
               </span>
               {row.own ? (
                 <button type="button" data-console-revoke={`${kind}:${row.item}`} disabled={busy}
-                  className={CHIP} onClick={() => void write(row.item, true)}>
+                  className={chipClassName} onClick={() => void write(row.item, true)}>
                   {t("desktop.revoke")}
                 </button>
               ) : null}
@@ -268,7 +278,7 @@ function GrantSection({ kind, label, project, detail, registry, secrets, open, o
       {candidates.length ? (
         <select data-console-add={kind} value="" disabled={busy} aria-label={label}
           onChange={(event) => { const item = event.target.value; if (item) void write(item, false); }}
-          className="mt-1.5 h-7 w-full rounded-[8px] border border-border bg-card px-2 text-[11.5px] text-secondary">
+          className={`mt-1.5 ${compact ? "h-7" : "min-h-11"} w-full rounded-[8px] border border-border bg-card px-2 text-[11.5px] text-secondary`}>
           <option value="">{t("desktop.addGrant")}</option>
           {candidates.map((item) => <option key={item} value={item}>{item}</option>)}
         </select>

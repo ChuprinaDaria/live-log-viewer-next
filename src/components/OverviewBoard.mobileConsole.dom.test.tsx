@@ -60,17 +60,26 @@ const DETAIL = {
   effective: { mcp: [], skills: [], rules: [], secrets: [] },
 };
 
+/* One sessionmem card, with a transcript that `/api/files` does NOT carry —
+   the recency cap is exactly why the phone must not resolve the path against
+   the feed before opening it. */
+const ARCHIVED = {
+  sessionId: "s-1", title: "Стара сесія", host: "walter", endedAt: 1_700_000_000,
+  resumable: false, transcriptPath: "/w/pulled/walter/s-1.jsonl",
+  summary: "", did: [], broke: [], decided: [], left: [],
+};
+
 const JSON_HEADERS = { "content-type": "application/json" };
 function answer(url: string): unknown {
   if (url.startsWith("/api/projects?project=")) return DETAIL;
   if (url.startsWith("/api/projects")) return PROJECTS;
   if (url.startsWith("/api/firms")) return FIRMS;
   if (url === "/api/archive?count=1") return { count: 3 };
-  if (url.startsWith("/api/archive")) return { cards: [] };
+  if (url.startsWith("/api/archive")) return { cards: [ARCHIVED] };
   if (url.startsWith("/api/machines") && url.includes("accounts=1")) return { profiles: [] };
   if (url.startsWith("/api/machines") && url.includes("sessions=1")) return { sessions: [] };
   if (url.startsWith("/api/machines")) return { hosts: [{ id: "walter", ssh: null, engines: ["claude"], is_local: true, status: { reachable: true, detail: "" } }] };
-  if (url.startsWith("/api/mcp-registry")) return { servers: [], skills: [], registry: "/w/registry.json" };
+  if (url.startsWith("/api/mcp-registry")) return { servers: [{ name: "viewer", type: "stdio", granted_to: [], fleet_env: [] }], skills: [], registry: "/w/registry.json" };
   if (url.startsWith("/api/secrets")) return { generatedAt: null, accounts: [], clis: [], secrets: [] };
   if (url.startsWith("/api/orchestrator/hq")) return { seat: null, pending: null, exists: false };
   return {};
@@ -86,6 +95,7 @@ beforeEach(() => {
   setLocale("uk");
   dom.localStorage.clear();
   dom.sessionStorage.clear();
+  transcripts = [];
 });
 afterEach(() => {
   act(() => { root?.unmount(); });
@@ -103,7 +113,9 @@ function file(over: Partial<FileEntry> = {}): FileEntry {
   } as FileEntry;
 }
 
-function mount(): HTMLElement {
+let transcripts: string[] = [];
+
+function mount(extra: Partial<React.ComponentProps<typeof OverviewBoard>> = {}): HTMLElement {
   const node = dom.document.createElement("div");
   dom.document.body.appendChild(node);
   container = node as unknown as HTMLElement;
@@ -119,7 +131,9 @@ function mount(): HTMLElement {
         now={2_000}
         onSelectProject={() => {}}
         onSelectFile={() => {}}
+        onOpenTranscript={(path) => transcripts.push(path)}
         mobileShell={{ attentionCount: 0, arrival: null, renderSheet: () => null }}
+        {...extra}
       />,
     );
   });
@@ -188,4 +202,74 @@ test("the ⋯ menu carries the row that swaps the two, naming the other one", as
   await settle();
   expect(el.querySelector('[data-testid="overview-card"]')).not.toBeNull();
   expect(el.querySelector("[data-org-project]")).toBeNull();
+});
+
+test("«повний транскрипт» goes to the Viewer's resolver, not through the capped feed", async () => {
+  /* The archived transcript is not in `files` — `/api/files` is a recency-
+     capped board budget — so a console that looked the path up there had a
+     dead button. The path goes out as a path. */
+  writeMobileConsoleProject("bot");
+  const el = mount();
+  await settle();
+  act(() => { (el.querySelector('[data-console-accordion="old"] > summary') as unknown as HTMLElement).dispatchEvent(click()); });
+  await settle();
+
+  const button = el.querySelector('[data-console-transcript="s-1"]') as unknown as HTMLElement;
+  expect(button).not.toBeNull();
+  act(() => { button.dispatchEvent(click()); });
+  expect(transcripts).toEqual(["/w/pulled/walter/s-1.jsonl"]);
+});
+
+test("the title cell is still the project switcher", async () => {
+  const el = mount();
+  await settle();
+  const title = el.querySelector("[data-mobile2-title]") as unknown as HTMLElement;
+  expect(title).not.toBeNull();
+  expect(title.getAttribute("data-mobile2-open")).toBe("projects");
+  expect(title.getAttribute("aria-label")).toBe("Змінити проєкт");
+});
+
+test("every row the finger lands on is 44px: the tree, the accordions, their chips and selects", async () => {
+  writeMobileConsoleProject("bot");
+  const el = mount();
+  await settle();
+
+  const row = el.querySelector('[data-org-project="bot"]') as unknown as HTMLElement;
+  expect(row.className).toContain("min-h-11");
+  expect(row.className).not.toContain("min-h-8");
+
+  const summary = el.querySelector('[data-console-accordion="old"] > summary') as unknown as HTMLElement;
+  expect(summary.className).toContain("min-h-11");
+
+  act(() => { summary.dispatchEvent(click()); });
+  await settle();
+  const chip = el.querySelector('[data-console-transcript="s-1"]') as unknown as HTMLElement;
+  expect(chip.className).toContain("min-h-11");
+  const card = el.querySelector('[data-console-archive-card="s-1"] > summary') as unknown as HTMLElement;
+  expect(card.className).toContain("min-h-11");
+
+  /* The grant panels: a candidate the project has not been given yet is added
+     through this select, and 28px is not a target on a phone. */
+  act(() => { (el.querySelector('[data-console-accordion="mcp"] > summary') as unknown as HTMLElement).dispatchEvent(click()); });
+  await settle();
+  const add = el.querySelector('[data-console-add="mcp"]') as unknown as HTMLElement;
+  expect(add).not.toBeNull();
+  expect(add.className).toContain("min-h-11");
+});
+
+test("a project the org no longer has is forgotten rather than shown as an error", async () => {
+  writeMobileConsoleProject("ghost");
+  const el = mount();
+  await settle();
+  expect(el.querySelector("[data-project-console]")).toBeNull();
+  expect(dom.sessionStorage.getItem(MOBILE_CONSOLE_PROJECT_KEY)).toBeNull();
+});
+
+test("a dead catalog is named on the console face too, not only on the board", async () => {
+  /* The console does not draw cards, but it lists a project's live sessions
+     out of the same `/api/files` payload — a surface that shows an unconfirmed
+     feed as if it were the truth is the whole of issue #696. */
+  const el = mount({ catalogFailures: 2 });
+  await settle();
+  expect(el.querySelector('[data-catalog-error="true"]')).not.toBeNull();
 });

@@ -43,6 +43,10 @@ interface Props {
       board chrome on every screen, so the operator never has to be somewhere
       particular to search what they have sent. */
   onOpenSearch?: () => void;
+  /** The Viewer's resolver for an archived transcript's path — the phone's
+      console shows the same archive accordion the desktop home does, and its
+      «повний транскрипт» has to reach a transcript the capped feed omits. */
+  onOpenTranscript?: (path: string) => void;
   /** The phone shell's host (mobile v2 lane 1): the queue count for the bar's
       badge, the arrival for the banner slot and the sheets the Viewer owns.
       Absent on the desktop. */
@@ -56,7 +60,7 @@ interface Props {
 export const COARSE_TARGET_HEIGHT = 44;
 export const FINE_TARGET_HEIGHT = 22;
 
-export function OverviewBoard({ files, projectCatalog, projectDisplayNames = {}, pipelines, workflows, archivedProjects, now, catalogFailures = 0, onSelectProject, onSelectFile, onOpenSearch, mobileShell = null }: Props) {
+export function OverviewBoard({ files, projectCatalog, projectDisplayNames = {}, pipelines, workflows, archivedProjects, now, catalogFailures = 0, onSelectProject, onSelectFile, onOpenSearch, onOpenTranscript, mobileShell = null }: Props) {
   const { t } = useLocale();
   const isMobile = useIsMobile();
   const mobileNav = useMobileNavStore();
@@ -255,7 +259,7 @@ export function OverviewBoard({ files, projectCatalog, projectDisplayNames = {},
     if (rootScreen) return rootScreen;
     if (topScreen(mobileNavState).kind === "accounts") return <MobileAccountsScreen host={mobileShell} renderSheet={renderSheet} />;
     if (mobileHome === "console") {
-      return <MobileConsoleScreen files={files} host={mobileShell} renderSheet={renderSheet} onOpenSearch={onOpenSearch} onSelectFile={onSelectFile} />;
+      return <MobileConsoleScreen files={files} host={mobileShell} renderSheet={renderSheet} onOpenSearch={onOpenSearch} onSelectFile={onSelectFile} onOpenTranscript={onOpenTranscript} catalogFailures={catalogFailures} />;
     }
     return (
       <MobileShell
