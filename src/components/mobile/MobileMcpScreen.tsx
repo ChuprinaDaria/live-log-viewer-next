@@ -5,6 +5,8 @@ import { useState } from "react";
 import { ChevronRight } from "@/components/icons";
 import { useLocale } from "@/lib/i18n";
 
+import { MobileMcpAddSheet } from "./MobileMcpAddSheet";
+import { showReceipt } from "./MobileReceipt";
 import { MobileBarTitle, MobileShell, type MobileShellHost, type SheetRenderer } from "./MobileShell";
 import { serverLine, useMcpRegistry, type McpServerRow, type SkillRow } from "./mcpModel";
 
@@ -26,12 +28,13 @@ import { serverLine, useMcpRegistry, type McpServerRow, type SkillRow } from "./
 
 const CARD = "flex flex-col divide-y divide-border overflow-hidden rounded-surface border border-border bg-card";
 
-function Group({ label, count, children }: { label: string; count: number; children: React.ReactNode }) {
+function Group({ label, count, action, children }: { label: string; count: number; action?: React.ReactNode; children: React.ReactNode }) {
   return (
     <section className="flex flex-col gap-1.5">
       <h2 className="flex items-center gap-1.5 px-1 text-label font-semibold text-secondary">
         {label}
         <span className="text-caption font-semibold tabular-nums text-muted">{count}</span>
+        {action ? <span className="ml-auto">{action}</span> : null}
       </h2>
       <div className={CARD}>{children}</div>
     </section>
@@ -113,6 +116,7 @@ export function MobileMcpScreen({ host, renderSheet }: { host: MobileShellHost |
   const { t } = useLocale();
   const registry = useMcpRegistry();
   const [pending, setPending] = useState<{ kind: "mcp" | "skills"; item: string } | null>(null);
+  const [adding, setAdding] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
 
   const body = (() => {
@@ -135,7 +139,20 @@ export function MobileMcpScreen({ host, renderSheet }: { host: MobileShellHost |
       <>
         {failure ? <p role="status" className="px-1 text-label text-danger">{failure}</p> : null}
         {registry.servers?.length ? (
-          <Group label={t("firms.rowMcp")} count={registry.servers.length}>
+          <Group
+            label={t("firms.rowMcp")}
+            count={registry.servers.length}
+            action={
+              <button
+                type="button"
+                data-mcp-add-open
+                onClick={() => { setFailure(null); setAdding(true); }}
+                className="min-h-11 rounded-[12px] px-2 text-label font-semibold text-accent"
+              >
+                {t("mcp.add")}
+              </button>
+            }
+          >
             {registry.servers.map((server) => (
               <ServerRow key={server.name} server={server} onGrant={(row) => { setFailure(null); setPending({ kind: "mcp", item: row.name }); }} />
             ))}
@@ -149,7 +166,7 @@ export function MobileMcpScreen({ host, renderSheet }: { host: MobileShellHost |
           </Group>
         ) : null}
         {pending ? (
-          <GrantSheet
+          <McpGrantSheet
             subject={pending}
             onClose={() => setPending(null)}
             onApply={async (target, revoke) => {
@@ -157,7 +174,12 @@ export function MobileMcpScreen({ host, renderSheet }: { host: MobileShellHost |
               setFailure(problem);
               if (!problem) setPending(null);
             }}
+            /* Skills are files on disk; the console removes servers only. */
+            onRemove={pending.kind === "mcp" ? () => registry.removeServer(pending.item) : undefined}
           />
+        ) : null}
+        {adding ? (
+          <MobileMcpAddSheet onClose={() => setAdding(false)} onSubmit={registry.addServer} />
         ) : null}
       </>
     );
@@ -179,24 +201,41 @@ export function MobileMcpScreen({ host, renderSheet }: { host: MobileShellHost |
  * validates the target and refuses an unknown firm by name, so a typo answers
  * with «немає такої фірми: …» rather than silently doing nothing.
  */
-function GrantSheet({
+export function McpGrantSheet({
   subject,
   onClose,
   onApply,
+  onRemove,
 }: {
   subject: { kind: "mcp" | "skills"; item: string };
   onClose: () => void;
   onApply: (target: string, revoke: boolean) => Promise<void>;
+  /** Present for a server: take it out of the registry entirely. */
+  onRemove?: () => Promise<string | null>;
 }) {
   const { t } = useLocale();
   const [target, setTarget] = useState("");
   const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
 
   const run = async (revoke: boolean) => {
     if (!target.trim() || busy) return;
     setBusy(true);
     await onApply(target.trim(), revoke);
     setBusy(false);
+  };
+
+  /* No confirmation (README §2 rule 9): the tap that names the action does it,
+     and the receipt is the safety net. The console purges the item's grants
+     along with it, so nothing is left pointing at a server that is gone. */
+  const remove = async () => {
+    if (!onRemove || busy) return;
+    setBusy(true);
+    const problem = await onRemove();
+    setBusy(false);
+    if (problem) { setFailure(problem); return; }
+    showReceipt(t("mcp.removed", { name: subject.item }));
+    onClose();
   };
 
   return (
@@ -223,6 +262,18 @@ function GrantSheet({
           {t("common.cancel")}
         </button>
       </div>
+      {failure ? <p role="status" data-mcp-failure className="pt-2 text-label text-danger">{failure}</p> : null}
+      {onRemove ? (
+        <button
+          type="button"
+          data-mcp-remove={subject.item}
+          disabled={busy}
+          onClick={() => void remove()}
+          className="mt-2 min-h-11 border-t border-border pt-2 text-left text-label font-semibold text-danger disabled:opacity-50"
+        >
+          {t("mcp.removeServer")}
+        </button>
+      ) : null}
     </div>
   );
 }

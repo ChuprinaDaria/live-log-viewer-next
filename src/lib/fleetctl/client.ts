@@ -63,12 +63,24 @@ export interface FleetctlCall {
   /** Name of the parameter whose value is piped over stdin. */
   stdinParam?: string;
   stdinValue?: string;
+  /* Parameters that must not become argv. A flag is visible in `ps` to
+     everyone on the machine, so an MCP server's `env` and `headers` — its
+     tokens — travel as a JSON object on stdin instead, which the console
+     merges over the flags. Values sent this way are also absent from the
+     console's audit line, which records key names only. */
+  stdinJson?: Record<string, unknown>;
 }
 
 export async function fleetctl<T>(call: FleetctlCall): Promise<T> {
   if (!fleetctlInstalled()) throw new FleetctlError("MISSING", "fleetctl is not installed on this machine");
   const args = [call.fn, ...flagsFor(call.params ?? {}), "--json", `--actor=${FLEETCTL_ACTOR}`];
+  /* One stdin, so one channel: the console refuses both flags together and
+     there is no sane merge of a raw string with a JSON object. */
+  if (call.stdinParam && call.stdinJson) {
+    throw new FleetctlError("FAILED", "a call cannot use both stdin channels at once");
+  }
   if (call.stdinParam) args.push(`--stdin=${call.stdinParam}`);
+  else if (call.stdinJson) args.push("--stdin-json");
   return new Promise<T>((resolve, reject) => {
     const child = execFile(
       FLEETCTL_BIN,
@@ -93,6 +105,8 @@ export async function fleetctl<T>(call: FleetctlCall): Promise<T> {
     );
     if (call.stdinParam) {
       child.stdin?.end(call.stdinValue ?? "");
+    } else if (call.stdinJson) {
+      child.stdin?.end(JSON.stringify(call.stdinJson));
     } else {
       child.stdin?.end();
     }

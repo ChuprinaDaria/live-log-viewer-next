@@ -36,6 +36,22 @@ export interface SkillRow {
   granted_to: string[];
 }
 
+/** A server as the operator describes it in the form. Values live here for
+    exactly as long as the submit takes: the route sends them to the console
+    over stdin, the answer carries key names only, and the sheet drops its
+    state on close. Nothing in this module stores one. */
+export interface McpServerInput {
+  name: string;
+  type: "stdio" | "http" | "sse";
+  command?: string;
+  args?: string[];
+  cwd?: string;
+  url?: string;
+  env?: Record<string, string>;
+  headers?: Record<string, string>;
+  replace?: boolean;
+}
+
 export interface McpRegistryRead {
   servers: McpServerRow[] | null;
   skills: SkillRow[] | null;
@@ -45,6 +61,10 @@ export interface McpRegistryRead {
   refresh: () => Promise<void>;
   /** Resolves with the console's own refusal text, or null on success. */
   grant: (kind: "mcp" | "skills", item: string, target: string, revoke?: boolean) => Promise<string | null>;
+  /** Write the server into the registry; refusal text, or null on success. */
+  addServer: (input: McpServerInput) => Promise<string | null>;
+  /** Take it out, its grants with it; refusal text, or null on success. */
+  removeServer: (name: string) => Promise<string | null>;
 }
 
 interface Answer {
@@ -87,22 +107,18 @@ export function useMcpRegistry(): McpRegistryRead {
     return () => controller.abort();
   }, [load]);
 
-  const grant = useCallback(async (
-    kind: "mcp" | "skills",
-    item: string,
-    target: string,
-    revoke = false,
-  ): Promise<string | null> => {
+  /* One writer for the three verbs this page has. The route answers each of
+     them with the whole list, so the view cannot disagree with the store
+     about what exists or who holds it. */
+  const write = useCallback(async (payload: Record<string, unknown>): Promise<string | null> => {
     try {
       const response = await fetch("/api/mcp-registry", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ kind, item, target, ...(revoke ? { revoke: true } : {}) }),
+        body: JSON.stringify(payload),
       });
       const body = await response.json() as Answer;
       if (!response.ok) return body.error ?? `HTTP ${response.status}`;
-      /* The route answers with the whole list, so the view cannot disagree
-         with the store about who holds what. */
       apply(body);
       return null;
     } catch (cause) {
@@ -110,7 +126,16 @@ export function useMcpRegistry(): McpRegistryRead {
     }
   }, [apply]);
 
-  return { servers, skills, registry, error, loading, refresh: () => load(), grant };
+  const grant = useCallback(
+    (kind: "mcp" | "skills", item: string, target: string, revoke = false) =>
+      write({ kind, item, target, ...(revoke ? { revoke: true } : {}) }),
+    [write],
+  );
+
+  const addServer = useCallback((input: McpServerInput) => write({ action: "add", ...input }), [write]);
+  const removeServer = useCallback((name: string) => write({ action: "remove", name }), [write]);
+
+  return { servers, skills, registry, error, loading, refresh: () => load(), grant, addServer, removeServer };
 }
 
 /** «stdio · uv» / «http · example.com» — what a server IS, in one line. */

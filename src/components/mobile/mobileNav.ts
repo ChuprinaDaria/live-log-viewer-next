@@ -38,7 +38,7 @@ export type MobileScreen =
   | { kind: "machines" }
   | { kind: "archive" };
 export type MobileScreenKind = MobileScreen["kind"];
-export type MobileSheetName = "projects" | "attention" | "menu" | "host" | "search" | "seat" | "rotate" | "switch" | "model" | "stage";
+export type MobileSheetName = "projects" | "attention" | "menu" | "host" | "search" | "seat" | "rotate" | "switch" | "model" | "stage" | "mcpAdd";
 /** How the current state was reached; the shell picks its transition from it. */
 export type MobileNavMotion = "load" | "push" | "pop" | "switch" | "sheet" | "act";
 
