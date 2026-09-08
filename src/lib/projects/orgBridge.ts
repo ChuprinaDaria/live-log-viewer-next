@@ -5,6 +5,7 @@ import { fleetctl, fleetctlInstalled } from "@/lib/fleetctl/client";
 import { statePath } from "@/lib/configDir";
 import {
   directoryProjectId,
+  projectIdentityFromRemote,
   projectIdentityFromRepositoryRoot,
   repositoryRootForPath,
 } from "@/lib/projects/identity";
@@ -41,6 +42,8 @@ export interface OrgAttribution {
   projectName: string;
   /** Where the console says this project lives. Empty when it has no path. */
   path: string;
+  /** Its repository, when it has one — machine-independent, unlike the path. */
+  repo?: string;
   /** How the join was made — useful when a row looks wrong. */
   via: "board-id" | "path";
 }
@@ -64,6 +67,10 @@ interface ConsoleProject {
   name?: string | null;
   firm: string;
   path?: string | null;
+  /** The repository, when the project has one. A path is per-machine; a repo
+      is not, so this is what joins a checkout on one host to the same project
+      seen from another. */
+  repo?: string | null;
 }
 
 const CACHE_FILE = "org-bridge.json";
@@ -96,8 +103,15 @@ function claudeSlugForPath(resolvedPath: string): string {
  *  - the Claude folder slug, which is what the scanner falls back to when the
  *    transcript names no cwd. Without this one the join silently covers only
  *    sessions whose cwd survived, and those are the minority. */
-function boardIdsForPath(projectPath: string): string[] {
+function boardIdsForPath(projectPath: string, repo?: string | null): string[] {
   const ids: string[] = [];
+  /* The repository identity, derived from the remote rather than from disk.
+     This is the one that works across machines: the checkout may live at
+     one path on this host and another on the next, and both mint this. */
+  if (repo?.trim()) {
+    const identity = projectIdentityFromRemote(repo.trim());
+    if (identity) ids.push(identity.project);
+  }
   const resolved = path.resolve(projectPath);
   const repositoryRoot = repositoryRootForPath(resolved);
   if (repositoryRoot) {
@@ -122,11 +136,12 @@ function buildBridge(firms: ConsoleFirm[], projects: ConsoleProject[]): OrgBridg
       project: project.id,
       projectName: project.name?.trim() || project.id,
       path: projectPath,
+      repo: project.repo?.trim() || "",
       via: "board-id",
     };
-    if (!projectPath) continue;
+    if (!projectPath && !project.repo?.trim()) continue;
 
-    for (const id of boardIdsForPath(projectPath)) {
+    for (const id of boardIdsForPath(projectPath, project.repo)) {
       /* A subfolder project and its parent can hash to the same directory id
          only if they name the same path, which the console already forbids.
          First writer still wins, so a duplicate never silently reassigns. */
@@ -152,11 +167,11 @@ function readCache(): OrgBridge | null {
     const byBoardId = new Map<string, OrgAttribution>();
     const byPath: { path: string; attribution: OrgAttribution }[] = [];
     for (const row of envelope.rows) {
-      if (!row.path) continue;
-      for (const id of boardIdsForPath(row.path)) {
+      if (!row.path && !row.repo) continue;
+      for (const id of boardIdsForPath(row.path, row.repo)) {
         if (!byBoardId.has(id)) byBoardId.set(id, { ...row, via: "board-id" });
       }
-      byPath.push({ path: path.resolve(row.path), attribution: { ...row, via: "path" } });
+      if (row.path) byPath.push({ path: path.resolve(row.path), attribution: { ...row, via: "path" } });
     }
     byPath.sort((left, right) => right.path.length - left.path.length);
     return { byBoardId, byPath, empty: byPath.length === 0, builtAt: envelope.builtAt };

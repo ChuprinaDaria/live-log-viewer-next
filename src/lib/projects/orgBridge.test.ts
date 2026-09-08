@@ -137,3 +137,27 @@ test("a session whose transcript names no cwd still joins, by the Claude folder 
   expect(orgAttributionFor(bridge, slug, null)?.project).toBe("ramona");
   expect(orgAttributionFor(bridge, slug, undefined)?.via).toBe("board-id");
 });
+
+test("a repository joins by its remote, whatever path it sits at on this machine", async () => {
+  /* The case the path index cannot cover: the console knows the checkout at
+     one host's path, and the session ran at another's. The repository is the
+     same, so the identity must be too. */
+  seedCache([
+    {
+      firm: "bluebird", firmName: "Blue Bird", project: "viewer", projectName: "Viewer",
+      path: "/srv/somewhere-else/viewer", repo: "https://github.com/ChuprinaDaria/live-log-viewer-next.git",
+      via: "path",
+    },
+  ]);
+
+  const bridge = await loadOrgBridge({ force: true });
+  const { projectIdentityFromRemote } = await import("./identity");
+  /* The same repository written two ways — with the .git suffix and without —
+     is one repository, so both forms must land on one project. */
+  const withSuffix = projectIdentityFromRemote("https://github.com/ChuprinaDaria/live-log-viewer-next.git");
+  const without = projectIdentityFromRemote("https://github.com/ChuprinaDaria/live-log-viewer-next");
+
+  expect(withSuffix).not.toBeNull();
+  expect(without?.project).toBe(withSuffix!.project);
+  expect(orgAttributionFor(bridge, withSuffix!.project, null)?.project).toBe("viewer");
+});

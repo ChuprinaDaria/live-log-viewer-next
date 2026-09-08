@@ -187,3 +187,18 @@ export function projectIdentityFromRepositoryRoot(root: string): RepositoryProje
     canonicalRemote: canonical,
   };
 }
+
+/** The repository identity of a remote URL, with no checkout required.
+ *
+ * The scanner derives this from a directory on disk, which is the right thing
+ * when the directory exists. The org layer needs the same answer for a project
+ * whose checkout lives on ANOTHER machine: a path is per-machine, a repository
+ * is not, so the same repo cloned at two different paths must produce one
+ * identity — and it does, because the digest is over the canonical remote and
+ * nothing else. */
+export function projectIdentityFromRemote(remote: string): RepositoryProjectIdentity | null {
+  const canonical = canonicalRemote(remote.trim(), "");
+  if (!canonical || canonical.startsWith("local:")) return null;
+  const digest = crypto.createHash("sha256").update(canonical).digest("hex").slice(0, 32);
+  return { project: `repo-${digest}`, displayName: remoteDisplayName(canonical) ?? canonical, canonicalRemote: canonical };
+}
