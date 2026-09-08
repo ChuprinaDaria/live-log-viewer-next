@@ -41,7 +41,7 @@ export interface ProjectDetail extends ProjectRow {
   note?: string;
   chain?: string[];
   children?: string[];
-  effective?: { mcp?: EffectiveItem[]; skills?: EffectiveItem[]; rules?: EffectiveRule[] };
+  effective?: { mcp?: EffectiveItem[]; skills?: EffectiveItem[]; rules?: EffectiveRule[]; secrets?: { secret: string; from: string }[] };
 }
 
 export interface FirmDetail extends Omit<FirmRow, "rules"> {
