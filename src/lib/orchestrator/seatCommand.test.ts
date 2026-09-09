@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { defaultModelFor } from "@/lib/agent/models";
+import { forgetOrgBridge } from "@/lib/projects/orgBridge";
 import { AgentRegistry, setAgentRegistryForTests } from "@/lib/agent/registry";
 import { resolveSpawnRole } from "@/lib/roles/registry";
 import { MAX_STRUCTURED_TEXT_BYTES } from "@/lib/runtime/structuredContent";
@@ -1916,3 +1917,37 @@ for (const model of ["gpt-6-astra", "gpt-5.6-sol"]) {
     });
   }
 }
+
+/* A project created in the console but never yet run anywhere had no
+   conversation to borrow a directory from, so a first seat was refused with
+   "this project has no directory on the machine running the dashboard" while
+   the console held that directory all along. */
+test("spawn mode without a cwd falls back to the directory the console gives the project", async () => {
+  const previous = process.env.LLV_ORCHESTRATOR_CWD;
+  delete process.env.LLV_ORCHESTRATOR_CWD;
+  const checkout = fs.mkdtempSync(path.join(os.tmpdir(), "llv-console-project-"));
+  /* The id the bridge mints from a path with no checkout and no remote. */
+  const boardId = checkout.replace(/[/_.]/g, "-");
+  fs.mkdirSync(path.join(sandbox, "state"), { recursive: true });
+  fs.writeFileSync(
+    path.join(sandbox, "org-bridge.json"),
+    JSON.stringify({
+      builtAt: AT,
+      rows: [{ firm: "noologic", firmName: "Noologic", project: "kafe", projectName: "Кафе", path: checkout, via: "path" }],
+    }),
+  );
+  forgetOrgBridge();
+  try {
+    const { deps, recorded } = dependencies();
+    const request: Record<string, unknown> = { ...spawnRequest("req_00000205"), project: boardId };
+    delete request.cwd;
+    const result = await executeOrchestratorSeatRequest(request, deps);
+    expect(result.status).toBe(200);
+    expect(recorded.spawns[0]?.cwd).toBe(checkout);
+  } finally {
+    forgetOrgBridge();
+    fs.rmSync(checkout, { recursive: true, force: true });
+    if (previous === undefined) delete process.env.LLV_ORCHESTRATOR_CWD;
+    else process.env.LLV_ORCHESTRATOR_CWD = previous;
+  }
+});

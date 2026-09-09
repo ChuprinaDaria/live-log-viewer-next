@@ -10,6 +10,7 @@ import { internalServiceHeaders, rotationActor, type ViewerActor } from "@/lib/a
 import { VIEWER_SPAWN_CAPABILITY_HEADER } from "@/lib/agent/spawnPolicy";
 import { deliverConversationMessage } from "@/lib/delivery";
 import { structuredHostsEnabled } from "@/lib/runtime/flags";
+import { loadOrgBridge } from "@/lib/projects/orgBridge";
 import { projectForCwd } from "@/lib/scanner/describe";
 import { resolveSpawnRole } from "@/lib/roles/registry";
 import { MAX_STRUCTURED_TEXT_BYTES } from "@/lib/runtime/structuredContent";
@@ -138,7 +139,7 @@ export type ExistingConversationTarget =
     inert. With no explicit cwd and no operator override, the project's own
     newest existing checkout is the only honest default; failing the call
     beats minting a dead seat. */
-function resolveOrchestratorCwd(project: string, requested: unknown): string | null {
+async function resolveOrchestratorCwd(project: string, requested: unknown): Promise<string | null> {
   if (typeof requested === "string" && requested.trim()) return requested.trim();
   const override = process.env.LLV_ORCHESTRATOR_CWD?.trim();
   if (override) return override;
@@ -155,6 +156,24 @@ function resolveOrchestratorCwd(project: string, requested: unknown): string | n
       const candidate = conversation.generations[index]?.launchProfile?.cwd;
       if (usable(candidate)) return candidate;
     }
+  }
+  /* A project the operator has just created in the console has no session to
+     borrow a directory from, and refusing it read "this project has no
+     directory on the machine running the dashboard" while the console held
+     that directory all along. The console is the other half of the answer:
+     `path` is where the project lives, `paths` where the same project sits on
+     other machines — one of which may be this one. Only an existing directory
+     is accepted, so a path that names another host still fails closed. */
+  try {
+    const bridge = await loadOrgBridge();
+    const attribution = bridge.byBoardId.get(project);
+    if (attribution) {
+      for (const candidate of [attribution.path, ...(attribution.paths ?? [])]) {
+        if (usable(candidate)) return candidate;
+      }
+    }
+  } catch {
+    /* The console is optional; an unreachable one leaves the answer null. */
   }
   return null;
 }
@@ -679,7 +698,7 @@ export async function executeOrchestratorSeatRequest(
         engine: resolvedRuntime.value.config.engine,
         model: resolvedRuntime.value.config.model,
       };
-  const cwd = resolveOrchestratorCwd(project, rawBody.cwd);
+  const cwd = await resolveOrchestratorCwd(project, rawBody.cwd);
   if (!cwd) {
     failOrchestratorSeatIntent(project, clientRequestId, "orchestrator cwd could not be resolved");
     return {
