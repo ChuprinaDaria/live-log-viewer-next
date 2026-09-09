@@ -232,6 +232,79 @@ test("a catalog whose every role is broken is still the console's, not an empty 
   expect(empty.degraded).toMatchObject({ reason: "console-empty" });
 });
 
+test("a row the catalog refused does not launch from the seed behind its own verdict", async () => {
+  /* The reviewer's reproduction: a seed role the console cannot show, next to a
+     healthy additional one. */
+  store.set("architect", { id: "architect", config: { engine: "claude", model: "opus", effort: "high" }, promptScaffold: "console architect", origin: "seed", seed: null });
+  store.delete("builder");
+  store.set("custom-scribe", { id: "custom-scribe", config: { engine: "codex", model: "gpt-5.6-terra", effort: "low" }, promptScaffold: "Write the note", origin: "local", seed: null });
+  unreadable = new Set(["architect"]);
+
+  const roles = (await pageRead()).roles;
+  expect(row(roles, "architect").launchable).toBe(false);
+
+  /* The row's verdict has to survive into the launch: the definition behind an
+     unreadable row is a display stand-in built from the seed, and resolving it
+     would start an agent on the built-in scaffold the console never served. */
+  const refused = await resolveSpawnRoleFromCatalog({ role: "architect" });
+  expect(refused.ok).toBe(false);
+  expect(!refused.ok && refused.error).toContain("cannot launch");
+  /* The SAME reason the page shows, not a second opinion. */
+  expect(!refused.ok && refused.error).toContain(String(row(roles, "architect").blockedReason));
+
+  /* And the healthy neighbour resolves with its own console values. */
+  const healthy = await resolveSpawnRoleFromCatalog({ role: "custom-scribe" });
+  expect(healthy).toEqual({ ok: true, value: { role: "custom-scribe", config: { engine: "codex", model: "gpt-5.6-terra", effort: "low" }, scaffold: "Write the note" } });
+});
+
+test("a role blocked by its own configuration is refused at launch with that reason", async () => {
+  store.get("builder")!.config.engine = "kettle";
+  const roles = (await pageRead()).roles;
+  expect(row(roles, "builder").launchable).toBe(false);
+  const refused = await resolveSpawnRoleFromCatalog({ role: "builder" });
+  expect(refused.ok).toBe(false);
+  /* The page's own reason, repeated verbatim: the launch does not re-derive a
+     verdict, and it certainly does not repair the role by falling back to the
+     seed's engine. */
+  expect(!refused.ok && refused.error).toContain(String(row(roles, "builder").blockedReason));
+});
+
+test("a said value that is not a value blocks its own row and leaves its neighbours exact", async () => {
+  /* `null` is something the console SAID. Read as an omission it becomes the
+     seed's engine and the row launches on a configuration that exists nowhere. */
+  store.get("builder")!.config.engine = null as unknown as string;
+  store.set("wrong-type", { id: "wrong-type", config: { engine: "codex", model: 7 as unknown as string, effort: "high" }, promptScaffold: "x", origin: "local", seed: null });
+  store.set("bad-parameters", {
+    id: "bad-parameters",
+    config: { engine: "codex", model: "gpt-5.6-terra", effort: "high" },
+    promptScaffold: "x",
+    origin: "local",
+    seed: null,
+  });
+  (store.get("bad-parameters") as unknown as { parameters: unknown }).parameters = [null];
+
+  const answer = await pageRead();
+  /* Nothing degraded, nothing vanished: three broken rows and one healthy one. */
+  expect(answer.source).toBe("fleetctl");
+  expect(answer.degraded).toBeNull();
+  expect(answer.roles).toHaveLength(4);
+
+  expect(row(answer.roles, "builder")).toMatchObject({ launchable: false });
+  expect(String(row(answer.roles, "builder").blockedReason)).toContain("null for engine");
+  expect(String(row(answer.roles, "wrong-type").blockedReason)).toContain("number for model");
+  expect(String(row(answer.roles, "bad-parameters").blockedReason)).toContain("parameter without a key");
+
+  /* Neither the launch nor the neighbour is touched by any of it. */
+  for (const id of ["builder", "wrong-type", "bad-parameters"]) {
+    expect((await resolveSpawnRoleFromCatalog({ role: id })).ok).toBe(false);
+  }
+  const healthy = row(answer.roles, CUSTOM);
+  expect(healthy).toMatchObject({ launchable: true, promptScaffold: "Review the form" });
+  expect(healthy.config).toEqual({ engine: "codex", model: "gpt-5.6-terra", effort: "high" });
+  const launch = await resolveSpawnRoleFromCatalog({ role: CUSTOM });
+  expect(launch).toEqual({ ok: true, value: { role: CUSTOM, config: healthy.config as never, scaffold: "Review the form" } });
+});
+
 test("a role whose runtime config the launch refuses is visible and says why", async () => {
   const catalog = await loadRoleCatalog();
   const builder = catalog.roles.find((role) => role.definition.id === "builder")!;

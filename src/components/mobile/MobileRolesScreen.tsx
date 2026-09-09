@@ -64,6 +64,7 @@ export function MobileRolesScreen({ host, renderSheet }: { host: MobileShellHost
                 role={role}
                 editable={writable && role.editable === true}
                 open={open === role.id}
+                readSeq={roles.readSeq}
                 onToggle={() => setOpen((was) => (was === role.id ? null : role.id))}
                 save={roles.save}
               />
@@ -75,10 +76,12 @@ export function MobileRolesScreen({ host, renderSheet }: { host: MobileShellHost
   );
 }
 
-function RoleRowView({ role, editable, open, onToggle, save }: {
+function RoleRowView({ role, editable, open, readSeq, onToggle, save }: {
   role: RoleRow;
   editable: boolean;
   open: boolean;
+  /** The catalog's authoritative-read counter, for retiring a pending write. */
+  readSeq: number;
   onToggle: () => void;
   save: RolesRead["save"];
 }) {
@@ -87,11 +90,13 @@ function RoleRowView({ role, editable, open, onToggle, save }: {
   const [busy, setBusy] = useState<"save" | "reset" | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const [unconfirmed, setUnconfirmed] = useState<string | null>(null);
-  /* What the unconfirmed write sent. A later read that shows exactly this is
-     the confirmation the write never got, so the warning retires itself —
-     otherwise «not confirmed» would sit above a textarea and a disabled Save
-     that both already agree with the console. */
-  const [unconfirmedText, setUnconfirmedText] = useState<string | null>(null);
+  /* What the unconfirmed write sent, and the read count at the moment it was
+     sent. Only an authoritative read of THIS role, made AFTER the write, can
+     retire the warning — text equality alone proves nothing, because the row
+     may already have shown that text (a Reset whose prompt was never the thing
+     that changed), and an unreadable row carries the seed's prompt while
+     saying out loud that the read failed. */
+  const [pending, setPending] = useState<{ text: string | null; readSeq: number } | null>(null);
   // Refresh follows the server only while clean. A local edit survives an
   // external change; our own successful Save/Reset adopts its read-back text.
   const [pinned, setPinned] = useState(role.promptScaffold);
@@ -99,9 +104,16 @@ function RoleRowView({ role, editable, open, onToggle, save }: {
     if (draft === pinned) setDraft(role.promptScaffold);
     setPinned(role.promptScaffold);
   }
-  if (unconfirmed !== null && unconfirmedText !== null && role.promptScaffold === unconfirmedText) {
+  if (unconfirmed !== null
+    && pending !== null
+    && readSeq > pending.readSeq
+    /* The console answered for THIS role in that read: an unreadable row is
+       not a confirmation, and it says so itself. */
+    && role.editable === true
+    && pending.text !== null
+    && role.promptScaffold === pending.text) {
     setUnconfirmed(null);
-    setUnconfirmedText(null);
+    setPending(null);
   }
   const dirty = draft !== role.promptScaffold;
   const blocked = role.launchable === false;
@@ -115,9 +127,9 @@ function RoleRowView({ role, editable, open, onToggle, save }: {
        the text on screen is what we sent, not what the console holds, and the
        operator is told to re-read rather than to write again. */
     setUnconfirmed(result.unconfirmed ?? null);
-    setUnconfirmedText(result.unconfirmed === undefined
+    setPending(result.unconfirmed === undefined
       ? null
-      : ("reset" in change ? role.seedPromptScaffold ?? null : change.prompt ?? null));
+      : { text: "reset" in change ? role.seedPromptScaffold ?? null : change.prompt ?? null, readSeq });
     if (result.role && !result.error) {
       setDraft(result.role.promptScaffold);
       setPinned(result.role.promptScaffold);

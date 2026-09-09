@@ -56,6 +56,11 @@ export interface RolesRead {
   /** The shown rows are the last good console read, kept through a degraded
       refresh rather than replaced by the built-in list. */
   stale: boolean;
+  /** Counts AUTHORITATIVE reads: one per catalog answer that came from the
+      console undegraded. An editor waiting on confirmation compares this
+      against the count it recorded at write time — a later number means a real
+      read happened after the write, which text equality alone never proves. */
+  readSeq: number;
   error: string | null;
   degraded: RolesDegradation | null;
   loading: boolean;
@@ -83,6 +88,7 @@ export function useRoles(): RolesRead {
   const [source, setSource] = useState<string | null>(null);
   const [readAt, setReadAt] = useState<string | null>(null);
   const [stale, setStale] = useState(false);
+  const [readSeq, setReadSeq] = useState(0);
   const [degraded, setDegraded] = useState<RolesDegradation | null>(null);
   /** The last read that actually came from the console. A degraded refresh is
       compared against it rather than replacing it. */
@@ -122,6 +128,7 @@ export function useRoles(): RolesRead {
           return;
         }
         fromConsole.current = !degradedNow;
+        if (!degradedNow) setReadSeq((was) => was + 1);
         setStale(false);
         setRoles(body.roles);
         setSource(body.source ?? null);
@@ -169,7 +176,7 @@ export function useRoles(): RolesRead {
     }
   }, []);
 
-  return { roles, source, readAt, stale, error, degraded, loading, refresh: () => load(), save };
+  return { roles, source, readAt, stale, readSeq, error, degraded, loading, refresh: () => load(), save };
 }
 
 /** The one-line summary under a role's name: engine, model, effort. */

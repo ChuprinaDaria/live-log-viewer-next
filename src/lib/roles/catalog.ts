@@ -105,36 +105,81 @@ function unsupportedConsumers(id: string): RoleConsumer[] {
 }
 
 /**
- * One console role in the shape every existing consumer already reads.
+ * One runtime field as the console said it.
  *
- * The seed fills only what the console did NOT say. A value the console DID
- * say travels verbatim, even when it is nonsense: substituting the seed's
- * engine for a console `engine: "kettle"` would hand the launch validator a
- * value the console does not hold, and the row would read «доступна для
- * запуску» about a config that does not exist anywhere. Whatever is left
- * missing stays empty and the complaint below names it.
+ * A string travels verbatim, nonsense included: substituting the seed's engine
+ * for a console `engine: "kettle"` would hand the launch validator a value the
+ * console does not hold, and the row would read «доступна для запуску» about a
+ * config that exists nowhere. An ABSENT key is an omission, and only then does
+ * the seed fill it. Anything else — `null`, a number, an object — is a said
+ * value that is not a value: it is neither usable nor an omission, so it
+ * blocks its own row and says which field and what arrived.
  */
-function definitionOf(role: ConsoleRole, fallback: RoleDefinition | undefined): RoleDefinition {
-  const said = role.config ?? {};
-  const engine = said.engine ?? fallback?.config.engine ?? "";
-  const model = said.model ?? fallback?.config.model ?? "";
-  const effort = said.effort ?? fallback?.config.effort ?? "";
+function saidField(
+  said: Record<string, unknown>,
+  key: "engine" | "model" | "effort",
+  seed: string | undefined,
+): { value: string; complaint: string | null } {
+  if (!(key in said) || said[key] === undefined) {
+    return seed === undefined
+      ? { value: "", complaint: `the console gave this role no ${key}` }
+      : { value: seed, complaint: null };
+  }
+  const value = said[key];
+  if (typeof value === "string") return { value, complaint: null };
+  return { value: "", complaint: `the console gave this role ${value === null ? "null" : `a ${typeof value}`} for ${key}` };
+}
+
+/** Role parameters the launch path can actually walk: every element an object
+    with a string `key`. One malformed element blocks its own row rather than
+    throwing out of the adapter and taking the whole catalog with it. */
+function saidParameters(
+  value: unknown,
+  seed: RoleDefinition["parameters"] | undefined,
+): { value: RoleDefinition["parameters"]; complaint: string | null } {
+  if (value === undefined) return { value: seed ?? [], complaint: null };
+  if (!Array.isArray(value)) return { value: [], complaint: `the console gave this role a ${value === null ? "null" : typeof value} for parameters` };
+  const usable = value.every((item) => Boolean(item) && typeof item === "object" && !Array.isArray(item) && typeof (item as { key?: unknown }).key === "string");
+  return usable
+    ? { value: value as RoleDefinition["parameters"], complaint: null }
+    : { value: [], complaint: "the console gave this role a parameter without a key" };
+}
+
+const saidText = (value: unknown, ...fallbacks: (string | undefined)[]): string =>
+  (typeof value === "string" ? value : fallbacks.find((candidate) => typeof candidate === "string") ?? "");
+
+/**
+ * One console role in the shape every existing consumer already reads, plus
+ * every complaint the adapter collected on the way. Whatever is unusable stays
+ * out of the definition AND is named, so no consumer downstream meets a value
+ * that would throw where it is used.
+ */
+function definitionOf(role: ConsoleRole, fallback: RoleDefinition | undefined): { definition: RoleDefinition; complaints: string[] } {
+  const said = (role.config ?? {}) as Record<string, unknown>;
+  const engine = saidField(said, "engine", fallback?.config.engine);
+  const model = saidField(said, "model", fallback?.config.model);
+  const effort = saidField(said, "effort", fallback?.config.effort);
+  const parameters = saidParameters(role.parameters, fallback?.parameters);
   return {
-    id: role.id,
-    name: role.name ?? fallback?.name ?? role.id,
-    description: role.description ?? fallback?.description ?? "",
-    /* An engine outside the union is exactly what the validator must see. */
-    config: { engine: engine as RoleDefinition["config"]["engine"], model, effort },
-    parameters: (Array.isArray(role.parameters) ? role.parameters : fallback?.parameters ?? []) as RoleDefinition["parameters"],
-    promptScaffold: typeof role.promptScaffold === "string" ? role.promptScaffold : fallback?.promptScaffold ?? "",
-    safetyFences: (Array.isArray(role.safetyFences) ? strings(role.safetyFences) : fallback?.safetyFences ?? []) as RoleDefinition["safetyFences"],
-    capabilities: (Array.isArray(role.capabilities) ? strings(role.capabilities) : fallback?.capabilities ?? []) as RoleDefinition["capabilities"],
+    definition: {
+      id: role.id,
+      name: saidText(role.name, fallback?.name, role.id),
+      description: saidText(role.description, fallback?.description, ""),
+      /* An engine outside the union is exactly what the validator must see. */
+      config: { engine: engine.value as RoleDefinition["config"]["engine"], model: model.value, effort: effort.value },
+      parameters: parameters.value,
+      promptScaffold: saidText(role.promptScaffold, fallback?.promptScaffold, ""),
+      safetyFences: (Array.isArray(role.safetyFences) ? strings(role.safetyFences) : fallback?.safetyFences ?? []) as RoleDefinition["safetyFences"],
+      capabilities: (Array.isArray(role.capabilities) ? strings(role.capabilities) : fallback?.capabilities ?? []) as RoleDefinition["capabilities"],
+    },
+    complaints: [engine, model, effort, parameters].map((field) => field.complaint).filter((complaint): complaint is string => complaint !== null),
   };
 }
 
-/** Why a launch would refuse this role: an absent runtime field named as
-    absent, else the launch validator's own verdict. */
-function launchComplaint(definition: RoleDefinition): string | null {
+/** Why a launch would refuse this role: what the console said that cannot be
+    used, else the launch validator's own verdict. */
+function launchComplaint(definition: RoleDefinition, complaints: readonly string[]): string | null {
+  if (complaints.length) return complaints.join("; ");
   const missing = (["engine", "model", "effort"] as const).filter((field) => !definition.config[field]);
   if (missing.length) return `the console gave this role no ${missing.join(", ")}`;
   return roleConfigError(definition);
@@ -147,8 +192,8 @@ function launchComplaint(definition: RoleDefinition): string | null {
     operator must SEE refused — dropping it silently is the same lie as
     launching it, told the other way round. */
 export function catalogRoleOf(role: ConsoleRole, fallback = ROLE_DEFAULTS.find((seed) => seed.id === role.id)): CatalogRole {
-  const definition = definitionOf(role, fallback);
-  const blockedReason = launchComplaint(definition);
+  const { definition, complaints } = definitionOf(role, fallback);
+  const blockedReason = launchComplaint(definition, complaints);
   return {
     definition,
     editable: true,
@@ -170,7 +215,7 @@ export function catalogRoleOf(role: ConsoleRole, fallback = ROLE_DEFAULTS.find((
 function unreadableRole(id: string, detail: string): CatalogRole {
   const fallback = ROLE_DEFAULTS.find((seed) => seed.id === id);
   return {
-    definition: definitionOf({ id }, fallback),
+    definition: definitionOf({ id }, fallback).definition,
     editable: false,
     seedPromptScaffold: null,
     edited: false,
@@ -193,9 +238,18 @@ async function consoleRoles(): Promise<CatalogRole[]> {
      the other fifteen read as if they came from the console. The list call
      failing IS whole-catalog, and it throws to the degraded path above. */
   const shown = await Promise.allSettled(listed.roles.map((role) => fleetctl<ConsoleRole>({ fn: "role_show", params: { role: role.id } })));
-  return shown.map((answer, index) => (answer.status === "fulfilled"
-    ? catalogRoleOf(answer.value)
-    : unreadableRole(listed.roles[index]!.id, fleetctlMessage(answer.reason))));
+  return shown.map((answer, index) => {
+    const id = listed.roles[index]!.id;
+    if (answer.status !== "fulfilled") return unreadableRole(id, fleetctlMessage(answer.reason));
+    /* Per row, not per catalog: an answer this adapter cannot read at all is
+       still one broken row. Whatever slips past the field guards above dies
+       here, next to the role it came from. */
+    try {
+      return catalogRoleOf(answer.value);
+    } catch (error) {
+      return unreadableRole(id, fleetctlMessage(error));
+    }
+  });
 }
 
 /** The built-in catalog, merged with the console's overrides mirror — the
@@ -215,7 +269,7 @@ function builtinCatalog(degraded: RoleCatalogDegradation): RoleCatalog {
     degraded: reason,
     readAt: new Date().toISOString(),
     roles: definitions.map((definition) => {
-      const blockedReason = launchComplaint(definition);
+      const blockedReason = launchComplaint(definition, []);
       return {
         definition,
         editable: false,
@@ -250,8 +304,18 @@ export async function loadRoleCatalog(): Promise<RoleCatalog> {
   }
 }
 
+/**
+ * The definitions a launch may use: the rows the catalog itself called
+ * launchable, and no others.
+ *
+ * A blocked row's definition is a DISPLAY shape — for an unreadable role it is
+ * a seed-filled stand-in built so the page can name what failed. Handing it to
+ * the resolver would let a row that says «не можна запустити: пульт не зміг
+ * прочитати цю роль» start an agent on the built-in scaffold, which is the
+ * display stand-in becoming the launch configuration.
+ */
 export function catalogDefinitions(catalog: RoleCatalog): RoleDefinition[] {
-  return catalog.roles.map((role) => role.definition);
+  return catalog.roles.filter((role) => role.launchable).map((role) => role.definition);
 }
 
 /**
@@ -259,15 +323,19 @@ export function catalogDefinitions(catalog: RoleCatalog): RoleDefinition[] {
  * read there launches with the config and prompt it displayed, additional
  * console roles included.
  *
- * The console is only consulted for a role-shaped launch, and a console that is
- * down degrades to the built-in definitions rather than blocking the launch:
- * the seat and the handoff keep their synchronous `resolveSpawnRole`, so no
- * orchestrator rotation can ever wait on `fleetctl`.
+ * A role the catalog refused is refused here too, with the SAME reason, before
+ * any receipt exists and before anything runs. The console is only consulted
+ * for a role-shaped launch, and a console that is down degrades to the built-in
+ * definitions rather than blocking the launch: the seat and the handoff keep
+ * their synchronous `resolveSpawnRole`, so no orchestrator rotation can ever
+ * wait on `fleetctl`.
  */
 export async function resolveSpawnRoleFromCatalog(
   body: Parameters<typeof resolveSpawnRole>[0],
 ): Promise<SpawnRoleResolution> {
   if (body.role === undefined || body.role === null || body.role === "") return resolveSpawnRole(body);
   const catalog = await loadRoleCatalog();
+  const blocked = catalog.roles.find((role) => role.definition.id === body.role && !role.launchable);
+  if (blocked) return { ok: false, error: `role ${blocked.definition.id} cannot launch: ${blocked.blockedReason}` };
   return resolveSpawnRole(body, catalogDefinitions(catalog));
 }

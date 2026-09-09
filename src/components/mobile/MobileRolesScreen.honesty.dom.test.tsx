@@ -318,3 +318,61 @@ test("a re-read that shows something else leaves the unconfirmed notice standing
      nor the new one, and saying «confirmed» here would be a guess. */
   expect(q(host, "[data-mobile2-role-unconfirmed]")).not.toBeNull();
 });
+
+/*
+ * P2-3 of round two: text equality is not a confirmation.
+ *
+ * A Reset on a role whose PROMPT was never what changed sends the text the row
+ * already shows. The old check retired the warning the instant the write came
+ * back unconfirmed, without a single read having happened — and in the worse
+ * case the row that "agreed" was the unreadable stand-in, which carries the
+ * seed's prompt while saying out loud that the console could not read it.
+ */
+
+test("an unconfirmed write is not retired by a row that already showed that text", async () => {
+  const host = await mount();
+  /* The prompt already equals the seed: only the runtime was ever edited. */
+  const runtimeEdited = { ...seedRole, promptScaffold: "Original prompt", edited: true };
+  await flush(() => pending[0].answer({ source: "fleetctl", readAt: null, degraded: null, roles: [runtimeEdited] }));
+  await click(host.querySelector("[data-mobile2-role='builder'] button"));
+  await click(q(host, "[data-mobile2-role-reset='builder']"));
+  await flush(() => pending[1].answer({ written: true, role: null, unconfirmed: "read-back unavailable" }));
+  /* Nothing has been read since the write. */
+  expect(q(host, "[data-mobile2-role-unconfirmed]")).not.toBeNull();
+
+  /* A refresh in which THIS role is still unreadable is not a confirmation
+     either — that row is a stand-in that says the read failed. */
+  await click(host.querySelector("[data-mobile2-roles] button"));
+  await flush(() => pending[2].answer({
+    source: "fleetctl", readAt: null, degraded: null,
+    roles: [{ ...runtimeEdited, editable: false, launchable: false, blockedReason: "the console could not read this role: store busy" }],
+  }));
+  expect(q(host, "[data-mobile2-role-unconfirmed]")).not.toBeNull();
+
+  /* An authoritative read of this role, after the write, showing the text the
+     write sent: that, and only that, retires it. */
+  await click(host.querySelector("[data-mobile2-roles] button"));
+  await flush(() => pending[3].answer({
+    source: "fleetctl", readAt: null, degraded: null,
+    roles: [{ ...runtimeEdited, edited: false }],
+  }));
+  expect(q(host, "[data-mobile2-role-unconfirmed]")).toBeNull();
+});
+
+test("a degraded refresh does not retire an unconfirmed write either", async () => {
+  const host = await mount();
+  await flush(() => pending[0].answer({ source: "fleetctl", readAt: null, degraded: null, roles: [seedRole] }));
+  await click(host.querySelector("[data-mobile2-role='builder'] button"));
+  await typeInto(q(host, "textarea"), "Edited prompt");
+  await click(q(host, "[data-mobile2-role-save='builder']"));
+  await flush(() => pending[1].answer({ written: true, role: null, unconfirmed: "store busy" }));
+
+  await click(host.querySelector("[data-mobile2-roles] button"));
+  await flush(() => pending[2].answer({
+    source: "fallback", readAt: null,
+    degraded: { reason: "console-unavailable", detail: "console unavailable" },
+    roles: [{ ...seedRole, promptScaffold: "Edited prompt" }],
+  }));
+  /* The console did not answer, so nothing about the write is settled. */
+  expect(q(host, "[data-mobile2-role-unconfirmed]")).not.toBeNull();
+});
