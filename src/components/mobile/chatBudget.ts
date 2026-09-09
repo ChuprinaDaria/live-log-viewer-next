@@ -44,11 +44,13 @@
  *   browser tab 390×759  502 / 759 = 66.1%     keyboard  166 / 423 = 39.2%
  *   standalone  360×780  523 / 780 = 67.1%     keyboard  187 / 444 = 42.1%
  *
- * The floors below are set from the standalone column, where the operator
- * uses the board (the tab column loses the browser's own rows on top, lane C's
- * subject). They read low because 38 px of them is a row lane H is expected to
- * take out of the operator's sight; when it does, the region goes to 0 here
- * and the floors go back up — by name, not by wish.
+ * The floors below are set from the standalone column at 390×844, where the
+ * operator uses the board (the tab column loses the browser's own rows on
+ * top, lane C's subject), and they describe THAT frame: the narrow 360×780
+ * frame has its own measured requirement in the capture script, beside it.
+ * They read low because 38 px of them is the selected-context badge in its
+ * collapsed state; the badge's other states are named below, so a change to
+ * the composer that moves it is a change to a number here, not a surprise.
  */
 
 /** The one bar (§3.2): back, title cell, at most three 44 px targets. */
@@ -62,25 +64,37 @@ export const BAR_PX = 52;
     and it is what the grow ceiling reserves so a dictated field never pushes
     the tools row out of the box (#1483). */
 export const COMPOSER_PX = 109;
-/** The selected-context row the composer form renders ABOVE its box — the
-    `data-selected-context` summary saying what the operator is looking at —
-    32 px plus the form's 6 px gap, measured on the production build at 390×844
-    in standalone (round 2 lane A, `scripts/capture-round2-lane-a.ts`). It is
-    on screen for as long as a conversation is focused, so it is persistent
-    chrome until lane H takes the prelude out of the operator's sight; then it
-    is 0 here, by name. (The same measurement found no chat surface paying
-    `env(safe-area-inset-bottom)`: the 14 px inset COMPOSER_PX describes is
-    not spent by anything today, in either column.) */
-export const SELECTED_CONTEXT_PX = 38;
+/** The selected-context badge the composer form renders ABOVE its box
+    (`SelectedContextBadge`, `data-selected-context`): what the operator is
+    looking at, as a collapsible summary. Its three states, as the form pays
+    for them (32 px badge + the form's 6 px gap; the expanded body measured by
+    the round 2 review at 79, 85 with the gap):
+
+      none       0   nothing is selected, the badge is not rendered
+      collapsed  38  selected, folded to its one summary line — the state at
+                     REST, which is what the budget counts
+      expanded   85  the operator unfolded it; transient, like the banner
+
+    Measured on the production build at 390×844 in standalone (round 2 lane A,
+    `scripts/capture-round2-lane-a.ts`). This is the composer's own badge, not
+    the viewer-context prelude inside sent bubbles that lane H folds away —
+    that lane changes nothing here. (The same measurement found no chat surface
+    paying `env(safe-area-inset-bottom)`: the 14 px inset COMPOSER_PX describes
+    is not spent by anything today, in either column.) */
+export const SELECTED_CONTEXT = { none: 0, collapsed: 38, expanded: 85 } as const;
+export const SELECTED_CONTEXT_PX: number = SELECTED_CONTEXT.collapsed;
 /** The one banner slot under the bar (§2 rule 3): offline, degraded, or a
     decision that arrived elsewhere. It reserves its height in flow, so it is
     chrome for as long as it is up. */
 export const BANNER_PX = 45;
-/** Suggested-reply chips: 32 px pills inside a 44 px hit, ONE row directly
-    above the composer box (§4.3), in the flow of the column — `LogFeed`'s
-    `data-feed-drafts-band`. The row is exactly the hit tall and carries no
-    margin, so the band reserves this and `scripts/capture-round2-lane-a.ts`
-    measures it. They stay while the keyboard is open. */
+/** The band under the transcript (§4.3, `LogFeed`'s `data-feed-drafts-band`):
+    ONE 44 px row directly above the composer box, in the flow of the column.
+    It holds the suggested-reply chips — 32 px pills inside the 44 px hit —
+    and, once the magnet is released, the way back to the tail beside them,
+    so nothing ever floats over the transcript. The row is exactly the hit
+    tall and carries no margin, so the band reserves this and
+    `scripts/capture-round2-lane-a.ts` measures it. It stays while the
+    keyboard is open. */
 export const SUGGESTED_CHIPS_PX = 44;
 /** An iOS keyboard's share of a 390×844 phone (#983, §4.3). */
 export const KEYBOARD_PX = 336;
@@ -136,8 +150,8 @@ export const UNCOUNTED_CHROME = {
     worst persistent case is the banner slot up: the budget says 244 of 844
     (71%), and the standalone measurement says 213 px of chrome without chips
     plus the 45 px slot = 586 of 844 (69.4%). The floor is what the measured
-    case clears. It was 0.75 while the 38 px selected-context row was not in
-    the sum; it goes back up when lane H removes that row. */
+    case clears, at 390×844 standalone. It was 0.75 while the 38 px
+    selected-context badge was not in the sum. */
 export const MIN_TRANSCRIPT_SHARE = 0.69;
 /** The same guarantee with the keyboard open (§4.3): the budget says 265 of
     the 508 that are visible (52%), and the standalone measurement 251 (49.4%),
@@ -166,6 +180,9 @@ export interface Viewport {
   banner?: boolean;
   /** Suggested-reply chips ride above the composer box. */
   chips?: boolean;
+  /** The magnet is released: the band above the composer carries the way
+      back to the tail (the same 44 px row the chips use; both cost it once). */
+  released?: boolean;
   /** The on-screen keyboard's height, 0 (the default) while it is closed. */
   keyboard?: number;
   /** A tab root carries the tab bar (keyboard closed). */
@@ -188,11 +205,11 @@ export interface ChatBudget {
 }
 
 /** The transcript's height and share for one viewport and its chrome. */
-export function chatBudget({ height, banner = false, chips = false, keyboard = 0, tabBar = false, agentsStrip = false }: Viewport): ChatBudget {
+export function chatBudget({ height, banner = false, chips = false, released = false, keyboard = 0, tabBar = false, agentsStrip = false }: Viewport): ChatBudget {
   const usable = Math.max(0, height - Math.max(0, keyboard));
   /* The tab bar and the strip both yield to the keyboard, so they count only while it is closed. */
   const roots = keyboard > 0 ? 0 : (tabBar ? TAB_BAR_PX : 0) + (agentsStrip ? AGENTS_STRIP_PX : 0);
-  const chrome = BAR_PX + COMPOSER_PX + SELECTED_CONTEXT_PX + (banner ? BANNER_PX : 0) + (chips ? SUGGESTED_CHIPS_PX : 0) + roots;
+  const chrome = BAR_PX + COMPOSER_PX + SELECTED_CONTEXT_PX + (banner ? BANNER_PX : 0) + (chips || released ? SUGGESTED_CHIPS_PX : 0) + roots;
   const transcript = Math.max(0, usable - chrome);
   const share = usable > 0 ? Math.min(1, transcript / usable) : 0;
   const floor = keyboard > 0 ? MIN_KEYBOARD_TRANSCRIPT_SHARE : tabBar ? MIN_TAB_ROOT_TRANSCRIPT_SHARE : MIN_TRANSCRIPT_SHARE;

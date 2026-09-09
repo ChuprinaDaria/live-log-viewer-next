@@ -1,6 +1,6 @@
 {
   "lane": "round2-lane-a",
-  "generatedAt": "2026-09-09T06:37:26.238Z",
+  "generatedAt": "2026-09-09T07:05:56.476Z",
   "constants": {
     "SUGGESTED_CHIPS_PX": 44,
     "KEYBOARD_PX": 336,
@@ -16,6 +16,7 @@
       "frame": "390x844",
       "column": "standalone",
       "state": "bottom",
+      "variant": "base",
       "file": "lane-a-390x844-standalone-bottom.png",
       "ok": true,
       "failures": [],
@@ -51,6 +52,7 @@
       "chips": {
         "rendered": 4,
         "cutByRowEdge": 1,
+        "clippedInside": 0,
         "fadeEnd": true,
         "fadeStart": false,
         "atRowEnd": {
@@ -132,54 +134,39 @@
           "height": 44
         },
         {
-          "name": "              data-reply-suggestions-row=true",
+          "name": "              div.min-w-0.flex-1",
           "top": 644,
           "height": 44
         },
         {
-          "name": "                data-reply-suggestions=inline data-mobile-chips=true",
+          "name": "                data-reply-suggestions-row=true",
           "top": 644,
           "height": 44
         },
         {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                  data-reply-suggestions=inline data-mobile-chips=true",
           "top": 644,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 650,
-          "height": 32
-        },
-        {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                    data-reply-suggestion=true",
           "top": 644,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 650,
-          "height": 32
-        },
-        {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                    data-reply-suggestion=true",
           "top": 644,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 650,
-          "height": 32
-        },
-        {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                    data-reply-suggestion=true",
           "top": 644,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 650,
-          "height": 32
+          "name": "                    data-reply-suggestion=true",
+          "top": 644,
+          "height": 44
         },
         {
           "name": "            data-testid",
@@ -247,6 +234,7 @@
       "frame": "390x844",
       "column": "standalone",
       "state": "scrolled-up",
+      "variant": "base",
       "file": "lane-a-390x844-standalone-scrolled-up.png",
       "ok": true,
       "failures": [],
@@ -282,11 +270,16 @@
         "size": "44×44",
         "opaque": true,
         "count": "2",
-        "bottomPx": 632
+        "topPx": 644,
+        "bottomPx": 688,
+        "inBand": true,
+        "textRectsCovered": 0,
+        "visibleTextRects": 35
       },
       "chips": {
         "rendered": 4,
         "cutByRowEdge": 1,
+        "clippedInside": 0,
         "fadeEnd": true,
         "fadeStart": false,
         "atRowEnd": {
@@ -368,54 +361,39 @@
           "height": 44
         },
         {
-          "name": "              data-reply-suggestions-row=true",
+          "name": "              div.min-w-0.flex-1",
           "top": 644,
           "height": 44
         },
         {
-          "name": "                data-reply-suggestions=inline data-mobile-chips=true",
+          "name": "                data-reply-suggestions-row=true",
           "top": 644,
           "height": 44
         },
         {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                  data-reply-suggestions=inline data-mobile-chips=true",
           "top": 644,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 650,
-          "height": 32
-        },
-        {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                    data-reply-suggestion=true",
           "top": 644,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 650,
-          "height": 32
-        },
-        {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                    data-reply-suggestion=true",
           "top": 644,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 650,
-          "height": 32
-        },
-        {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                    data-reply-suggestion=true",
           "top": 644,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 650,
-          "height": 32
+          "name": "                    data-reply-suggestion=true",
+          "top": 644,
+          "height": 44
         },
         {
           "name": "            data-testid",
@@ -483,6 +461,7 @@
       "frame": "390x844",
       "column": "standalone",
       "state": "keyboard",
+      "variant": "base",
       "file": "lane-a-390x844-standalone-keyboard.png",
       "ok": true,
       "failures": [],
@@ -518,11 +497,16 @@
         "size": "44×44",
         "opaque": true,
         "count": "2",
-        "bottomPx": 296
+        "topPx": 308,
+        "bottomPx": 352,
+        "inBand": true,
+        "textRectsCovered": 0,
+        "visibleTextRects": 15
       },
       "chips": {
         "rendered": 4,
         "cutByRowEdge": 1,
+        "clippedInside": 0,
         "fadeEnd": true,
         "fadeStart": false,
         "atRowEnd": {
@@ -604,54 +588,39 @@
           "height": 44
         },
         {
-          "name": "              data-reply-suggestions-row=true",
+          "name": "              div.min-w-0.flex-1",
           "top": 308,
           "height": 44
         },
         {
-          "name": "                data-reply-suggestions=inline data-mobile-chips=true",
+          "name": "                data-reply-suggestions-row=true",
           "top": 308,
           "height": 44
         },
         {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                  data-reply-suggestions=inline data-mobile-chips=true",
           "top": 308,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 314,
-          "height": 32
-        },
-        {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                    data-reply-suggestion=true",
           "top": 308,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 314,
-          "height": 32
-        },
-        {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                    data-reply-suggestion=true",
           "top": 308,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 314,
-          "height": 32
-        },
-        {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                    data-reply-suggestion=true",
           "top": 308,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 314,
-          "height": 32
+          "name": "                    data-reply-suggestion=true",
+          "top": 308,
+          "height": 44
         },
         {
           "name": "            data-testid",
@@ -719,6 +688,7 @@
       "frame": "390x844",
       "column": "tab",
       "state": "bottom",
+      "variant": "base",
       "file": "lane-a-390x844-tab-bottom.png",
       "ok": true,
       "failures": [],
@@ -747,13 +717,14 @@
         "chrome": 243,
         "transcript": 516,
         "share": 0.6798,
-        "floor": 0.69
+        "floor": 0.66
       },
-      "budgetHolds": false,
+      "budgetHolds": true,
       "backToLive": null,
       "chips": {
         "rendered": 4,
         "cutByRowEdge": 1,
+        "clippedInside": 0,
         "fadeEnd": true,
         "fadeStart": false,
         "atRowEnd": {
@@ -835,54 +806,39 @@
           "height": 44
         },
         {
-          "name": "              data-reply-suggestions-row=true",
+          "name": "              div.min-w-0.flex-1",
           "top": 559,
           "height": 44
         },
         {
-          "name": "                data-reply-suggestions=inline data-mobile-chips=true",
+          "name": "                data-reply-suggestions-row=true",
           "top": 559,
           "height": 44
         },
         {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                  data-reply-suggestions=inline data-mobile-chips=true",
           "top": 559,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 565,
-          "height": 32
-        },
-        {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                    data-reply-suggestion=true",
           "top": 559,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 565,
-          "height": 32
-        },
-        {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                    data-reply-suggestion=true",
           "top": 559,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 565,
-          "height": 32
-        },
-        {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                    data-reply-suggestion=true",
           "top": 559,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 565,
-          "height": 32
+          "name": "                    data-reply-suggestion=true",
+          "top": 559,
+          "height": 44
         },
         {
           "name": "            data-testid",
@@ -950,6 +906,7 @@
       "frame": "390x844",
       "column": "tab",
       "state": "scrolled-up",
+      "variant": "base",
       "file": "lane-a-390x844-tab-scrolled-up.png",
       "ok": true,
       "failures": [],
@@ -978,18 +935,23 @@
         "chrome": 243,
         "transcript": 516,
         "share": 0.6798,
-        "floor": 0.69
+        "floor": 0.66
       },
-      "budgetHolds": false,
+      "budgetHolds": true,
       "backToLive": {
         "size": "44×44",
         "opaque": true,
         "count": "2",
-        "bottomPx": 547
+        "topPx": 559,
+        "bottomPx": 603,
+        "inBand": true,
+        "textRectsCovered": 0,
+        "visibleTextRects": 30
       },
       "chips": {
         "rendered": 4,
         "cutByRowEdge": 1,
+        "clippedInside": 0,
         "fadeEnd": true,
         "fadeStart": false,
         "atRowEnd": {
@@ -1071,54 +1033,39 @@
           "height": 44
         },
         {
-          "name": "              data-reply-suggestions-row=true",
+          "name": "              div.min-w-0.flex-1",
           "top": 559,
           "height": 44
         },
         {
-          "name": "                data-reply-suggestions=inline data-mobile-chips=true",
+          "name": "                data-reply-suggestions-row=true",
           "top": 559,
           "height": 44
         },
         {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                  data-reply-suggestions=inline data-mobile-chips=true",
           "top": 559,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 565,
-          "height": 32
-        },
-        {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                    data-reply-suggestion=true",
           "top": 559,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 565,
-          "height": 32
-        },
-        {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                    data-reply-suggestion=true",
           "top": 559,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 565,
-          "height": 32
-        },
-        {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                    data-reply-suggestion=true",
           "top": 559,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 565,
-          "height": 32
+          "name": "                    data-reply-suggestion=true",
+          "top": 559,
+          "height": 44
         },
         {
           "name": "            data-testid",
@@ -1186,6 +1133,7 @@
       "frame": "390x844",
       "column": "tab",
       "state": "keyboard",
+      "variant": "base",
       "file": "lane-a-390x844-tab-keyboard.png",
       "ok": true,
       "failures": [],
@@ -1214,18 +1162,23 @@
         "chrome": 243,
         "transcript": 180,
         "share": 0.4255,
-        "floor": 0.49
+        "floor": 0.39
       },
-      "budgetHolds": false,
+      "budgetHolds": true,
       "backToLive": {
         "size": "44×44",
         "opaque": true,
         "count": "2",
-        "bottomPx": 211
+        "topPx": 223,
+        "bottomPx": 267,
+        "inBand": true,
+        "textRectsCovered": 0,
+        "visibleTextRects": 10
       },
       "chips": {
         "rendered": 4,
         "cutByRowEdge": 1,
+        "clippedInside": 0,
         "fadeEnd": true,
         "fadeStart": false,
         "atRowEnd": {
@@ -1307,54 +1260,39 @@
           "height": 44
         },
         {
-          "name": "              data-reply-suggestions-row=true",
+          "name": "              div.min-w-0.flex-1",
           "top": 223,
           "height": 44
         },
         {
-          "name": "                data-reply-suggestions=inline data-mobile-chips=true",
+          "name": "                data-reply-suggestions-row=true",
           "top": 223,
           "height": 44
         },
         {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                  data-reply-suggestions=inline data-mobile-chips=true",
           "top": 223,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 229,
-          "height": 32
-        },
-        {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                    data-reply-suggestion=true",
           "top": 223,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 229,
-          "height": 32
-        },
-        {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                    data-reply-suggestion=true",
           "top": 223,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 229,
-          "height": 32
-        },
-        {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                    data-reply-suggestion=true",
           "top": 223,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 229,
-          "height": 32
+          "name": "                    data-reply-suggestion=true",
+          "top": 223,
+          "height": 44
         },
         {
           "name": "            data-testid",
@@ -1422,6 +1360,7 @@
       "frame": "360x780",
       "column": "standalone",
       "state": "bottom",
+      "variant": "base",
       "file": "lane-a-360x780-standalone-bottom.png",
       "ok": true,
       "failures": [],
@@ -1450,13 +1389,14 @@
         "chrome": 243,
         "transcript": 537,
         "share": 0.6885,
-        "floor": 0.69
+        "floor": 0.67
       },
-      "budgetHolds": false,
+      "budgetHolds": true,
       "backToLive": null,
       "chips": {
         "rendered": 4,
         "cutByRowEdge": 1,
+        "clippedInside": 0,
         "fadeEnd": true,
         "fadeStart": false,
         "atRowEnd": {
@@ -1538,54 +1478,39 @@
           "height": 44
         },
         {
-          "name": "              data-reply-suggestions-row=true",
+          "name": "              div.min-w-0.flex-1",
           "top": 580,
           "height": 44
         },
         {
-          "name": "                data-reply-suggestions=inline data-mobile-chips=true",
+          "name": "                data-reply-suggestions-row=true",
           "top": 580,
           "height": 44
         },
         {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                  data-reply-suggestions=inline data-mobile-chips=true",
           "top": 580,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 586,
-          "height": 32
-        },
-        {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                    data-reply-suggestion=true",
           "top": 580,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 586,
-          "height": 32
-        },
-        {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                    data-reply-suggestion=true",
           "top": 580,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 586,
-          "height": 32
-        },
-        {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                    data-reply-suggestion=true",
           "top": 580,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 586,
-          "height": 32
+          "name": "                    data-reply-suggestion=true",
+          "top": 580,
+          "height": 44
         },
         {
           "name": "            data-testid",
@@ -1653,6 +1578,7 @@
       "frame": "360x780",
       "column": "standalone",
       "state": "scrolled-up",
+      "variant": "base",
       "file": "lane-a-360x780-standalone-scrolled-up.png",
       "ok": true,
       "failures": [],
@@ -1681,18 +1607,23 @@
         "chrome": 243,
         "transcript": 537,
         "share": 0.6885,
-        "floor": 0.69
+        "floor": 0.67
       },
-      "budgetHolds": false,
+      "budgetHolds": true,
       "backToLive": {
         "size": "44×44",
         "opaque": true,
         "count": "2",
-        "bottomPx": 568
+        "topPx": 580,
+        "bottomPx": 624,
+        "inBand": true,
+        "textRectsCovered": 0,
+        "visibleTextRects": 32
       },
       "chips": {
         "rendered": 4,
         "cutByRowEdge": 1,
+        "clippedInside": 0,
         "fadeEnd": true,
         "fadeStart": false,
         "atRowEnd": {
@@ -1774,54 +1705,39 @@
           "height": 44
         },
         {
-          "name": "              data-reply-suggestions-row=true",
+          "name": "              div.min-w-0.flex-1",
           "top": 580,
           "height": 44
         },
         {
-          "name": "                data-reply-suggestions=inline data-mobile-chips=true",
+          "name": "                data-reply-suggestions-row=true",
           "top": 580,
           "height": 44
         },
         {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                  data-reply-suggestions=inline data-mobile-chips=true",
           "top": 580,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 586,
-          "height": 32
-        },
-        {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                    data-reply-suggestion=true",
           "top": 580,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 586,
-          "height": 32
-        },
-        {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                    data-reply-suggestion=true",
           "top": 580,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 586,
-          "height": 32
-        },
-        {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                    data-reply-suggestion=true",
           "top": 580,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 586,
-          "height": 32
+          "name": "                    data-reply-suggestion=true",
+          "top": 580,
+          "height": 44
         },
         {
           "name": "            data-testid",
@@ -1889,6 +1805,7 @@
       "frame": "360x780",
       "column": "standalone",
       "state": "keyboard",
+      "variant": "base",
       "file": "lane-a-360x780-standalone-keyboard.png",
       "ok": true,
       "failures": [],
@@ -1917,18 +1834,23 @@
         "chrome": 243,
         "transcript": 201,
         "share": 0.4527,
-        "floor": 0.49
+        "floor": 0.42
       },
-      "budgetHolds": false,
+      "budgetHolds": true,
       "backToLive": {
         "size": "44×44",
         "opaque": true,
         "count": "2",
-        "bottomPx": 232
+        "topPx": 244,
+        "bottomPx": 288,
+        "inBand": true,
+        "textRectsCovered": 0,
+        "visibleTextRects": 10
       },
       "chips": {
         "rendered": 4,
         "cutByRowEdge": 1,
+        "clippedInside": 0,
         "fadeEnd": true,
         "fadeStart": false,
         "atRowEnd": {
@@ -2010,54 +1932,39 @@
           "height": 44
         },
         {
-          "name": "              data-reply-suggestions-row=true",
+          "name": "              div.min-w-0.flex-1",
           "top": 244,
           "height": 44
         },
         {
-          "name": "                data-reply-suggestions=inline data-mobile-chips=true",
+          "name": "                data-reply-suggestions-row=true",
           "top": 244,
           "height": 44
         },
         {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                  data-reply-suggestions=inline data-mobile-chips=true",
           "top": 244,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 250,
-          "height": 32
-        },
-        {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                    data-reply-suggestion=true",
           "top": 244,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 250,
-          "height": 32
-        },
-        {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                    data-reply-suggestion=true",
           "top": 244,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 250,
-          "height": 32
-        },
-        {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                    data-reply-suggestion=true",
           "top": 244,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 250,
-          "height": 32
+          "name": "                    data-reply-suggestion=true",
+          "top": 244,
+          "height": 44
         },
         {
           "name": "            data-testid",
@@ -2125,6 +2032,7 @@
       "frame": "360x780",
       "column": "tab",
       "state": "bottom",
+      "variant": "base",
       "file": "lane-a-360x780-tab-bottom.png",
       "ok": true,
       "failures": [],
@@ -2153,13 +2061,14 @@
         "chrome": 243,
         "transcript": 457,
         "share": 0.6529,
-        "floor": 0.69
+        "floor": 0.63
       },
-      "budgetHolds": false,
+      "budgetHolds": true,
       "backToLive": null,
       "chips": {
         "rendered": 4,
         "cutByRowEdge": 1,
+        "clippedInside": 0,
         "fadeEnd": true,
         "fadeStart": false,
         "atRowEnd": {
@@ -2241,54 +2150,39 @@
           "height": 44
         },
         {
-          "name": "              data-reply-suggestions-row=true",
+          "name": "              div.min-w-0.flex-1",
           "top": 500,
           "height": 44
         },
         {
-          "name": "                data-reply-suggestions=inline data-mobile-chips=true",
+          "name": "                data-reply-suggestions-row=true",
           "top": 500,
           "height": 44
         },
         {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                  data-reply-suggestions=inline data-mobile-chips=true",
           "top": 500,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 506,
-          "height": 32
-        },
-        {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                    data-reply-suggestion=true",
           "top": 500,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 506,
-          "height": 32
-        },
-        {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                    data-reply-suggestion=true",
           "top": 500,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 506,
-          "height": 32
-        },
-        {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                    data-reply-suggestion=true",
           "top": 500,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 506,
-          "height": 32
+          "name": "                    data-reply-suggestion=true",
+          "top": 500,
+          "height": 44
         },
         {
           "name": "            data-testid",
@@ -2356,6 +2250,7 @@
       "frame": "360x780",
       "column": "tab",
       "state": "scrolled-up",
+      "variant": "base",
       "file": "lane-a-360x780-tab-scrolled-up.png",
       "ok": true,
       "failures": [],
@@ -2384,18 +2279,23 @@
         "chrome": 243,
         "transcript": 457,
         "share": 0.6529,
-        "floor": 0.69
+        "floor": 0.63
       },
-      "budgetHolds": false,
+      "budgetHolds": true,
       "backToLive": {
         "size": "44×44",
         "opaque": true,
         "count": "2",
-        "bottomPx": 488
+        "topPx": 500,
+        "bottomPx": 544,
+        "inBand": true,
+        "textRectsCovered": 0,
+        "visibleTextRects": 24
       },
       "chips": {
         "rendered": 4,
         "cutByRowEdge": 1,
+        "clippedInside": 0,
         "fadeEnd": true,
         "fadeStart": false,
         "atRowEnd": {
@@ -2477,54 +2377,39 @@
           "height": 44
         },
         {
-          "name": "              data-reply-suggestions-row=true",
+          "name": "              div.min-w-0.flex-1",
           "top": 500,
           "height": 44
         },
         {
-          "name": "                data-reply-suggestions=inline data-mobile-chips=true",
+          "name": "                data-reply-suggestions-row=true",
           "top": 500,
           "height": 44
         },
         {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                  data-reply-suggestions=inline data-mobile-chips=true",
           "top": 500,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 506,
-          "height": 32
-        },
-        {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                    data-reply-suggestion=true",
           "top": 500,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 506,
-          "height": 32
-        },
-        {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                    data-reply-suggestion=true",
           "top": 500,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 506,
-          "height": 32
-        },
-        {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                    data-reply-suggestion=true",
           "top": 500,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 506,
-          "height": 32
+          "name": "                    data-reply-suggestion=true",
+          "top": 500,
+          "height": 44
         },
         {
           "name": "            data-testid",
@@ -2592,6 +2477,7 @@
       "frame": "360x780",
       "column": "tab",
       "state": "keyboard",
+      "variant": "base",
       "file": "lane-a-360x780-tab-keyboard.png",
       "ok": true,
       "failures": [],
@@ -2620,18 +2506,23 @@
         "chrome": 243,
         "transcript": 121,
         "share": 0.3324,
-        "floor": 0.49
+        "floor": 0.29
       },
-      "budgetHolds": false,
+      "budgetHolds": true,
       "backToLive": {
         "size": "44×44",
         "opaque": true,
         "count": "2",
-        "bottomPx": 152
+        "topPx": 164,
+        "bottomPx": 208,
+        "inBand": true,
+        "textRectsCovered": 0,
+        "visibleTextRects": 2
       },
       "chips": {
         "rendered": 4,
         "cutByRowEdge": 1,
+        "clippedInside": 0,
         "fadeEnd": true,
         "fadeStart": false,
         "atRowEnd": {
@@ -2713,54 +2604,39 @@
           "height": 44
         },
         {
-          "name": "              data-reply-suggestions-row=true",
+          "name": "              div.min-w-0.flex-1",
           "top": 164,
           "height": 44
         },
         {
-          "name": "                data-reply-suggestions=inline data-mobile-chips=true",
+          "name": "                data-reply-suggestions-row=true",
           "top": 164,
           "height": 44
         },
         {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                  data-reply-suggestions=inline data-mobile-chips=true",
           "top": 164,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 170,
-          "height": 32
-        },
-        {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                    data-reply-suggestion=true",
           "top": 164,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 170,
-          "height": 32
-        },
-        {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                    data-reply-suggestion=true",
           "top": 164,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 170,
-          "height": 32
-        },
-        {
-          "name": "                  data-reply-suggestion=true",
+          "name": "                    data-reply-suggestion=true",
           "top": 164,
           "height": 44
         },
         {
-          "name": "                    span.inline-flex.h-8.max-w-[70vw]",
-          "top": 170,
-          "height": 32
+          "name": "                    data-reply-suggestion=true",
+          "top": 164,
+          "height": 44
         },
         {
           "name": "            data-testid",
@@ -2820,6 +2696,866 @@
         {
           "name": "                    span.pointer-events-none.absolute.z-[60]",
           "top": 280,
+          "height": 24
+        }
+      ]
+    },
+    {
+      "frame": "390x844",
+      "column": "standalone",
+      "state": "bottom",
+      "variant": "long",
+      "file": "lane-a-390x844-standalone-bottom-long.png",
+      "ok": true,
+      "failures": [],
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "safeArea": {
+        "requested": {
+          "top": 47,
+          "bottom": 34
+        },
+        "applied": true
+      },
+      "gapUnderComposerPx": 7,
+      "bandHeightPx": 44,
+      "bandTopPx": 644,
+      "lowestTextBottomPx": 620,
+      "textClearsBandBy": 24,
+      "scrollerHeightPx": 587,
+      "composerUnitPx": 156,
+      "composerBoxPx": 104,
+      "visibleBottomPx": 844,
+      "transcriptShare": 0.6955,
+      "budget": {
+        "chrome": 243,
+        "transcript": 601,
+        "share": 0.7121,
+        "floor": 0.69
+      },
+      "budgetHolds": true,
+      "backToLive": null,
+      "chips": {
+        "rendered": 1,
+        "cutByRowEdge": 1,
+        "clippedInside": 0,
+        "fadeEnd": true,
+        "fadeStart": false,
+        "atRowEnd": {
+          "lastChipClear": true,
+          "fadeStart": true,
+          "fadeEnd": false
+        }
+      },
+      "floatingRows": 0,
+      "anatomy": [
+        {
+          "name": "data-mobile2-screen=chat data-mobile2-conversation data-mobile2-motion=push",
+          "top": 0,
+          "height": 844
+        },
+        {
+          "name": "  data-mobile2-bar=true",
+          "top": 0,
+          "height": 52
+        },
+        {
+          "name": "    data-mobile2-title=true data-mobile2-open=switch",
+          "top": 4,
+          "height": 44
+        },
+        {
+          "name": "      data-mobile2-chat-title=true",
+          "top": 9,
+          "height": 33
+        },
+        {
+          "name": "        data-mobile2-title-text=true",
+          "top": 9,
+          "height": 19
+        },
+        {
+          "name": "        span.flex.min-w-0.items-center",
+          "top": 28,
+          "height": 14
+        },
+        {
+          "name": "  data-mobile2-body=true",
+          "top": 52,
+          "height": 792
+        },
+        {
+          "name": "    data-testid",
+          "top": 52,
+          "height": 792
+        },
+        {
+          "name": "      div.relative.flex.min-h-0",
+          "top": 52,
+          "height": 792
+        },
+        {
+          "name": "        data-pan-ignore=true data-link-path",
+          "top": 52,
+          "height": 792
+        },
+        {
+          "name": "          div.flex.min-h-0.flex-1",
+          "top": 57,
+          "height": 631
+        },
+        {
+          "name": "            div.relative.flex.min-h-0",
+          "top": 57,
+          "height": 587
+        },
+        {
+          "name": "              data-log-feed-scroller=true data-tail-lines-start data-tail-line-count",
+          "top": 57,
+          "height": 587
+        },
+        {
+          "name": "            data-feed-drafts-band=true",
+          "top": 644,
+          "height": 44
+        },
+        {
+          "name": "              div.min-w-0.flex-1",
+          "top": 644,
+          "height": 44
+        },
+        {
+          "name": "                data-reply-suggestions-row=true",
+          "top": 644,
+          "height": 44
+        },
+        {
+          "name": "                  data-reply-suggestions=inline data-mobile-chips=true",
+          "top": 644,
+          "height": 44
+        },
+        {
+          "name": "                    data-reply-suggestion=true",
+          "top": 644,
+          "height": 44
+        },
+        {
+          "name": "            data-testid",
+          "top": 688,
+          "height": 155
+        },
+        {
+          "name": "              div.flex.justify-end",
+          "top": 695,
+          "height": 32
+        },
+        {
+          "name": "                data-selected-context=selected",
+          "top": 695,
+          "height": 32
+        },
+        {
+          "name": "                  summary.flex.min-h-8.cursor-pointer",
+          "top": 695,
+          "height": 32
+        },
+        {
+          "name": "                    span.min-w-0.truncate.group-open/context:whitespace-normal",
+          "top": 704,
+          "height": 14
+        },
+        {
+          "name": "                  p.border-t.border-border.px-2",
+          "top": 727,
+          "height": 47
+        },
+        {
+          "name": "              data-mobile2-composer=stop",
+          "top": 733,
+          "height": 104
+        },
+        {
+          "name": "                data-mobile2-field=true",
+          "top": 738,
+          "height": 52
+        },
+        {
+          "name": "                data-mobile2-tools=true",
+          "top": 790,
+          "height": 44
+        },
+        {
+          "name": "                  span.relative.inline-flex.min-w-0",
+          "top": 790,
+          "height": 44
+        },
+        {
+          "name": "                    data-runtime-pill=true data-mobile2-open=model",
+          "top": 790,
+          "height": 44
+        },
+        {
+          "name": "                    span.pointer-events-none.absolute.z-[60]",
+          "top": 760,
+          "height": 24
+        }
+      ]
+    },
+    {
+      "frame": "390x844",
+      "column": "standalone",
+      "state": "scrolled-up",
+      "variant": "long",
+      "file": "lane-a-390x844-standalone-scrolled-up-long.png",
+      "ok": true,
+      "failures": [],
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "safeArea": {
+        "requested": {
+          "top": 47,
+          "bottom": 34
+        },
+        "applied": true
+      },
+      "gapUnderComposerPx": 7,
+      "bandHeightPx": 44,
+      "bandTopPx": 644,
+      "lowestTextBottomPx": 644,
+      "textClearsBandBy": 0,
+      "scrollerHeightPx": 587,
+      "composerUnitPx": 156,
+      "composerBoxPx": 104,
+      "visibleBottomPx": 844,
+      "transcriptShare": 0.6955,
+      "budget": {
+        "chrome": 243,
+        "transcript": 601,
+        "share": 0.7121,
+        "floor": 0.69
+      },
+      "budgetHolds": true,
+      "backToLive": {
+        "size": "44×44",
+        "opaque": true,
+        "count": "2",
+        "topPx": 644,
+        "bottomPx": 688,
+        "inBand": true,
+        "textRectsCovered": 0,
+        "visibleTextRects": 35
+      },
+      "chips": {
+        "rendered": 1,
+        "cutByRowEdge": 1,
+        "clippedInside": 0,
+        "fadeEnd": true,
+        "fadeStart": false,
+        "atRowEnd": {
+          "lastChipClear": true,
+          "fadeStart": true,
+          "fadeEnd": false
+        }
+      },
+      "floatingRows": 0,
+      "anatomy": [
+        {
+          "name": "data-mobile2-screen=chat data-mobile2-conversation data-mobile2-motion=push",
+          "top": 0,
+          "height": 844
+        },
+        {
+          "name": "  data-mobile2-bar=true",
+          "top": 0,
+          "height": 52
+        },
+        {
+          "name": "    data-mobile2-title=true data-mobile2-open=switch",
+          "top": 4,
+          "height": 44
+        },
+        {
+          "name": "      data-mobile2-chat-title=true",
+          "top": 9,
+          "height": 33
+        },
+        {
+          "name": "        data-mobile2-title-text=true",
+          "top": 9,
+          "height": 19
+        },
+        {
+          "name": "        span.flex.min-w-0.items-center",
+          "top": 28,
+          "height": 14
+        },
+        {
+          "name": "  data-mobile2-body=true",
+          "top": 52,
+          "height": 792
+        },
+        {
+          "name": "    data-testid",
+          "top": 52,
+          "height": 792
+        },
+        {
+          "name": "      div.relative.flex.min-h-0",
+          "top": 52,
+          "height": 792
+        },
+        {
+          "name": "        data-pan-ignore=true data-link-path",
+          "top": 52,
+          "height": 792
+        },
+        {
+          "name": "          div.flex.min-h-0.flex-1",
+          "top": 57,
+          "height": 631
+        },
+        {
+          "name": "            div.relative.flex.min-h-0",
+          "top": 57,
+          "height": 587
+        },
+        {
+          "name": "              data-log-feed-scroller=true data-tail-lines-start data-tail-line-count",
+          "top": 57,
+          "height": 587
+        },
+        {
+          "name": "            data-feed-drafts-band=true",
+          "top": 644,
+          "height": 44
+        },
+        {
+          "name": "              div.min-w-0.flex-1",
+          "top": 644,
+          "height": 44
+        },
+        {
+          "name": "                data-reply-suggestions-row=true",
+          "top": 644,
+          "height": 44
+        },
+        {
+          "name": "                  data-reply-suggestions=inline data-mobile-chips=true",
+          "top": 644,
+          "height": 44
+        },
+        {
+          "name": "                    data-reply-suggestion=true",
+          "top": 644,
+          "height": 44
+        },
+        {
+          "name": "            data-testid",
+          "top": 688,
+          "height": 155
+        },
+        {
+          "name": "              div.flex.justify-end",
+          "top": 695,
+          "height": 32
+        },
+        {
+          "name": "                data-selected-context=selected",
+          "top": 695,
+          "height": 32
+        },
+        {
+          "name": "                  summary.flex.min-h-8.cursor-pointer",
+          "top": 695,
+          "height": 32
+        },
+        {
+          "name": "                    span.min-w-0.truncate.group-open/context:whitespace-normal",
+          "top": 704,
+          "height": 14
+        },
+        {
+          "name": "                  p.border-t.border-border.px-2",
+          "top": 727,
+          "height": 47
+        },
+        {
+          "name": "              data-mobile2-composer=stop",
+          "top": 733,
+          "height": 104
+        },
+        {
+          "name": "                data-mobile2-field=true",
+          "top": 738,
+          "height": 52
+        },
+        {
+          "name": "                data-mobile2-tools=true",
+          "top": 790,
+          "height": 44
+        },
+        {
+          "name": "                  span.relative.inline-flex.min-w-0",
+          "top": 790,
+          "height": 44
+        },
+        {
+          "name": "                    data-runtime-pill=true data-mobile2-open=model",
+          "top": 790,
+          "height": 44
+        },
+        {
+          "name": "                    span.pointer-events-none.absolute.z-[60]",
+          "top": 760,
+          "height": 24
+        }
+      ]
+    },
+    {
+      "frame": "390x844",
+      "column": "standalone",
+      "state": "bottom",
+      "variant": "mixed",
+      "file": "lane-a-390x844-standalone-bottom-mixed.png",
+      "ok": true,
+      "failures": [],
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "safeArea": {
+        "requested": {
+          "top": 47,
+          "bottom": 34
+        },
+        "applied": true
+      },
+      "gapUnderComposerPx": 7,
+      "bandHeightPx": 44,
+      "bandTopPx": 644,
+      "lowestTextBottomPx": 620,
+      "textClearsBandBy": 24,
+      "scrollerHeightPx": 587,
+      "composerUnitPx": 156,
+      "composerBoxPx": 104,
+      "visibleBottomPx": 844,
+      "transcriptShare": 0.6955,
+      "budget": {
+        "chrome": 243,
+        "transcript": 601,
+        "share": 0.7121,
+        "floor": 0.69
+      },
+      "budgetHolds": true,
+      "backToLive": null,
+      "chips": {
+        "rendered": 6,
+        "cutByRowEdge": 1,
+        "clippedInside": 0,
+        "fadeEnd": true,
+        "fadeStart": false,
+        "atRowEnd": {
+          "lastChipClear": true,
+          "fadeStart": true,
+          "fadeEnd": false
+        }
+      },
+      "floatingRows": 0,
+      "anatomy": [
+        {
+          "name": "data-mobile2-screen=chat data-mobile2-conversation data-mobile2-motion=push",
+          "top": 0,
+          "height": 844
+        },
+        {
+          "name": "  data-mobile2-bar=true",
+          "top": 0,
+          "height": 52
+        },
+        {
+          "name": "    data-mobile2-title=true data-mobile2-open=switch",
+          "top": 4,
+          "height": 44
+        },
+        {
+          "name": "      data-mobile2-chat-title=true",
+          "top": 9,
+          "height": 33
+        },
+        {
+          "name": "        data-mobile2-title-text=true",
+          "top": 9,
+          "height": 19
+        },
+        {
+          "name": "        span.flex.min-w-0.items-center",
+          "top": 28,
+          "height": 14
+        },
+        {
+          "name": "  data-mobile2-body=true",
+          "top": 52,
+          "height": 792
+        },
+        {
+          "name": "    data-testid",
+          "top": 52,
+          "height": 792
+        },
+        {
+          "name": "      div.relative.flex.min-h-0",
+          "top": 52,
+          "height": 792
+        },
+        {
+          "name": "        data-pan-ignore=true data-link-path",
+          "top": 52,
+          "height": 792
+        },
+        {
+          "name": "          div.flex.min-h-0.flex-1",
+          "top": 57,
+          "height": 631
+        },
+        {
+          "name": "            div.relative.flex.min-h-0",
+          "top": 57,
+          "height": 587
+        },
+        {
+          "name": "              data-log-feed-scroller=true data-tail-lines-start data-tail-line-count",
+          "top": 57,
+          "height": 587
+        },
+        {
+          "name": "            data-feed-drafts-band=true",
+          "top": 644,
+          "height": 44
+        },
+        {
+          "name": "              div.min-w-0.flex-1",
+          "top": 644,
+          "height": 44
+        },
+        {
+          "name": "                data-reply-suggestions-row=true",
+          "top": 644,
+          "height": 44
+        },
+        {
+          "name": "                  data-reply-suggestions=inline data-mobile-chips=true",
+          "top": 644,
+          "height": 44
+        },
+        {
+          "name": "                    data-reply-suggestion=true",
+          "top": 644,
+          "height": 44
+        },
+        {
+          "name": "                    data-reply-suggestion=true",
+          "top": 644,
+          "height": 44
+        },
+        {
+          "name": "                    data-reply-suggestion=true",
+          "top": 644,
+          "height": 44
+        },
+        {
+          "name": "                    data-reply-suggestion=true",
+          "top": 644,
+          "height": 44
+        },
+        {
+          "name": "            data-testid",
+          "top": 688,
+          "height": 155
+        },
+        {
+          "name": "              div.flex.justify-end",
+          "top": 695,
+          "height": 32
+        },
+        {
+          "name": "                data-selected-context=selected",
+          "top": 695,
+          "height": 32
+        },
+        {
+          "name": "                  summary.flex.min-h-8.cursor-pointer",
+          "top": 695,
+          "height": 32
+        },
+        {
+          "name": "                    span.min-w-0.truncate.group-open/context:whitespace-normal",
+          "top": 704,
+          "height": 14
+        },
+        {
+          "name": "                  p.border-t.border-border.px-2",
+          "top": 727,
+          "height": 47
+        },
+        {
+          "name": "              data-mobile2-composer=stop",
+          "top": 733,
+          "height": 104
+        },
+        {
+          "name": "                data-mobile2-field=true",
+          "top": 738,
+          "height": 52
+        },
+        {
+          "name": "                data-mobile2-tools=true",
+          "top": 790,
+          "height": 44
+        },
+        {
+          "name": "                  span.relative.inline-flex.min-w-0",
+          "top": 790,
+          "height": 44
+        },
+        {
+          "name": "                    data-runtime-pill=true data-mobile2-open=model",
+          "top": 790,
+          "height": 44
+        },
+        {
+          "name": "                    span.pointer-events-none.absolute.z-[60]",
+          "top": 760,
+          "height": 24
+        }
+      ]
+    },
+    {
+      "frame": "390x844",
+      "column": "standalone",
+      "state": "scrolled-up",
+      "variant": "mixed",
+      "file": "lane-a-390x844-standalone-scrolled-up-mixed.png",
+      "ok": true,
+      "failures": [],
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "safeArea": {
+        "requested": {
+          "top": 47,
+          "bottom": 34
+        },
+        "applied": true
+      },
+      "gapUnderComposerPx": 7,
+      "bandHeightPx": 44,
+      "bandTopPx": 644,
+      "lowestTextBottomPx": 644,
+      "textClearsBandBy": 0,
+      "scrollerHeightPx": 587,
+      "composerUnitPx": 156,
+      "composerBoxPx": 104,
+      "visibleBottomPx": 844,
+      "transcriptShare": 0.6955,
+      "budget": {
+        "chrome": 243,
+        "transcript": 601,
+        "share": 0.7121,
+        "floor": 0.69
+      },
+      "budgetHolds": true,
+      "backToLive": {
+        "size": "44×44",
+        "opaque": true,
+        "count": "2",
+        "topPx": 644,
+        "bottomPx": 688,
+        "inBand": true,
+        "textRectsCovered": 0,
+        "visibleTextRects": 35
+      },
+      "chips": {
+        "rendered": 6,
+        "cutByRowEdge": 1,
+        "clippedInside": 0,
+        "fadeEnd": true,
+        "fadeStart": false,
+        "atRowEnd": {
+          "lastChipClear": true,
+          "fadeStart": true,
+          "fadeEnd": false
+        }
+      },
+      "floatingRows": 0,
+      "anatomy": [
+        {
+          "name": "data-mobile2-screen=chat data-mobile2-conversation data-mobile2-motion=push",
+          "top": 0,
+          "height": 844
+        },
+        {
+          "name": "  data-mobile2-bar=true",
+          "top": 0,
+          "height": 52
+        },
+        {
+          "name": "    data-mobile2-title=true data-mobile2-open=switch",
+          "top": 4,
+          "height": 44
+        },
+        {
+          "name": "      data-mobile2-chat-title=true",
+          "top": 9,
+          "height": 33
+        },
+        {
+          "name": "        data-mobile2-title-text=true",
+          "top": 9,
+          "height": 19
+        },
+        {
+          "name": "        span.flex.min-w-0.items-center",
+          "top": 28,
+          "height": 14
+        },
+        {
+          "name": "  data-mobile2-body=true",
+          "top": 52,
+          "height": 792
+        },
+        {
+          "name": "    data-testid",
+          "top": 52,
+          "height": 792
+        },
+        {
+          "name": "      div.relative.flex.min-h-0",
+          "top": 52,
+          "height": 792
+        },
+        {
+          "name": "        data-pan-ignore=true data-link-path",
+          "top": 52,
+          "height": 792
+        },
+        {
+          "name": "          div.flex.min-h-0.flex-1",
+          "top": 57,
+          "height": 631
+        },
+        {
+          "name": "            div.relative.flex.min-h-0",
+          "top": 57,
+          "height": 587
+        },
+        {
+          "name": "              data-log-feed-scroller=true data-tail-lines-start data-tail-line-count",
+          "top": 57,
+          "height": 587
+        },
+        {
+          "name": "            data-feed-drafts-band=true",
+          "top": 644,
+          "height": 44
+        },
+        {
+          "name": "              div.min-w-0.flex-1",
+          "top": 644,
+          "height": 44
+        },
+        {
+          "name": "                data-reply-suggestions-row=true",
+          "top": 644,
+          "height": 44
+        },
+        {
+          "name": "                  data-reply-suggestions=inline data-mobile-chips=true",
+          "top": 644,
+          "height": 44
+        },
+        {
+          "name": "                    data-reply-suggestion=true",
+          "top": 644,
+          "height": 44
+        },
+        {
+          "name": "                    data-reply-suggestion=true",
+          "top": 644,
+          "height": 44
+        },
+        {
+          "name": "                    data-reply-suggestion=true",
+          "top": 644,
+          "height": 44
+        },
+        {
+          "name": "                    data-reply-suggestion=true",
+          "top": 644,
+          "height": 44
+        },
+        {
+          "name": "            data-testid",
+          "top": 688,
+          "height": 155
+        },
+        {
+          "name": "              div.flex.justify-end",
+          "top": 695,
+          "height": 32
+        },
+        {
+          "name": "                data-selected-context=selected",
+          "top": 695,
+          "height": 32
+        },
+        {
+          "name": "                  summary.flex.min-h-8.cursor-pointer",
+          "top": 695,
+          "height": 32
+        },
+        {
+          "name": "                    span.min-w-0.truncate.group-open/context:whitespace-normal",
+          "top": 704,
+          "height": 14
+        },
+        {
+          "name": "                  p.border-t.border-border.px-2",
+          "top": 727,
+          "height": 47
+        },
+        {
+          "name": "              data-mobile2-composer=stop",
+          "top": 733,
+          "height": 104
+        },
+        {
+          "name": "                data-mobile2-field=true",
+          "top": 738,
+          "height": 52
+        },
+        {
+          "name": "                data-mobile2-tools=true",
+          "top": 790,
+          "height": 44
+        },
+        {
+          "name": "                  span.relative.inline-flex.min-w-0",
+          "top": 790,
+          "height": 44
+        },
+        {
+          "name": "                    data-runtime-pill=true data-mobile2-open=model",
+          "top": 790,
+          "height": 44
+        },
+        {
+          "name": "                    span.pointer-events-none.absolute.z-[60]",
+          "top": 760,
           "height": 24
         }
       ]

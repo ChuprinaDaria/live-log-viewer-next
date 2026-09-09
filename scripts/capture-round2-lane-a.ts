@@ -37,9 +37,17 @@
  * `report.json` beside the frames so the proof reads in a diff without opening
  * a PNG: the band's height against `SUGGESTED_CHIPS_PX`, the composer unit at
  * rest and under the keyboard, the transcript's share of the visible viewport
- * against `chatBudget`, and for every state the bottom of the lowest visible
- * transcript row against the top of the band. A frame that fails a gate still
- * lands, and the report says which gate — then the run fails.
+ * against the floor documented for THAT frame and column (390×844 standalone
+ * reads `chatBudget`'s own floors; every other frame carries its measured
+ * floor in `FRAMES`, so a transcript that shrinks anywhere turns the run red),
+ * for every state the bottom of the lowest visible transcript row against the
+ * top of the band, and — the review's finding — every rectangle of visible
+ * transcript TEXT against the «back to live» control, which must cover none.
+ * Two draft-set variants render on top of the base set at 390×844 standalone:
+ * one valid 64-character label, and six mixed labels with RTL among them —
+ * every label whole, none clipped inside its chip. A frame that fails a gate
+ * still lands, and the report says which gate — then the run fails.
+ * `capture-round2-lane-a.test.ts` proves each gate can go red.
  *
  * Frames land outside the repository (a browser render is not deterministic,
  * so it can carry no privacy-manifest provenance and the publication gate
@@ -53,6 +61,7 @@
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { chromium, type Browser, type Page } from "playwright-core";
@@ -69,17 +78,24 @@ import { createCaptureDirectory } from "./capture-directory";
 import { demoPort } from "./demo-capture";
 
 const REPO_ROOT = path.resolve(import.meta.dir, "..");
-const BASE = createCaptureDirectory({
-  envName: "LANE_A_CAPTURE_DIR",
-  prefix: "llv-issue-20260909",
-  raw: process.env.LANE_A_CAPTURE_DIR,
-  repoRoot: REPO_ROOT,
-});
+/* Allocated only for a run: the test imports the gates without a browser and
+   must not leave a capture directory behind. */
+const BASE = import.meta.main
+  ? createCaptureDirectory({
+    envName: "LANE_A_CAPTURE_DIR",
+    prefix: "llv-issue-20260909",
+    raw: process.env.LANE_A_CAPTURE_DIR,
+    repoRoot: REPO_ROOT,
+  })
+  : path.join(os.tmpdir(), "llv-issue-20260909-unused");
 const HOME = path.join(BASE, "home");
 const OUT_DIR = path.join(BASE, "out");
 const REPO_DIR = path.join(HOME, "Projects", "atlas");
 const CAPTURE_MS = Date.parse("2100-01-02T12:00:00.000Z");
 
+export const COLUMNS = ["standalone", "tab"] as const;
+export type Column = (typeof COLUMNS)[number];
+export interface Floors { closed: number; keyboard: number }
 export interface Frame {
   name: string;
   width: number;
@@ -88,17 +104,37 @@ export interface Frame {
   browserRowsPx: number;
   /** The phone's safe-area insets in standalone, emulated through CDP. */
   safeArea: { top: number; bottom: number };
+  /** The transcript's share this frame is held to, per column: measured on
+      the production build (2026-09-09) and set just under the measurement,
+      so a transcript that shrinks here is a red run, not a footnote. */
+  floors: Record<Column, Floors>;
 }
 export const FRAMES: readonly Frame[] = [
   /* iPhone 390×844: the status bar and the home indicator; Safari's persistent
-     row costs ~85 px (lane C's measurement). */
-  { name: "390x844", width: 390, height: 844, browserRowsPx: 85, safeArea: { top: 47, bottom: 34 } },
+     row costs ~85 px (lane C's measurement). The standalone floors ARE the
+     budget's — `chatBudget.ts` describes this frame. */
+  {
+    name: "390x844", width: 390, height: 844, browserRowsPx: 85, safeArea: { top: 47, bottom: 34 },
+    floors: {
+      standalone: { closed: MIN_TRANSCRIPT_SHARE, keyboard: MIN_KEYBOARD_TRANSCRIPT_SHARE },
+      /* Measured 502 / 759 = 66.1% and 166 / 423 = 39.2%. */
+      tab: { closed: 0.66, keyboard: 0.39 },
+    },
+  },
   /* A narrow Android 360×780: a 24 px status bar, a 56 px Chrome toolbar,
-     gesture navigation overlaid (no bottom inset). */
-  { name: "360x780", width: 360, height: 780, browserRowsPx: 80, safeArea: { top: 24, bottom: 0 } },
+     gesture navigation overlaid (no bottom inset). Its own floors: measured
+     523 / 780 = 67.1% and 187 / 444 = 42.1% standalone, 443 / 700 = 63.3% and
+     107 / 364 = 29.4% in a tab. */
+  {
+    name: "360x780", width: 360, height: 780, browserRowsPx: 80, safeArea: { top: 24, bottom: 0 },
+    floors: { standalone: { closed: 0.67, keyboard: 0.42 }, tab: { closed: 0.63, keyboard: 0.29 } },
+  },
 ];
-export const COLUMNS = ["standalone", "tab"] as const;
-export type Column = (typeof COLUMNS)[number];
+/** The floor one frame, column and keyboard state is held to. */
+export function floorFor(frame: Frame, column: Column, keyboard: boolean): number {
+  const floors = frame.floors[column];
+  return keyboard ? floors.keyboard : floors.closed;
+}
 export const STATES = ["bottom", "scrolled-up", "keyboard"] as const;
 export type State = (typeof STATES)[number];
 
@@ -114,6 +150,25 @@ const DRAFTS = [
   { label: "Закоммить і запуш", text: "Закоммить і запуш, я подивлюсь у PR." },
   { label: "Що з клавіатурою?", text: "Що з клавіатурою на 390×844 — виміряно?" },
 ];
+type Draft = { label: string; text: string };
+/** The review's acceptance sets: one label at the 64-character maximum the
+    suggestion type allows, and six mixed ones with RTL among them. Every
+    label must read whole — the chip never clips inside itself. */
+export const DRAFT_VARIANTS: readonly { id: string; drafts: Draft[] }[] = [
+  { id: "long", drafts: [{ label: "Перевір, будь ласка, що смуга драфтів не накриває жодного рядка", text: "Перевір смугу." }] },
+  {
+    id: "mixed",
+    drafts: [
+      { label: "Так", text: "Так." },
+      { label: "نعم، ابدأ الجولة الثانية", text: "Yes, start round 2." },
+      { label: "Покажи аудит спершу", text: "Покажи аудит спершу." },
+      { label: "כן, תמשיך", text: "Yes, go on." },
+      { label: "Merge after review", text: "Merge after review." },
+      { label: "Скільки це коштує по хрому на 360 px?", text: "Скільки це коштує по хрому?" },
+    ],
+  },
+];
+for (const variant of DRAFT_VARIANTS) for (const draft of variant.drafts) if (draft.label.length > 64) throw new Error(`variant ${variant.id}: a label over 64 characters`);
 
 const projectSlug = (cwd: string) => cwd.replace(/[^A-Za-z0-9]/g, "-");
 /* Composed, not written out: a literal UUID in a published source file is
@@ -295,12 +350,18 @@ export interface Geometry {
   chips: Rect[];
   /** Chips whose right edge is past the row's right edge (cut by the row). */
   chipsCutRight: number;
+  /** Chips whose label is clipped INSIDE the chip (scrollWidth past clientWidth). */
+  chipsClippedInside: number;
   fadeEnd: boolean;
   fadeStart: boolean;
   /** The row swiped to its end: the last chip whole, the fade moved to the
       start. Read after the frame, and the row is put back. */
   rowEnd: { lastChipClear: boolean; fadeStart: boolean; fadeEnd: boolean } | null;
-  jump: (Rect & { opaque: boolean; count: string | null }) | null;
+  jump: (Rect & { opaque: boolean; count: string | null; inBand: boolean; inScroller: boolean }) | null;
+  /** Rectangles of visible transcript text, clipped to the scroller. */
+  visibleTextRects: number;
+  /** Those of them the «back to live» control covers, and the first one. */
+  jumpCoversText: { count: number; first: Rect | null };
   floating: number;
   composerBox: Rect | null;
   /** From the band's bottom (or the scroller's, with no band) to the visible
@@ -342,15 +403,53 @@ async function readGeometry(page: Page): Promise<Geometry> {
     const band = rect(document.querySelector(sel.band));
     const chipsRowEl = document.querySelector(sel.chipsRow);
     const chipsRow = rect(chipsRowEl);
-    const chips = [...document.querySelectorAll(sel.chips)].map((chip) => rect(chip)!) as Rect[];
+    const chipEls = [...document.querySelectorAll(sel.chips)];
+    const chips = chipEls.map((chip) => rect(chip)!) as Rect[];
     const chipsCutRight = chipsRow ? chips.filter((chip) => chip.left < chipsRow.right && chip.right > chipsRow.right).length : 0;
+    const chipsClippedInside = chipEls.filter((chip) => {
+      const label = chip.firstElementChild as HTMLElement | null;
+      return Boolean(label) && label!.scrollWidth > label!.clientWidth + 1;
+    }).length;
     const jumpEl = document.querySelector(sel.jump);
     const jumpRect = rect(jumpEl);
     let jump: Geometry["jump"] = null;
     if (jumpEl && jumpRect) {
       const bg = getComputedStyle(jumpEl).backgroundColor;
       const alpha = bg.startsWith("rgba") ? Number(bg.slice(bg.lastIndexOf(",") + 1, -1)) : bg.includes("/") ? Number(bg.slice(bg.lastIndexOf("/") + 1, -1)) : 1;
-      jump = { ...jumpRect, opaque: alpha >= 0.999, count: jumpEl.querySelector(sel.newCount)?.textContent ?? null };
+      jump = {
+        ...jumpRect,
+        opaque: alpha >= 0.999,
+        count: jumpEl.querySelector(sel.newCount)?.textContent ?? null,
+        inBand: Boolean(document.querySelector(sel.band)?.contains(jumpEl)),
+        inScroller: Boolean(document.querySelector(sel.scroller)?.contains(jumpEl)),
+      };
+    }
+    /* Every rectangle of transcript text the operator can see, clipped to the
+       scroller: what a control over the transcript would be hiding. */
+    let visibleTextRects = 0;
+    const covered: Rect[] = [];
+    if (scroller) {
+      const range = document.createRange();
+      for (const row of document.querySelectorAll(sel.rows)) {
+        const rowRect = row.getBoundingClientRect();
+        if (rowRect.bottom <= scroller.top || rowRect.top >= scroller.bottom) continue;
+        const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+          if (!node.textContent || !node.textContent.trim()) continue;
+          range.selectNodeContents(node);
+          for (const r of range.getClientRects()) {
+            const top = Math.max(r.top, scroller.top);
+            const bottom = Math.min(r.bottom, scroller.bottom);
+            const left = Math.max(r.left, scroller.left);
+            const right = Math.min(r.right, scroller.right);
+            if (bottom - top <= 0 || right - left <= 0) continue;
+            visibleTextRects += 1;
+            if (jumpRect && left < jumpRect.right && right > jumpRect.left && top < jumpRect.bottom && bottom > jumpRect.top) {
+              covered.push({ top: Math.round(top), bottom: Math.round(bottom), left: Math.round(left), right: Math.round(right), width: Math.round(right - left), height: Math.round(bottom - top) });
+            }
+          }
+        }
+      }
     }
     const composerBox = rect(document.querySelector(sel.composerBox));
     const bandOrScrollerBottom = band && band.height > 0 ? band.bottom : scroller?.bottom ?? null;
@@ -383,6 +482,9 @@ async function readGeometry(page: Page): Promise<Geometry> {
       chipsRow,
       chips,
       chipsCutRight,
+      chipsClippedInside,
+      visibleTextRects,
+      jumpCoversText: { count: covered.length, first: covered[0] ?? null },
       fadeEnd: Boolean(document.querySelector(sel.fadeEnd)),
       fadeStart: Boolean(document.querySelector(sel.fadeStart)),
       rowEnd: null,
@@ -411,8 +513,11 @@ async function readRowEnd(page: Page): Promise<Geometry["rowEnd"]> {
     const rowRect = row.getBoundingClientRect();
     const chips = [...document.querySelectorAll(sel.chips)];
     const last = chips.at(-1)?.getBoundingClientRect();
+    /* Swiped to the end, the last chip's END is inside the row: a chip wider
+       than the row (one long label) cannot fit whole at once, and reads by
+       swiping — what must never happen is its end being past the edge. */
     const result = {
-      lastChipClear: Boolean(last) && last!.right <= rowRect.right + 0.5 && last!.left >= rowRect.left - 0.5,
+      lastChipClear: Boolean(last) && last!.right <= rowRect.right + 0.5,
       fadeStart: Boolean(document.querySelector(sel.fadeStart)),
       fadeEnd: Boolean(document.querySelector(sel.fadeEnd)),
     };
@@ -442,13 +547,13 @@ export interface FrameReport {
  * The gates, pure so the numbers can be read back without a browser. Every
  * failure names the number that failed it.
  */
-export function judge(viewport: { width: number; height: number }, column: Column, state: State, g: Geometry): Omit<FrameReport, "frame" | "column" | "state" | "file" | "viewport" | "safeArea"> {
+export function judge(frame: Frame, column: Column, state: State, g: Geometry, expectedChips = DRAFTS.length): Omit<FrameReport, "frame" | "column" | "state" | "file" | "viewport" | "safeArea"> {
   const failures: string[] = [];
   const keyboard = state === "keyboard" ? KEYBOARD_PX : 0;
-  const budget = chatBudget({ height: viewport.height, chips: true, keyboard });
-  const floor = keyboard ? MIN_KEYBOARD_TRANSCRIPT_SHARE : MIN_TRANSCRIPT_SHARE;
+  const viewport = columnViewport(frame, column);
+  const budget = chatBudget({ height: viewport.height, chips: true, released: state !== "bottom", keyboard });
+  const floor = floorFor(frame, column, keyboard > 0);
   const visibleHeight = viewport.height - keyboard;
-  const frame = viewport;
   const bandHeight = g.band?.height ?? 0;
   const transcriptShare = g.scroller ? g.scroller.height / visibleHeight : null;
 
@@ -456,14 +561,15 @@ export function judge(viewport: { width: number; height: number }, column: Colum
   if (g.visibleRows === 0) failures.push("no transcript row is visible, so the frame proves nothing");
   if (g.floating > 0) failures.push(`${g.floating} floating draft row(s) over the transcript on the phone`);
   if (!g.band || bandHeight === 0) failures.push("no drafts band rendered — the set was not offered");
-  if (g.chips.length !== DRAFTS.length) failures.push(`${g.chips.length} chips rendered of ${DRAFTS.length}`);
+  if (g.chips.length !== expectedChips) failures.push(`${g.chips.length} chips rendered of ${expectedChips}`);
   /* A1: the band is below the scroller, so no transcript pixel can be under it. */
   if (g.band && g.scroller && g.band.top < g.scroller.bottom) failures.push(`the drafts band starts at ${g.band.top}px, above the scroller's bottom at ${g.scroller.bottom}px`);
   if (g.band && g.lowestTextBottom !== null && g.lowestTextBottom > g.band.top) failures.push(`the lowest transcript row ends at ${g.lowestTextBottom}px, under the band that starts at ${g.band.top}px`);
   /* A1: the band reserves exactly what the budget says it does. */
   if (g.band && bandHeight !== SUGGESTED_CHIPS_PX) failures.push(`the drafts band is ${bandHeight}px, SUGGESTED_CHIPS_PX says ${SUGGESTED_CHIPS_PX}`);
   for (const chip of g.chips) if (chip.height < 44) failures.push(`a chip's target is ${chip.height}px, under the 44px floor`);
-  /* A3: a chip the row cuts is faded, not sliced. */
+  /* A3: a label is whole inside its chip; a chip the row cuts is faded, not sliced. */
+  if (g.chipsClippedInside > 0) failures.push(`${g.chipsClippedInside} chip label(s) clipped inside the chip`);
   if (g.chipsCutRight > 0 && !g.fadeEnd) failures.push(`${g.chipsCutRight} chip(s) cut by the row's right edge and no fade says the row goes on`);
   if (g.chipsCutRight === 0 && g.fadeEnd) failures.push("an end fade shows with nothing cut behind it");
   if (g.rowEnd) {
@@ -471,14 +577,21 @@ export function judge(viewport: { width: number; height: number }, column: Colum
     if (g.rowEnd.fadeEnd) failures.push("swiped to the end, an end fade still says the row goes on");
     if (g.chipsCutRight > 0 && !g.rowEnd.fadeStart) failures.push("swiped to the end, no start fade says where the row came from");
   }
-  /* A2: the way back is a 44px opaque control inside the scroller, off the band. */
+  /* A2: the way back is a 44px control IN THE BAND, beside the drafts, and it
+     covers no rectangle of visible transcript text — the review's own check:
+     an opaque control over a paragraph hides it rather than sharing it. */
   if (state !== "bottom") {
     if (!g.jump) failures.push("scrolled up and no «back to live» control");
     else {
       if (g.jump.width < 44 || g.jump.height < 44) failures.push(`the «back to live» control is ${g.jump.width}×${g.jump.height}px`);
       if (!g.jump.opaque) failures.push("the «back to live» control has a translucent surface");
-      if (g.band && g.jump.bottom > g.band.top) failures.push(`the «back to live» control ends at ${g.jump.bottom}px, into the band at ${g.band.top}px`);
-      if (g.scroller && (g.jump.right > g.scroller.right || g.jump.left < g.scroller.left)) failures.push("the «back to live» control leaves the scroller's width");
+      if (!g.jump.inBand || g.jump.inScroller) failures.push("the «back to live» control is not in the band under the scroller");
+      if (g.scroller && g.jump.top < g.scroller.bottom) failures.push(`the «back to live» control starts at ${g.jump.top}px, inside the scroller that ends at ${g.scroller.bottom}px`);
+      if (g.visibleTextRects === 0) failures.push("no visible transcript text was measured, so the control's cover proves nothing");
+      if (g.jumpCoversText.count > 0) {
+        const first = g.jumpCoversText.first!;
+        failures.push(`the «back to live» control covers ${g.jumpCoversText.count} rectangle(s) of transcript text, the first at ${first.left}..${first.right}×${first.top}..${first.bottom}px`);
+      }
     }
   } else if (g.jump) failures.push("a «back to live» control shows while the magnet holds");
   /* The keyboard: the whole column, band and send included, above it. */
@@ -489,12 +602,10 @@ export function judge(viewport: { width: number; height: number }, column: Colum
     if (!g.send) failures.push("no send control");
     else if (g.send.bottom > visibleHeight) failures.push(`send ends at ${g.send.bottom}px, under the keyboard's top at ${visibleHeight}px`);
   }
-  /* The budget's floor is RECORDED beside the measured share in both columns
-     (`budgetHolds`), not gated here: what this lane owns of the chrome is the
-     44 px band, and that is gated above. The shortfall the report shows is
-     the composer form's — 155 px against the 109 the budget counts, the
-     `selected-context` row and a 52 px field the budget never had — and a
-     green run here must not be read as that being settled. */
+  /* The transcript keeps the floor documented for THIS frame and column —
+     `chatBudget`'s own at 390×844 standalone, the frame's measured one
+     elsewhere — so a transcript that shrinks anywhere is a red run. */
+  if (transcriptShare !== null && transcriptShare < floor) failures.push(`the transcript keeps ${(transcriptShare * 100).toFixed(1)}% of ${visibleHeight}px, under the ${(floor * 100).toFixed(0)}% floor for ${frame.name} ${column}`);
   if (column === "standalone" && !g.standaloneMedia) failures.push("the standalone column does not match (display-mode: standalone)");
   if (g.documentScrollWidth > frame.width) failures.push(`the document scrolls to ${g.documentScrollWidth}px at ${frame.width}px`);
   return {
@@ -565,9 +676,10 @@ async function openKeyboard(page: Page): Promise<void> {
   await settle(page, 500);
 }
 
-async function captureFrame(browser: Browser, baseUrl: string, transcript: string, frame: Frame, column: Column): Promise<FrameReport[]> {
+async function captureFrame(browser: Browser, baseUrl: string, transcript: string, frame: Frame, column: Column, drafts: Draft[] = DRAFTS, variant = ""): Promise<FrameReport[]> {
   const reports: FrameReport[] = [];
   const viewport = columnViewport(frame, column);
+  const states: readonly State[] = variant ? ["bottom", "scrolled-up"] : STATES;
   const context = await browser.newContext({ viewport, colorScheme: "dark", deviceScaleFactor: 2, isMobile: true, hasTouch: true, reducedMotion: "reduce", timezoneId: "UTC", locale: "uk-UA" });
   await context.addInitScript(seedInit);
   if (column === "standalone") await context.addInitScript(standaloneInit);
@@ -578,7 +690,7 @@ async function captureFrame(browser: Browser, baseUrl: string, transcript: strin
     route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ set: { conversationId, setId: `rsg_lane_a_${frame.name}`, at: new Date(CAPTURE_MS - 10 * 60_000).toISOString(), origin: { kind: "manager", conversationId: "seat", role: "orchestrator" }, replies: DRAFTS } }),
+      body: JSON.stringify({ set: { conversationId, setId: `rsg_lane_a_${frame.name}_${variant || "base"}`, at: new Date(CAPTURE_MS - 10 * 60_000).toISOString(), origin: { kind: "manager", conversationId: "seat", role: "orchestrator" }, replies: drafts } }),
     });
   });
   /* A seeded transcript scans with no conversation identity and no process
@@ -595,7 +707,7 @@ async function captureFrame(browser: Browser, baseUrl: string, transcript: strin
     const body = JSON.parse(text) as { files?: Record<string, unknown>[] };
     for (const entry of body.files ?? []) {
       if (entry.cwd !== REPO_DIR) continue;
-      entry.conversationId = `conversation_lane_a_${frame.name}_${column}`;
+      entry.conversationId = `conversation_lane_a_${frame.name}_${column}${variant ? `_${variant}` : ""}`;
       entry.proc = "running";
       entry.pid = 4_990;
     }
@@ -622,17 +734,17 @@ async function captureFrame(browser: Browser, baseUrl: string, transcript: strin
     /* The transcript is re-seeded per frame so the arrivals do not compound. */
     fs.writeFileSync(TRANSCRIPT_PATH, transcriptLines().join("\n") + "\n", "utf8");
     await openChat(page, baseUrl, transcript);
-    for (const state of STATES) {
+    for (const state of states) {
       if (state === "scrolled-up") { await scrollUp(page); await letAnswersArrive(page); }
       if (state === "keyboard") await openKeyboard(page);
-      const file = path.join(OUT_DIR, `lane-a-${frame.name}-${column}-${state}.png`);
+      const file = path.join(OUT_DIR, `lane-a-${frame.name}-${column}-${state}${variant ? `-${variant}` : ""}.png`);
       await page.screenshot({ path: file, fullPage: false });
       const geometry = await readGeometry(page);
       geometry.rowEnd = await readRowEnd(page);
-      const verdict = judge(viewport, column, state, geometry);
+      const verdict = judge(frame, column, state, geometry, drafts.length);
       if (errors.length) verdict.failures.push(...errors.splice(0).map((error) => `page error: ${error}`));
       reports.push({ frame: frame.name, column, state, file, viewport, safeArea: { requested: frame.safeArea, applied: safeAreaApplied }, ...verdict });
-      console.log(`${frame.name}/${column}/${state}: ${verdict.failures.length ? verdict.failures.join("; ") : "ok"}`);
+      console.log(`${frame.name}/${column}/${state}${variant ? `/${variant}` : ""}: ${verdict.failures.length ? verdict.failures.join("; ") : "ok"}`);
     }
   } finally {
     await context.close();
@@ -661,6 +773,7 @@ async function main(): Promise<void> {
     if (!transcript) throw new Error("the seeded conversation did not scan");
     console.log(`frames: ${OUT_DIR}`);
     for (const frame of FRAMES) for (const column of COLUMNS) reports.push(...await captureFrame(browser, baseUrl, transcript, frame, column));
+    for (const variant of DRAFT_VARIANTS) reports.push(...await captureFrame(browser, baseUrl, transcript, FRAMES[0]!, "standalone", variant.drafts, variant.id));
   } finally {
     await browser.close();
     server.kill("SIGTERM");
@@ -674,6 +787,7 @@ async function main(): Promise<void> {
       frame: entry.frame,
       column: entry.column,
       state: entry.state,
+      variant: path.basename(entry.file).replace(/^lane-a-\d+x\d+-(?:standalone|tab)-(?:bottom|scrolled-up|keyboard)-?/, "").replace(/\.png$/, "") || "base",
       file: path.basename(entry.file),
       ok: entry.failures.length === 0,
       failures: entry.failures,
@@ -691,8 +805,8 @@ async function main(): Promise<void> {
       transcriptShare: entry.measured.transcriptShare,
       budget: entry.budget,
       budgetHolds: entry.measured.transcriptShare !== null && entry.measured.transcriptShare >= entry.budget.floor,
-      backToLive: entry.geometry.jump ? { size: `${entry.geometry.jump.width}×${entry.geometry.jump.height}`, opaque: entry.geometry.jump.opaque, count: entry.geometry.jump.count, bottomPx: entry.geometry.jump.bottom } : null,
-      chips: { rendered: entry.geometry.chips.length, cutByRowEdge: entry.geometry.chipsCutRight, fadeEnd: entry.geometry.fadeEnd, fadeStart: entry.geometry.fadeStart, atRowEnd: entry.geometry.rowEnd },
+      backToLive: entry.geometry.jump ? { size: `${entry.geometry.jump.width}×${entry.geometry.jump.height}`, opaque: entry.geometry.jump.opaque, count: entry.geometry.jump.count, topPx: entry.geometry.jump.top, bottomPx: entry.geometry.jump.bottom, inBand: entry.geometry.jump.inBand, textRectsCovered: entry.geometry.jumpCoversText.count, visibleTextRects: entry.geometry.visibleTextRects } : null,
+      chips: { rendered: entry.geometry.chips.length, cutByRowEdge: entry.geometry.chipsCutRight, clippedInside: entry.geometry.chipsClippedInside, fadeEnd: entry.geometry.fadeEnd, fadeStart: entry.geometry.fadeStart, atRowEnd: entry.geometry.rowEnd },
       floatingRows: entry.geometry.floating,
       anatomy: entry.geometry.anatomy,
     })),

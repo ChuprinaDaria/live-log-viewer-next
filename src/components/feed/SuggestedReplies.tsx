@@ -248,8 +248,14 @@ export function SuggestedReplies({ file, revision, items, outbox, floating = fal
   const measureEdges = useCallback(() => {
     const row = rowRef.current;
     if (!row) return;
-    const start = row.scrollLeft > 1;
-    const end = row.scrollLeft + row.clientWidth < row.scrollWidth - 1;
+    /* A fade says «a chip is cut here», so it is read off the chips, not the
+       scroll range: the trailing room after the last chip is not a chip. */
+    const chips = row.querySelectorAll<HTMLElement>("[data-reply-suggestion]");
+    const first = chips[0]?.getBoundingClientRect();
+    const last = chips[chips.length - 1]?.getBoundingClientRect();
+    const rowRect = row.getBoundingClientRect();
+    const start = Boolean(first) && first!.left < rowRect.left - 1;
+    const end = Boolean(last) && last!.right > rowRect.right + 1;
     setEdges((prev) => (prev.start === start && prev.end === end ? prev : { start, end }));
   }, []);
   const rowSetId = set?.setId ?? null;
@@ -327,7 +333,7 @@ export function SuggestedReplies({ file, revision, items, outbox, floating = fal
           data-mobile-chips
           role="group"
           aria-label={t("composer.suggestedReplies")}
-          className="flex h-11 min-w-0 snap-x snap-mandatory items-center gap-1.5 overflow-x-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          className="flex h-11 min-w-0 snap-x snap-proximity items-center gap-1.5 overflow-x-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
           {set.replies.map((reply, index) => (
             <button
@@ -338,7 +344,12 @@ export function SuggestedReplies({ file, revision, items, outbox, floating = fal
               onClick={() => sendFromPhone(reply.text)}
               className="inline-flex h-11 shrink-0 snap-start items-center px-px focus-visible:outline-none"
             >
-              <span className="inline-flex h-8 max-w-[70vw] items-center truncate whitespace-nowrap rounded-full border border-border bg-card px-3 text-ui font-semibold text-secondary">
+              {/* The whole label, always: a chip never clips inside itself —
+                  a long one makes the ROW longer, and the row is what scrolls
+                  and fades (review of round 2 lane A: a valid 64-character
+                  label was cut mid-letter by an inner max-width, with nothing
+                  to swipe). `dir="auto"` so an RTL label reads its own way. */}
+              <span dir="auto" className="inline-flex h-8 items-center whitespace-nowrap rounded-full border border-border bg-card px-3 text-ui font-semibold text-secondary">
                 {reply.label}
               </span>
             </button>

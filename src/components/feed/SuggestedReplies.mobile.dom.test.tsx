@@ -240,12 +240,13 @@ test("desktop: a chip still only fills the composer draft", async () => {
  * direction — happy-dom reports no geometry, so the row's is stubbed and the
  * measurement is driven through the row's own scroll event.
  */
-function setRowGeometry(row: HTMLElement, scrollWidth: number, clientWidth: number, scrollLeft: number) {
-  let left = scrollLeft;
-  Object.defineProperties(row, {
-    scrollWidth: { configurable: true, get: () => scrollWidth },
-    clientWidth: { configurable: true, get: () => clientWidth },
-    scrollLeft: { configurable: true, get: () => left, set: (value: number) => { left = Number(value); } },
+/** The row at `rowWidth`, its chips laid out from `firstLeft` at `chipWidth`
+    each (gap 6): what the fades read is where the first and last chip ARE. */
+function setRowGeometry(row: HTMLElement, rowWidth: number, chipWidth: number, firstLeft: number) {
+  const box = (left: number, width: number) => () => ({ left, right: left + width, top: 0, bottom: 44, width, height: 44, x: left, y: 0, toJSON: () => ({}) });
+  row.getBoundingClientRect = box(0, rowWidth) as unknown as typeof row.getBoundingClientRect;
+  [...row.querySelectorAll<HTMLElement>("[data-reply-suggestion]")].forEach((chip, index) => {
+    chip.getBoundingClientRect = box(firstLeft + index * (chipWidth + 6), chipWidth) as unknown as typeof chip.getBoundingClientRect;
   });
 }
 
@@ -258,13 +259,15 @@ test("phone: the row fades on the side it continues to, and only there", async (
   expect(host.querySelector("[data-chips-fade]")).toBeNull();
   expect(classOf(row)).toContain("h-11");
   expect(classOf(row)).toContain("snap-x");
-  /* Wider than the viewport, parked at the start: the row goes on to the right. */
-  setRowGeometry(row, 720, 360, 0);
+  /* Three 200 px chips in a 360 px row, parked at the start: the third is
+     cut by the row's end, so the row goes on to the right and nowhere else. */
+  setRowGeometry(row, 360, 200, 0);
   flushSync(() => { row.dispatchEvent(new Event("scroll", { bubbles: true })); });
   expect(host.querySelector('[data-chips-fade="end"]')).toBeTruthy();
   expect(host.querySelector('[data-chips-fade="start"]')).toBeNull();
-  /* Swiped to the end: the last chip is clear, the start is what is behind. */
-  setRowGeometry(row, 720, 360, 360);
+  /* Swiped to the end: the last chip ends inside the row, the first is what
+     is behind — and the room after the last chip is not «more row». */
+  setRowGeometry(row, 360, 200, -258);
   flushSync(() => { row.dispatchEvent(new Event("scroll", { bubbles: true })); });
   expect(host.querySelector('[data-chips-fade="end"]')).toBeNull();
   expect(host.querySelector('[data-chips-fade="start"]')).toBeTruthy();

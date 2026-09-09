@@ -8,6 +8,7 @@ import {
   MIN_KEYBOARD_TRANSCRIPT_SHARE,
   MIN_TRANSCRIPT_SHARE,
   PERSISTENT_CHROME,
+  SELECTED_CONTEXT,
   SELECTED_CONTEXT_PX,
   SUGGESTED_CHIPS_PX,
   SUPERSEDED_CHROME,
@@ -38,8 +39,18 @@ test("199 is the bar, the composer unit and the selected-context row, and nothin
   expect(Object.values(PERSISTENT_CHROME).reduce((a, b) => a + b, 0)).toBe(199);
   expect(BAR_PX + COMPOSER_PX + SELECTED_CONTEXT_PX).toBe(199);
   expect(BAR_PX + COMPOSER_PX + SELECTED_CONTEXT_PX + BANNER_PX).toBe(244);
-  /* The row as measured on the production build: 32 px plus the form's 6 px gap. */
+  /* The badge as measured on the production build: 32 px plus the form's
+     6 px gap when collapsed, which is the state at rest the budget counts;
+     none and expanded are named beside it, not hidden in it. */
   expect(SELECTED_CONTEXT_PX).toBe(32 + 6);
+  expect(SELECTED_CONTEXT).toEqual({ none: 0, collapsed: 38, expanded: 85 } as const);
+  expect(SELECTED_CONTEXT_PX).toBe(SELECTED_CONTEXT.collapsed);
+});
+
+test("the band costs its 44 px once, for the chips, for the way back, or for both", () => {
+  const base = chatBudget({ height: 844 });
+  expect(chatBudget({ height: 844, released: true }).transcript).toBe(base.transcript - SUGGESTED_CHIPS_PX);
+  expect(chatBudget({ height: 844, chips: true, released: true }).transcript).toBe(base.transcript - SUGGESTED_CHIPS_PX);
 });
 
 test("at 390×844 the transcript keeps 76% of the viewport, and 71% under a banner", () => {

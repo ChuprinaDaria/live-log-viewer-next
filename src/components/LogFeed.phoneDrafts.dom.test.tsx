@@ -79,6 +79,8 @@ globalThis.fetch = (async (input: unknown) => {
   const url = String(input);
   if (url.startsWith("/api/log/suggestions")) {
     const conversationId = decodeURIComponent(url.split("conversationId=")[1] ?? CONVERSATION_ID);
+    /* A conversation with nothing offered: the band must still carry the way back. */
+    if (conversationId.endsWith("_nodrafts")) return { ok: true, status: 200, json: async () => ({ set: null }) } as Response;
     return { ok: true, status: 200, json: async () => ({ set: { conversationId, setId: `rsg_${conversationId}`, at: AT(2), origin: { kind: "manager", conversationId, role: "orchestrator" }, replies: drafts } }) } as Response;
   }
   return { ok: false, status: 404, json: async () => ({}) } as Response;
@@ -244,10 +246,8 @@ test("phone, magnet released: the band stays where it was and nothing floats ove
   expect(host.querySelector("[data-log-feed-scroller] [data-reply-suggestions]")).toBeNull();
 });
 
-test("phone: the way back is a round 44px control on a raised surface, with the count as a badge", async () => {
-  const badgeFile = conversationFile("badge");
-  const host = render(badgeFile, true);
-  await settle(host, "[data-feed-drafts-band] [data-reply-suggestion]");
+/** Release the magnet the way a thumb does, and wait for the way back. */
+async function releaseMagnet(host: HTMLElement): Promise<HTMLButtonElement> {
   const scroller = host.querySelector("[data-log-feed-scroller]") as HTMLElement;
   const geometry = setScrollerGeometry(scroller, 1_200, 200, 1_000);
   flushSync(() => {
@@ -256,16 +256,39 @@ test("phone: the way back is a round 44px control on a raised surface, with the 
     scroller.dispatchEvent(new dom.Event("scroll", { bubbles: true }) as unknown as Event);
   });
   await settle(host, "[data-feed-jump-tail]");
-  const jump = host.querySelector("[data-feed-jump-tail]") as HTMLButtonElement;
+  return host.querySelector("[data-feed-jump-tail]") as HTMLButtonElement;
+}
+
+/** The review's finding (round 2 lane A): a control positioned over the
+    transcript hides text, opaque or not. The way back lives in the band —
+    a flow sibling AFTER the scroller — and nothing about it is absolute. */
+function expectJumpBesideTheDrafts(host: HTMLElement, jump: HTMLButtonElement): void {
+  const band = host.querySelector("[data-feed-drafts-band]")!;
+  const scroller = host.querySelector("[data-log-feed-scroller]")!;
+  expect(band.contains(jump)).toBe(true);
+  expect(scroller.contains(jump)).toBe(false);
+  expect(scroller.compareDocumentPosition(jump) & 4 /* DOCUMENT_POSITION_FOLLOWING */).toBeTruthy();
+  for (let el: Element | null = jump; el && el !== band.parentElement; el = el.parentElement) {
+    expect(el.getAttribute("class") ?? "").not.toMatch(/(^|\s)(absolute|fixed)(\s|$)/);
+  }
+  /* Beside the drafts: the chips row, when there is one, comes first. */
+  const row = band.querySelector("[data-mobile-chips]");
+  if (row) expect(row.compareDocumentPosition(jump) & 4).toBeTruthy();
+}
+
+test("phone: the way back is a round 44px control in the band beside the drafts, with the count as a badge", async () => {
+  const badgeFile = conversationFile("badge");
+  const host = render(badgeFile, true);
+  await settle(host, "[data-feed-drafts-band] [data-reply-suggestion]");
+  const jump = await releaseMagnet(host);
   const classes = jump.getAttribute("class") ?? "";
-  for (const token of ["h-11", "w-11", "rounded-full", "bg-raised", "shadow-2"]) expect(classes).toContain(token);
+  for (const token of ["h-11", "w-11", "rounded-full", "bg-raised", "shrink-0"]) expect(classes).toContain(token);
   expect(jump.getAttribute("aria-label")).toBe("Back to the live tail");
   /* No count yet: nothing arrived since the release. */
   expect(jump.querySelector("[data-feed-new-count]")).toBeNull();
-  /* The control anchors to the scroller's wrapper, so it is inside the
-     transcript's area and structurally outside the band. */
-  expect(jump.parentElement).toBe(scroller.parentElement);
-  expect(host.querySelector("[data-feed-drafts-band]")!.contains(jump)).toBe(false);
+  expectJumpBesideTheDrafts(host, jump);
+  /* The drafts are still there, in the same band, before the control. */
+  expect(host.querySelectorAll("[data-feed-drafts-band] [data-reply-suggestion]")).toHaveLength(drafts.length);
 
   /* Two answers arrive behind the operator: the badge carries the count. */
   const root = [...roots].at(-1)!;
@@ -279,6 +302,18 @@ test("phone: the way back is a round 44px control on a raised surface, with the 
   expect(badge).toBeTruthy();
   expect(badge!.textContent).toBe("2");
   expect(jump.getAttribute("aria-label")).toBe("Back to the live tail · 2 new");
+});
+
+test("phone: with nothing offered, the band still carries the way back and nothing floats", async () => {
+  const host = render(conversationFile("nodrafts"), true);
+  await settle(host, "[data-log-feed-scroller] [data-feed-key]");
+  /* Held: no drafts, so the band holds nothing. */
+  expect(host.querySelectorAll("[data-feed-drafts-band] [data-reply-suggestion]")).toHaveLength(0);
+  expect(host.querySelector("[data-feed-jump-tail]")).toBeNull();
+  const jump = await releaseMagnet(host);
+  expect(jump).toBeTruthy();
+  expectJumpBesideTheDrafts(host, jump);
+  expect(host.querySelectorAll('[data-reply-suggestions="floating"]')).toHaveLength(0);
 });
 
 test("desktop is untouched: the drafts sit under the latest turn inside the scroller, no band", async () => {

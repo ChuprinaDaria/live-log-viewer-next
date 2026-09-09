@@ -904,29 +904,10 @@ export function LogFeed({ file, showSvc, lineFilter, onStatus, paused, follow, s
             </div>
           ) : null
         ) : phone ? (
-          /* Round 2 lane A (A2): on the phone the way back is a round 44 px
-             button in the scroller's corner with an OPAQUE raised surface and
-             a shadow, and the count is a badge on its rim — never a text pill
-             sitting in the middle of a paragraph. It hugs the corner the
-             transcript's own padding already keeps clear, and the drafts band
-             below the scroller is outside its anchor, so the two never meet. */
-          <button
-            data-feed-jump-tail
-            className="absolute bottom-3 right-3 z-10 inline-flex h-11 w-11 items-center justify-center rounded-full border border-border bg-raised text-primary shadow-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-            aria-label={newCount ? `${t("feed.backToLive")} · ${t("feed.newCount", { count: newCount })}` : t("feed.backToLive")}
-            onClick={jumpToTail}
-          >
-            <ArrowDown className="h-4 w-4" aria-hidden />
-            {newCount ? (
-              <span
-                data-feed-new-count
-                aria-hidden
-                className="absolute -right-1 -top-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-accent px-1 text-[10px] font-bold leading-none tabular-nums text-white"
-              >
-                {newCount > 99 ? "99+" : newCount}
-              </span>
-            ) : null}
-          </button>
+          /* Round 2 lane A (A2): nothing floats over the phone's transcript.
+             The way back rides in the band under the scroller, beside the
+             drafts, where no text can be under it (see the band below). */
+          null
         ) : (
           <button
             className={`absolute bottom-2 ${pillPos} z-10 inline-flex min-w-11 items-center justify-center gap-1 whitespace-nowrap rounded-full border border-border bg-raised px-2.5 py-1 text-label font-semibold text-primary shadow-1 [@media(pointer:coarse)]:min-h-11 hover:border-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40`}
@@ -1230,20 +1211,46 @@ export function LogFeed({ file, showSvc, lineFilter, onStatus, paused, follow, s
       </PrependViewport>
       </div>
     </div>
-    {/* Round 2 lane A (A1), mobile v2 §4.3: on the phone the drafts are ONE
-        row directly above the composer box, in the flow of the column, so they
-        reserve their own height and no pixel of the transcript is ever under
-        them — with the magnet held or released, keyboard up or down. The band
-        is `SUGGESTED_CHIPS_PX` tall when a set is offered and 0 otherwise;
-        `chatBudget` counts exactly that. */}
+    {/* Round 2 lane A (A1, A2), mobile v2 §4.3: on the phone the band under
+        the scroller is the ONE row directly above the composer box, in the
+        flow of the column, so it reserves its own height and no pixel of the
+        transcript is ever under it — with the magnet held or released,
+        keyboard up or down. It carries the drafts, and, once the magnet is
+        released, the way back to the tail at its end: a 44 px round control
+        on a raised surface with the count as a badge. Beside the drafts, not
+        over the text — a control that floats over a paragraph hides it, and
+        an opaque one hides it better. The band is `SUGGESTED_CHIPS_PX` tall
+        while it holds either and 0 otherwise; `chatBudget` counts exactly
+        that (`chips`, `released`). */}
     {file && phone ? (
-      <div data-feed-drafts-band className="shrink-0 px-3">
-        <SuggestedReplies
-          file={file}
-          revision={suggestionsRevision}
-          items={feed.items}
-          outbox={pendingOutbox}
-        />
+      <div data-feed-drafts-band className="flex shrink-0 items-center gap-2 px-3">
+        <div className="min-w-0 flex-1">
+          <SuggestedReplies
+            file={file}
+            revision={suggestionsRevision}
+            items={feed.items}
+            outbox={pendingOutbox}
+          />
+        </div>
+        {feed.items.length > 0 && !magnet ? (
+          <button
+            data-feed-jump-tail
+            className="relative inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border bg-raised text-primary shadow-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+            aria-label={newCount ? `${t("feed.backToLive")} · ${t("feed.newCount", { count: newCount })}` : t("feed.backToLive")}
+            onClick={jumpToTail}
+          >
+            <ArrowDown className="h-4 w-4" aria-hidden />
+            {newCount ? (
+              <span
+                data-feed-new-count
+                aria-hidden
+                className="absolute -right-1 -top-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-accent px-1 text-[10px] font-bold leading-none tabular-nums text-white"
+              >
+                {newCount > 99 ? "99+" : newCount}
+              </span>
+            ) : null}
+          </button>
+        ) : null}
       </div>
     ) : null}
     {/* Bottom working-status slot: live elapsed from the transcript receipt.
