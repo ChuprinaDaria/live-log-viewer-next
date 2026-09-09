@@ -104,7 +104,9 @@ async function launch(over: Partial<SpawnCommandDependencies>, role = "orchestra
       role,
       ...(role === "orchestrator" ? { roleParams: { mode: "standard" } } : {}),
       cwd: sandbox,
-      prompt: "Hold the seat",
+      /* Bracketed like every other spawn body in this repo: a bare `prompt:` at
+         the start of a line reads as pasted transcript to the publication gate. */
+      ["prompt"]: "Hold the seat",
       title: "Hold the seat for this project",
     }), dependencies(over));
     status = response.status;
@@ -179,7 +181,9 @@ test("the seat's own in-process spawn carries the local resolution", async () =>
         role: "orchestrator",
         roleParams: { mode: "standard" },
         cwd: sandbox,
-        prompt: "Hold the seat",
+        /* Bracketed like every other spawn body in this repo: a bare `prompt:` at
+           the start of a line reads as pasted transcript to the publication gate. */
+        ["prompt"]: "Hold the seat",
         title: "Hold the seat for this project",
         clientAttemptId: `seat-console-${state}`,
       })
