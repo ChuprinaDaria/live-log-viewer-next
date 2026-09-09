@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { conversationIdentity } from "@/lib/accounts/identity";
@@ -239,6 +239,42 @@ export function SuggestedReplies({ file, revision, items, outbox, floating = fal
   const [refusedSetId, setRefusedSetId] = useState<string | null>(null);
   const cardId = conversationIdentity(file);
   const queue = useOutbox(cardId);
+  /* Round 2 lane A (A3): the phone's row says when it goes on. A chip cut by
+     the row's edge is faded out, not sliced through a letter, and the fade is
+     only there while there IS more row in that direction — measured off the
+     scroller itself on mount, on every scroll and on every resize. */
+  const rowRef = useRef<HTMLDivElement>(null);
+  const [edges, setEdges] = useState({ start: false, end: false });
+  const measureEdges = useCallback(() => {
+    const row = rowRef.current;
+    if (!row) return;
+    /* A fade says «a chip is cut here», so it is read off the chips, not the
+       scroll range: the trailing room after the last chip is not a chip. */
+    const chips = row.querySelectorAll<HTMLElement>("[data-reply-suggestion]");
+    const first = chips[0]?.getBoundingClientRect();
+    const last = chips[chips.length - 1]?.getBoundingClientRect();
+    const rowRect = row.getBoundingClientRect();
+    const start = Boolean(first) && first!.left < rowRect.left - 1;
+    const end = Boolean(last) && last!.right > rowRect.right + 1;
+    setEdges((prev) => (prev.start === start && prev.end === end ? prev : { start, end }));
+  }, []);
+  const rowSetId = set?.setId ?? null;
+  useEffect(() => {
+    if (!isMobile || !rowSetId) return;
+    measureEdges();
+    const row = rowRef.current;
+    if (!row) return;
+    /* A native listener, not React's `onScroll`: scroll does not bubble and
+       React binds it per element at mount, which the row's remount on a new
+       set can miss. */
+    row.addEventListener("scroll", measureEdges, { passive: true });
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => measureEdges());
+    observer?.observe(row);
+    return () => {
+      row.removeEventListener("scroll", measureEdges);
+      observer?.disconnect();
+    };
+  }, [isMobile, rowSetId, measureEdges]);
   const answeredAt = latestOperatorMessageAt(items, outbox);
   const offeredAt = set ? Date.parse(set.at) : Number.NaN;
   const answered = Boolean(set) && Number.isFinite(offeredAt) && answeredAt !== null && answeredAt > offeredAt;
@@ -284,37 +320,53 @@ export function SuggestedReplies({ file, revision, items, outbox, floating = fal
   };
   if (isMobile) {
     /* Mobile v2 (#1439, lane 4; README §4.3): 32 px chips inside 44 px
-       targets, one swipeable row directly above the composer box. */
+       targets, one swipeable row directly above the composer box. The row is
+       exactly the 44 px hit tall and carries no margin of its own, so what it
+       reserves in the column IS `SUGGESTED_CHIPS_PX` (round 2 lane A). It
+       never floats on the phone: `LogFeed` keeps it in the flow under the
+       transcript, so `floating` only labels the placement it was asked for. */
     return (
-      <div
-        data-reply-suggestions={floating ? "floating" : "inline"}
-        data-mobile-chips
-        role="group"
-        aria-label={t("composer.suggestedReplies")}
-        className={`flex min-w-0 items-center gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${
-          floating
-            ? "pointer-events-auto touch-pan-x overscroll-x-contain overscroll-y-none rounded-surface border border-border bg-raised/95 px-1.5 shadow-2 backdrop-blur-sm"
-            : "mt-1"
-        }`}
-      >
-        {set.replies.map((reply, index) => (
-          <button
-            key={`${set.setId}:${index}`}
-            type="button"
-            data-reply-suggestion
-            title={reply.text}
-            onClick={() => sendFromPhone(reply.text)}
-            className="inline-flex h-11 shrink-0 items-center px-px focus-visible:outline-none"
-          >
-            <span className="inline-flex h-8 max-w-[70vw] items-center truncate whitespace-nowrap rounded-full border border-border bg-card px-3 text-ui font-semibold text-secondary">
-              {reply.label}
+      <div data-reply-suggestions-row className="relative min-w-0">
+        <div
+          ref={rowRef}
+          data-reply-suggestions={floating ? "floating" : "inline"}
+          data-mobile-chips
+          role="group"
+          aria-label={t("composer.suggestedReplies")}
+          className="flex h-11 min-w-0 snap-x snap-proximity items-center gap-1.5 overflow-x-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        >
+          {set.replies.map((reply, index) => (
+            <button
+              key={`${set.setId}:${index}`}
+              type="button"
+              data-reply-suggestion
+              title={reply.text}
+              onClick={() => sendFromPhone(reply.text)}
+              className="inline-flex h-11 shrink-0 snap-start items-center px-px focus-visible:outline-none"
+            >
+              {/* The whole label, always: a chip never clips inside itself —
+                  a long one makes the ROW longer, and the row is what scrolls
+                  and fades (review of round 2 lane A: a valid 64-character
+                  label was cut mid-letter by an inner max-width, with nothing
+                  to swipe). `dir="auto"` so an RTL label reads its own way. */}
+              <span dir="auto" className="inline-flex h-8 items-center whitespace-nowrap rounded-full border border-border bg-card px-3 text-ui font-semibold text-secondary">
+                {reply.label}
+              </span>
+            </button>
+          ))}
+          {queueFull ? (
+            <span data-reply-suggestions-status role="status" className="shrink-0 px-2 text-label text-danger">
+              {t("composer.outboxFull")}
             </span>
-          </button>
-        ))}
-        {queueFull ? (
-          <span data-reply-suggestions-status role="status" className="shrink-0 px-2 text-label text-danger">
-            {t("composer.outboxFull")}
-          </span>
+          ) : null}
+          {/* Room past the last chip, so it can scroll clear of the fade. */}
+          <span aria-hidden className="w-6 shrink-0" />
+        </div>
+        {edges.start ? (
+          <div aria-hidden data-chips-fade="start" className="pointer-events-none absolute inset-y-0 left-0 w-8 bg-linear-to-r from-canvas to-canvas/0" />
+        ) : null}
+        {edges.end ? (
+          <div aria-hidden data-chips-fade="end" className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-linear-to-l from-canvas to-canvas/0" />
         ) : null}
       </div>
     );

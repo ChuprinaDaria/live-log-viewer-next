@@ -198,10 +198,11 @@ Measured in the prototype at 390 × 844, keyboard closed, a conversation focused
 | Subagent tray / task strip | 44 (not in the budget) | 0 (a row in Details & host; members open from the feed) |
 | Live-tail pill + status bar | ~40 (not in the budget) | 0 (Stop is the send slot; elapsed time is in the bar) |
 | Composer | 56 + 44 pill row | 109 (one box: field 32 + tools 44 + padding, 14 px home inset) |
-| **Chrome total** | **264 budgeted, ~440–480 observed** | **161 (206 with a banner)** |
-| **Transcript** | **~45% observed** | **81% (76% with a banner)** |
+| Selected-context badge above the box | — | 38 collapsed at rest (32 + 6 gap), 0 with nothing selected, 85 unfolded; measured on the production build, round 2 lane A. The composer's own badge, not the bubble prelude lane H folds |
+| **Chrome total** | **264 budgeted, ~440–480 observed** | **199 (244 with a banner)** — was 161 / 206 before the context row was counted |
+| **Transcript** | **~45% observed** | **76% (71% with a banner)** — measured 69.5% standalone at 390×844 with the chips up; floors 0.69 closed, 0.49 with the keyboard |
 
-Keyboard open (336 px): the safe-area inset goes to zero, suggested-reply chips stay, and the transcript keeps 315 px — 62% of the 508 px that are visible, with the whole question card inside it. The capture's keyboard frame gates that the send control sits above the keyboard and the field below the bar.
+Keyboard open (336 px): the safe-area inset goes to zero, suggested-reply chips stay at their 44 px row, and the transcript keeps 265 px — 52% of the 508 px that are visible (measured 251 px, 49.4%, standalone), with the whole question card inside it (round 2 lane A: 315 px / 62% counted the chips at the pill's 32 px and no context row). The capture's keyboard frame gates that the send control sits above the keyboard and the field below the bar.
 
 ---
 
@@ -281,8 +282,8 @@ The prototype's 29 key screens, by their `screens.js` id. Both frames and both s
 ### 4.3 Waiting for a reply (`chat-waiting`, `chat-keyboard`)
 
 - The question card is warning-soft with a 45% warning border, headed `⚠ Needs you · 9 min`, then the question in 600 weight at 15 px, then each option as a 44 px white row with a radio mark, then one muted line: "Or type your own answer below — it is sent as the reply." Picking an option **sends it**; so does tapping a suggested-reply chip; so does send with typed text. The reply then renders as the user's bubble, the state flips to working, and the card folds to one quiet 44 px line `› question · answered 14:01` that expands to the original question and options with the chosen one marked. Transport state, when it matters, is a caption under the card (finding 6).
-- Suggested replies ride as 32 px chips (44 px hit) directly above the composer box.
-- **Keyboard open** (`#/chat/c2/kb`): the `.kb` block reserves 336 px, the safe-area inset goes to zero, chips stay, the box sits on the keyboard with the send control at 32 px visual / 44 px hit; the whole question card stays inside the 315 px of feed that remain. The field opens with a reply already typed, and that text is the live draft: one tap on send answers the question and lands back on the conversation. The gate measures send-bottom against 844 − 336 and field-top against the bar.
+- Suggested replies ride as 32 px chips (44 px hit) in one 44 px row directly above the composer box, in the flow of the column — never over the transcript; once the operator scrolls up, the way back to the tail sits at the end of that same row, beside the chips, so no control floats over text either (round 2 lane A).
+- **Keyboard open** (`#/chat/c2/kb`): the `.kb` block reserves 336 px, the safe-area inset goes to zero, chips stay, the box sits on the keyboard with the send control at 32 px visual / 44 px hit; the whole question card stays inside the 265 px of feed that remain. The field opens with a reply already typed, and that text is the live draft: one tap on send answers the question and lands back on the conversation. The gate measures send-bottom against 844 − 336 and field-top against the bar.
 
 ### 4.4 Next message (`chat-model`)
 

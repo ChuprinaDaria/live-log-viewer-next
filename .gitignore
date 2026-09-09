@@ -85,3 +85,9 @@ package-lock.json
 .run-env.sh
 TZ-UI*.md
 __pycache__/
+
+# UI round 2 phone proof: `bun scripts/capture-round2-lane-a.ts` renders frames
+# a browser cannot reproduce byte for byte, so they carry no privacy-manifest
+# provenance and stay off the publication surface. The measured `report.json`
+# beside them is what is committed.
+docs/screens/round2/*.png

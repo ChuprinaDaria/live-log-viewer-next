@@ -3,6 +3,7 @@ import { Window } from "happy-dom";
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 
+import { MOBILE_LAYOUT_QUERY } from "@/lib/attention/eligibility";
 import { en } from "@/lib/i18n/en";
 import type { FileEntry, PendingQuestion } from "@/lib/types";
 
@@ -18,8 +19,11 @@ import type { FileEntry, PendingQuestion } from "@/lib/types";
 let narrowViewport = false;
 
 const normalize = (query: string) => String(query).replace(/\s+/g, "");
+/* The phone is whatever `useIsMobile` asks the window — the same query, so the
+   stub cannot drift from the hook again (it did: the hook moved to the
+   640×600 desktop minimum and a 767px literal here answered «desktop»). */
 const matchMediaStub = (query: string) => ({
-  matches: normalize(query) === "(max-width:767px)" ? narrowViewport : false,
+  matches: normalize(query) === normalize(MOBILE_LAYOUT_QUERY) ? narrowViewport : false,
   media: String(query),
   onchange: null,
   addEventListener() {},
@@ -228,4 +232,47 @@ test("desktop: a chip still only fills the composer draft", async () => {
   expect(readOutbox("conv_desk")).toHaveLength(0);
   expect(requests.some((entry) => entry.url === "/api/answer")).toBe(false);
   expect(host.querySelectorAll("[data-reply-suggestion]")).toHaveLength(drafts.length);
+});
+
+/*
+ * Round 2 lane A (A3): the row says when it goes on. A chip cut by the row's
+ * edge is faded, and the fade is only there while there IS more row in that
+ * direction — happy-dom reports no geometry, so the row's is stubbed and the
+ * measurement is driven through the row's own scroll event.
+ */
+/** The row at `rowWidth`, its chips laid out from `firstLeft` at `chipWidth`
+    each (gap 6): what the fades read is where the first and last chip ARE. */
+function setRowGeometry(row: HTMLElement, rowWidth: number, chipWidth: number, firstLeft: number) {
+  const box = (left: number, width: number) => () => ({ left, right: left + width, top: 0, bottom: 44, width, height: 44, x: left, y: 0, toJSON: () => ({}) });
+  row.getBoundingClientRect = box(0, rowWidth) as unknown as typeof row.getBoundingClientRect;
+  [...row.querySelectorAll<HTMLElement>("[data-reply-suggestion]")].forEach((chip, index) => {
+    chip.getBoundingClientRect = box(firstLeft + index * (chipWidth + 6), chipWidth) as unknown as typeof chip.getBoundingClientRect;
+  });
+}
+
+test("phone: the row fades on the side it continues to, and only there", async () => {
+  narrowViewport = true;
+  const host = mount(<SuggestedReplies file={file("conv_fade")} revision="1" />);
+  await settle(host, "[data-reply-suggestion]", drafts.length);
+  const row = host.querySelector("[data-mobile-chips]") as HTMLElement;
+  /* Nothing measured yet: happy-dom's zero geometry reads as «everything fits». */
+  expect(host.querySelector("[data-chips-fade]")).toBeNull();
+  expect(classOf(row)).toContain("h-11");
+  expect(classOf(row)).toContain("snap-x");
+  /* Three 200 px chips in a 360 px row, parked at the start: the third is
+     cut by the row's end, so the row goes on to the right and nowhere else. */
+  setRowGeometry(row, 360, 200, 0);
+  flushSync(() => { row.dispatchEvent(new Event("scroll", { bubbles: true })); });
+  expect(host.querySelector('[data-chips-fade="end"]')).toBeTruthy();
+  expect(host.querySelector('[data-chips-fade="start"]')).toBeNull();
+  /* Swiped to the end: the last chip ends inside the row, the first is what
+     is behind — and the room after the last chip is not «more row». */
+  setRowGeometry(row, 360, 200, -258);
+  flushSync(() => { row.dispatchEvent(new Event("scroll", { bubbles: true })); });
+  expect(host.querySelector('[data-chips-fade="end"]')).toBeNull();
+  expect(host.querySelector('[data-chips-fade="start"]')).toBeTruthy();
+  /* The fades never take a tap: they are decoration over the row. */
+  expect(classOf(host.querySelector('[data-chips-fade="start"]'))).toContain("pointer-events-none");
+  /* Every chip stays a 44 px target that snaps to the row's edge. */
+  for (const chip of host.querySelectorAll("[data-reply-suggestion]")) expect(classOf(chip)).toContain("snap-start");
 });
