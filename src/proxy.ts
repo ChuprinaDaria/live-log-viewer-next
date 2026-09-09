@@ -18,15 +18,21 @@ function redirectWithCookie(request: NextRequest, token: string): NextResponse {
   const url = request.nextUrl.clone();
   url.searchParams.delete("k");
 
+  const https = request.headers.get("x-forwarded-proto") === "https";
   const response = NextResponse.redirect(url, 307);
   response.cookies.set({
     name: AUTH_COOKIE,
     value: token,
     httpOnly: true,
-    sameSite: "lax",
+    // Дошка відкривається і як міні-застосунок усередині Telegram. Його
+    // вбудований переглядач вважає нас чужим контекстом і з `lax` куку до
+    // запитів /api/* не додає: оболонка малюється, дані не приходять —
+    // біла сторінка. `none` це лікує, але вимагає `secure`, тому поверх
+    // HTTP лишаємо `lax`, інакше браузер відкине куку зовсім.
+    sameSite: https ? "none" : "lax",
     path: "/",
     maxAge: COOKIE_MAX_AGE_SECONDS,
-    secure: request.headers.get("x-forwarded-proto") === "https",
+    secure: https,
   });
   return response;
 }
