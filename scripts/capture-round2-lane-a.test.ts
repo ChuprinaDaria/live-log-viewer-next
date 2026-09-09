@@ -30,7 +30,7 @@ function green(): Geometry {
     fadeEnd: true,
     fadeStart: false,
     rowEnd: { lastChipClear: true, fadeStart: true, fadeEnd: false },
-    jump: { ...rect(333, 308, 377, 352), opaque: true, count: "2", inBand: true, inScroller: false },
+    jump: { ...rect(333, 308, 377, 352), opaque: true, count: "2", inBand: true, inScroller: false, union: rect(333, 308, 377, 352) },
     visibleTextRects: 40,
     jumpCoversText: { count: 0, first: null },
     floating: 0,
@@ -53,7 +53,7 @@ test("the review's reproduced case is red: the control floats over «чіпом?
   const g = green();
   /* The control as it was — absolute in the scroller's corner — and the three
      letters under it, as glyph rectangles ~9 px wide on the 268..282 line. */
-  g.jump = { ...rect(333, 252, 377, 296), opaque: true, count: "2", inBand: false, inScroller: true };
+  g.jump = { ...rect(333, 252, 377, 296), opaque: true, count: "2", inBand: false, inScroller: true, union: rect(333, 248, 381, 296) };
   g.jumpCoversText = { count: 3, first: rect(338, 268, 347, 282) };
   const failures = judge(frame, "standalone", "keyboard", g).failures;
   expect(failures.some((f) => f.includes("covers 3 rectangle(s) of transcript text"))).toBe(true);
@@ -63,9 +63,26 @@ test("the review's reproduced case is red: the control floats over «чіпом?
 
 test("an opaque surface and a 44px size do not excuse a control over text", () => {
   const g = green();
-  g.jump = { ...rect(333, 252, 377, 296), opaque: true, count: null, inBand: false, inScroller: true };
+  g.jump = { ...rect(333, 252, 377, 296), opaque: true, count: null, inBand: false, inScroller: true, union: rect(333, 252, 377, 296) };
   g.jumpCoversText = { count: 1, first: rect(342, 268, 351, 282) };
   expect(judge(frame, "standalone", "scrolled-up", g).failures.some((f) => f.includes("covers 1 rectangle(s)"))).toBe(true);
+});
+
+test("round 2 of the review: the button in the band, its count badge three pixels over the transcript", () => {
+  const g = green();
+  /* The reviewer's numbers: the button at 333..377 × 308..352, the `-top-1`
+     badge at 362..380 × 305..323, and the visible box of an «s» in an inline
+     path at 362.15..371.20 × 297..308 — the badge wins elementFromPoint. */
+  g.jump = { ...rect(333, 308, 377, 352), opaque: true, count: "2", inBand: true, inScroller: false, union: rect(333, 305, 380, 352) };
+  g.jumpCoversText = { count: 1, first: rect(362, 297, 371, 308) };
+  const failures = judge(frame, "standalone", "keyboard", g).failures;
+  expect(failures.some((f) => f.includes("(with everything drawn from it) covers 1 rectangle(s)"))).toBe(true);
+  expect(failures.some((f) => f.includes("starts at 305px, inside the scroller that ends at 308px"))).toBe(true);
+  expect(failures.some((f) => f.includes("spans 305..352px, outside the band's 308..352px"))).toBe(true);
+  /* The count as a cell of the pill: the union IS the button, and it passes. */
+  const fixed = green();
+  fixed.jump = { ...rect(303, 308, 377, 352), opaque: true, count: "2", inBand: true, inScroller: false, union: rect(303, 308, 377, 352) };
+  expect(judge(frame, "standalone", "keyboard", fixed).failures).toEqual([]);
 });
 
 test("a frame with no measured text cannot prove the control covers none", () => {
@@ -86,7 +103,7 @@ test("a deliberate regression of the transcript's height is red in every frame a
       const g = green();
       g.scroller = rect(5, 57, 385, 97);
       g.band = rect(5, 97, 385, 141);
-      g.jump = { ...rect(333, 97, 377, 141), opaque: true, count: null, inBand: true, inScroller: false };
+      g.jump = { ...rect(333, 97, 377, 141), opaque: true, count: null, inBand: true, inScroller: false, union: rect(333, 97, 377, 141) };
       const failures = judge(f, column, "scrolled-up", g).failures;
       expect(failures.some((x) => x.includes(`under the ${(floorFor(f, column, false) * 100).toFixed(0)}% floor for ${f.name} ${column}`))).toBe(true);
     }

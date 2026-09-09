@@ -1235,17 +1235,16 @@ export function LogFeed({ file, showSvc, lineFilter, onStatus, paused, follow, s
         {feed.items.length > 0 && !magnet ? (
           <button
             data-feed-jump-tail
-            className="relative inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border bg-raised text-primary shadow-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+            /* Everything of it is inside the band's 44 px: the count is a
+               cell of the pill, not a badge hung over its rim (round 2 review:
+               a badge at `-top-1` stood three pixels over the transcript). */
+            className={`inline-flex h-11 min-w-11 shrink-0 items-center justify-center gap-1 rounded-full border border-border bg-raised text-primary shadow-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 ${newCount ? "px-3" : "px-0"}`}
             aria-label={newCount ? `${t("feed.backToLive")} · ${t("feed.newCount", { count: newCount })}` : t("feed.backToLive")}
             onClick={jumpToTail}
           >
-            <ArrowDown className="h-4 w-4" aria-hidden />
+            <ArrowDown className="h-4 w-4 shrink-0" aria-hidden />
             {newCount ? (
-              <span
-                data-feed-new-count
-                aria-hidden
-                className="absolute -right-1 -top-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-accent px-1 text-[10px] font-bold leading-none tabular-nums text-white"
-              >
+              <span data-feed-new-count className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-accent px-1.5 text-[11px] font-bold leading-none tabular-nums text-white">
                 {newCount > 99 ? "99+" : newCount}
               </span>
             ) : null}

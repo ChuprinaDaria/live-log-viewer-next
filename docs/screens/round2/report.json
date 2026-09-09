@@ -1,6 +1,6 @@
 {
   "lane": "round2-lane-a",
-  "generatedAt": "2026-09-09T07:05:56.476Z",
+  "generatedAt": "2026-09-09T07:24:55.144Z",
   "constants": {
     "SUGGESTED_CHIPS_PX": 44,
     "KEYBOARD_PX": 336,
@@ -267,11 +267,12 @@
       },
       "budgetHolds": true,
       "backToLive": {
-        "size": "44×44",
+        "size": "66×44",
         "opaque": true,
         "count": "2",
         "topPx": 644,
         "bottomPx": 688,
+        "unionPx": "311..377×644..688",
         "inBand": true,
         "textRectsCovered": 0,
         "visibleTextRects": 35
@@ -494,11 +495,12 @@
       },
       "budgetHolds": true,
       "backToLive": {
-        "size": "44×44",
+        "size": "66×44",
         "opaque": true,
         "count": "2",
         "topPx": 308,
         "bottomPx": 352,
+        "unionPx": "311..377×308..352",
         "inBand": true,
         "textRectsCovered": 0,
         "visibleTextRects": 15
@@ -939,11 +941,12 @@
       },
       "budgetHolds": true,
       "backToLive": {
-        "size": "44×44",
+        "size": "66×44",
         "opaque": true,
         "count": "2",
         "topPx": 559,
         "bottomPx": 603,
+        "unionPx": "311..377×559..603",
         "inBand": true,
         "textRectsCovered": 0,
         "visibleTextRects": 30
@@ -1166,11 +1169,12 @@
       },
       "budgetHolds": true,
       "backToLive": {
-        "size": "44×44",
+        "size": "66×44",
         "opaque": true,
         "count": "2",
         "topPx": 223,
         "bottomPx": 267,
+        "unionPx": "311..377×223..267",
         "inBand": true,
         "textRectsCovered": 0,
         "visibleTextRects": 10
@@ -1611,11 +1615,12 @@
       },
       "budgetHolds": true,
       "backToLive": {
-        "size": "44×44",
+        "size": "66×44",
         "opaque": true,
         "count": "2",
         "topPx": 580,
         "bottomPx": 624,
+        "unionPx": "281..347×580..624",
         "inBand": true,
         "textRectsCovered": 0,
         "visibleTextRects": 32
@@ -1838,11 +1843,12 @@
       },
       "budgetHolds": true,
       "backToLive": {
-        "size": "44×44",
+        "size": "66×44",
         "opaque": true,
         "count": "2",
         "topPx": 244,
         "bottomPx": 288,
+        "unionPx": "281..347×244..288",
         "inBand": true,
         "textRectsCovered": 0,
         "visibleTextRects": 10
@@ -2283,11 +2289,12 @@
       },
       "budgetHolds": true,
       "backToLive": {
-        "size": "44×44",
+        "size": "66×44",
         "opaque": true,
         "count": "2",
         "topPx": 500,
         "bottomPx": 544,
+        "unionPx": "281..347×500..544",
         "inBand": true,
         "textRectsCovered": 0,
         "visibleTextRects": 24
@@ -2510,11 +2517,12 @@
       },
       "budgetHolds": true,
       "backToLive": {
-        "size": "44×44",
+        "size": "66×44",
         "opaque": true,
         "count": "2",
         "topPx": 164,
         "bottomPx": 208,
+        "unionPx": "281..347×164..208",
         "inBand": true,
         "textRectsCovered": 0,
         "visibleTextRects": 2
@@ -2940,11 +2948,12 @@
       },
       "budgetHolds": true,
       "backToLive": {
-        "size": "44×44",
+        "size": "66×44",
         "opaque": true,
         "count": "2",
         "topPx": 644,
         "bottomPx": 688,
+        "unionPx": "311..377×644..688",
         "inBand": true,
         "textRectsCovered": 0,
         "visibleTextRects": 35
@@ -3370,11 +3379,12 @@
       },
       "budgetHolds": true,
       "backToLive": {
-        "size": "44×44",
+        "size": "66×44",
         "opaque": true,
         "count": "2",
         "topPx": 644,
         "bottomPx": 688,
+        "unionPx": "311..377×644..688",
         "inBand": true,
         "textRectsCovered": 0,
         "visibleTextRects": 35

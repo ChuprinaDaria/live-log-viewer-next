@@ -42,7 +42,9 @@
  * floor in `FRAMES`, so a transcript that shrinks anywhere turns the run red),
  * for every state the bottom of the lowest visible transcript row against the
  * top of the band, and — the review's finding — every rectangle of visible
- * transcript TEXT against the «back to live» control, which must cover none.
+ * transcript TEXT against the «back to live» control joined with everything
+ * drawn from it (its count included), which must cover none and must lie
+ * whole inside the band.
  * Two draft-set variants render on top of the base set at 390×844 standalone:
  * one valid 64-character label, and six mixed labels with RTL among them —
  * every label whole, none clipped inside its chip. A frame that fails a gate
@@ -206,9 +208,9 @@ function transcriptLines(): string[] {
     ].join("\n")),
     user("u3", 31, "А пігулка «N нових»? Її теж у смугу?"),
     assistant("a3", 30, [
-      "Ні. Пігулка в смузі коштувала б ще 44 px хрому щоразу, коли оператор гортає вгору, і смуга б стрибала.",
+      "Так, у ту саму смугу. Будь-що, намальоване над стрічкою, ховає текст — непрозоре ховає ще краще.",
       "",
-      "Правильний патерн — той, що в будь-якому месенджері: кругла кнопка в куті стрічки, непрозора, з тінню, а лічильник — бейдж на її обідку. Вона накриває тільки правий нижній кут, який transcript і так тримає порожнім через власний відступ, і ніколи не ділить рядок із текстом.",
+      "Кнопка стоїть у кінці ряду драфтів, у потоці, 44 px, а лічильник — її власна клітинка, не бейдж над обідком. Смуга і так зарезервована, тож ні кнопка, ні лічильник не ділять рядок із текстом у жодному стані.",
     ].join("\n")),
     user("u4", 22, "Добре. Що з обрізаним чіпом?"),
     assistant("a4", 21, [
@@ -357,7 +359,10 @@ export interface Geometry {
   /** The row swiped to its end: the last chip whole, the fade moved to the
       start. Read after the frame, and the row is put back. */
   rowEnd: { lastChipClear: boolean; fadeStart: boolean; fadeEnd: boolean } | null;
-  jump: (Rect & { opaque: boolean; count: string | null; inBand: boolean; inScroller: boolean }) | null;
+  /** The «back to live» control's own box, plus `union`: its box joined with
+      every element drawn from it (the count included) — what the text is
+      measured against, since a child can hang over the box's edge. */
+  jump: (Rect & { opaque: boolean; count: string | null; inBand: boolean; inScroller: boolean; union: Rect }) | null;
   /** Rectangles of visible transcript text, clipped to the scroller. */
   visibleTextRects: number;
   /** Those of them the «back to live» control covers, and the first one. */
@@ -416,12 +421,24 @@ async function readGeometry(page: Page): Promise<Geometry> {
     if (jumpEl && jumpRect) {
       const bg = getComputedStyle(jumpEl).backgroundColor;
       const alpha = bg.startsWith("rgba") ? Number(bg.slice(bg.lastIndexOf(",") + 1, -1)) : bg.includes("/") ? Number(bg.slice(bg.lastIndexOf("/") + 1, -1)) : 1;
+      const union = { ...jumpRect };
+      for (const child of jumpEl.querySelectorAll("*")) {
+        const r = child.getBoundingClientRect();
+        if (r.width === 0 || r.height === 0) continue;
+        union.top = Math.min(union.top, Math.round(r.top));
+        union.left = Math.min(union.left, Math.round(r.left));
+        union.bottom = Math.max(union.bottom, Math.round(r.bottom));
+        union.right = Math.max(union.right, Math.round(r.right));
+      }
+      union.width = union.right - union.left;
+      union.height = union.bottom - union.top;
       jump = {
         ...jumpRect,
         opaque: alpha >= 0.999,
         count: jumpEl.querySelector(sel.newCount)?.textContent ?? null,
         inBand: Boolean(document.querySelector(sel.band)?.contains(jumpEl)),
         inScroller: Boolean(document.querySelector(sel.scroller)?.contains(jumpEl)),
+        union,
       };
     }
     /* Every rectangle of transcript text the operator can see, clipped to the
@@ -444,7 +461,8 @@ async function readGeometry(page: Page): Promise<Geometry> {
             const right = Math.min(r.right, scroller.right);
             if (bottom - top <= 0 || right - left <= 0) continue;
             visibleTextRects += 1;
-            if (jumpRect && left < jumpRect.right && right > jumpRect.left && top < jumpRect.bottom && bottom > jumpRect.top) {
+            const against = jump?.union ?? jumpRect;
+            if (against && left < against.right && right > against.left && top < against.bottom && bottom > against.top) {
               covered.push({ top: Math.round(top), bottom: Math.round(bottom), left: Math.round(left), right: Math.round(right), width: Math.round(right - left), height: Math.round(bottom - top) });
             }
           }
@@ -586,11 +604,12 @@ export function judge(frame: Frame, column: Column, state: State, g: Geometry, e
       if (g.jump.width < 44 || g.jump.height < 44) failures.push(`the «back to live» control is ${g.jump.width}×${g.jump.height}px`);
       if (!g.jump.opaque) failures.push("the «back to live» control has a translucent surface");
       if (!g.jump.inBand || g.jump.inScroller) failures.push("the «back to live» control is not in the band under the scroller");
-      if (g.scroller && g.jump.top < g.scroller.bottom) failures.push(`the «back to live» control starts at ${g.jump.top}px, inside the scroller that ends at ${g.scroller.bottom}px`);
+      if (g.scroller && g.jump.union.top < g.scroller.bottom) failures.push(`the «back to live» control (with everything drawn from it) starts at ${g.jump.union.top}px, inside the scroller that ends at ${g.scroller.bottom}px`);
+      if (g.band && (g.jump.union.top < g.band.top || g.jump.union.bottom > g.band.bottom)) failures.push(`the «back to live» control spans ${g.jump.union.top}..${g.jump.union.bottom}px, outside the band's ${g.band.top}..${g.band.bottom}px`);
       if (g.visibleTextRects === 0) failures.push("no visible transcript text was measured, so the control's cover proves nothing");
       if (g.jumpCoversText.count > 0) {
         const first = g.jumpCoversText.first!;
-        failures.push(`the «back to live» control covers ${g.jumpCoversText.count} rectangle(s) of transcript text, the first at ${first.left}..${first.right}×${first.top}..${first.bottom}px`);
+        failures.push(`the «back to live» control (with everything drawn from it) covers ${g.jumpCoversText.count} rectangle(s) of transcript text, the first at ${first.left}..${first.right}×${first.top}..${first.bottom}px`);
       }
     }
   } else if (g.jump) failures.push("a «back to live» control shows while the magnet holds");
@@ -805,7 +824,7 @@ async function main(): Promise<void> {
       transcriptShare: entry.measured.transcriptShare,
       budget: entry.budget,
       budgetHolds: entry.measured.transcriptShare !== null && entry.measured.transcriptShare >= entry.budget.floor,
-      backToLive: entry.geometry.jump ? { size: `${entry.geometry.jump.width}×${entry.geometry.jump.height}`, opaque: entry.geometry.jump.opaque, count: entry.geometry.jump.count, topPx: entry.geometry.jump.top, bottomPx: entry.geometry.jump.bottom, inBand: entry.geometry.jump.inBand, textRectsCovered: entry.geometry.jumpCoversText.count, visibleTextRects: entry.geometry.visibleTextRects } : null,
+      backToLive: entry.geometry.jump ? { size: `${entry.geometry.jump.width}×${entry.geometry.jump.height}`, opaque: entry.geometry.jump.opaque, count: entry.geometry.jump.count, topPx: entry.geometry.jump.top, bottomPx: entry.geometry.jump.bottom, unionPx: `${entry.geometry.jump.union.left}..${entry.geometry.jump.union.right}×${entry.geometry.jump.union.top}..${entry.geometry.jump.union.bottom}`, inBand: entry.geometry.jump.inBand, textRectsCovered: entry.geometry.jumpCoversText.count, visibleTextRects: entry.geometry.visibleTextRects } : null,
       chips: { rendered: entry.geometry.chips.length, cutByRowEdge: entry.geometry.chipsCutRight, clippedInside: entry.geometry.chipsClippedInside, fadeEnd: entry.geometry.fadeEnd, fadeStart: entry.geometry.fadeStart, atRowEnd: entry.geometry.rowEnd },
       floatingRows: entry.geometry.floating,
       anatomy: entry.geometry.anatomy,

@@ -271,6 +271,11 @@ function expectJumpBesideTheDrafts(host: HTMLElement, jump: HTMLButtonElement): 
   for (let el: Element | null = jump; el && el !== band.parentElement; el = el.parentElement) {
     expect(el.getAttribute("class") ?? "").not.toMatch(/(^|\s)(absolute|fixed)(\s|$)/);
   }
+  /* And nothing DRAWN from it hangs over its edge: no positioned child, no
+     negative offset (round 2 review: a `-top-1` badge over the transcript). */
+  for (const child of jump.querySelectorAll("*")) {
+    expect(child.getAttribute("class") ?? "").not.toMatch(/(^|\s)(absolute|fixed|-top-\S+|-right-\S+|-bottom-\S+|-left-\S+|-m[trbl]?-\S+)(\s|$)/);
+  }
   /* Beside the drafts: the chips row, when there is one, comes first. */
   const row = band.querySelector("[data-mobile-chips]");
   if (row) expect(row.compareDocumentPosition(jump) & 4).toBeTruthy();
@@ -282,7 +287,7 @@ test("phone: the way back is a round 44px control in the band beside the drafts,
   await settle(host, "[data-feed-drafts-band] [data-reply-suggestion]");
   const jump = await releaseMagnet(host);
   const classes = jump.getAttribute("class") ?? "";
-  for (const token of ["h-11", "w-11", "rounded-full", "bg-raised", "shrink-0"]) expect(classes).toContain(token);
+  for (const token of ["h-11", "min-w-11", "rounded-full", "bg-raised", "shrink-0"]) expect(classes).toContain(token);
   expect(jump.getAttribute("aria-label")).toBe("Back to the live tail");
   /* No count yet: nothing arrived since the release. */
   expect(jump.querySelector("[data-feed-new-count]")).toBeNull();
@@ -301,6 +306,9 @@ test("phone: the way back is a round 44px control in the band beside the drafts,
   const badge = host.querySelector("[data-feed-new-count]");
   expect(badge).toBeTruthy();
   expect(badge!.textContent).toBe("2");
+  /* Inside the control, as a cell of it. */
+  expect(host.querySelector("[data-feed-jump-tail]")!.contains(badge!)).toBe(true);
+  expectJumpBesideTheDrafts(host, host.querySelector("[data-feed-jump-tail]") as HTMLButtonElement);
   expect(jump.getAttribute("aria-label")).toBe("Back to the live tail · 2 new");
 });
 
