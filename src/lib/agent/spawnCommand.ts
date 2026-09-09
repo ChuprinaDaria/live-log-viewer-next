@@ -16,7 +16,7 @@ import { grantedMcpServers, HQ_SESSION_CLASS, mcpServersForSession, normalizeSpa
 import { normalizeSpawnPlugins, pluginAllowlistForSession, SCHEDULED_REPORT_PLUGINS, sessionOriginFor } from "@/lib/agent/pluginAllowlist";
 import { codexModelSupportsImages, defaultModelFor, modelFromBody, validateLaunchModel } from "@/lib/agent/models";
 import { directOperatorActivityAuthority } from "@/lib/agent/operatorAuthority";
-import { resolveSpawnRole } from "@/lib/roles/registry";
+import { resolveSpawnRoleFromCatalog } from "@/lib/roles/catalog";
 import { assertDarwinStructuredRuntime } from "@/lib/proc/darwinIdentity";
 import { spawnContentDigest, spawnParentSelector, spawnRequestDigests } from "@/lib/agent/spawnIdentity";
 import { sessionKeyFromTranscript, sessionKeyId } from "@/lib/agent/sessionKey";
@@ -213,7 +213,13 @@ export async function executeSpawnRequest(
   if (body.allowSubagents !== undefined && typeof body.allowSubagents !== "boolean") {
     return NextResponse.json({ error: "allowSubagents must be a boolean" }, { status: 400 });
   }
-  const role = resolveSpawnRole(body);
+  /* The operator-facing launch resolves against the SAME catalog the roles
+     page reads (§1.1): a role shown there launches with the config and prompt
+     it displayed, additional console roles included. A console that is down
+     degrades to the built-in definitions rather than refusing the launch — and
+     the seat and the handoff keep the synchronous resolver, so no orchestrator
+     rotation can wait on `fleetctl`. */
+  const role = await resolveSpawnRoleFromCatalog(body);
   if (!role.ok) return NextResponse.json({ error: role.error }, { status: 400 });
   if (role.value?.role === "reviewer" && (typeof body.reviews !== "string" || !body.reviews.trim())) {
     return NextResponse.json({ error: "reviewer requires reviews" }, { status: 400 });

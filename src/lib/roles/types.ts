@@ -1,3 +1,8 @@
+/** The seed roles this board's own contracts still name: the editor's local
+    fallback, the pipeline stage schema and the MCP `role` enum. The console's
+    catalog can hold MORE than these — an additional role is read, edited and
+    launched through `src/lib/roles/catalog.ts`, and the consumers frozen to
+    this list refuse it explicitly rather than after a launch. */
 export const ROLE_IDS = [
   "orchestrator",
   "reviewer",
@@ -41,7 +46,9 @@ export type RoleParameter = RoleParameterBase & ({
 });
 
 export type RoleDefinition = {
-  id: RoleId;
+  /** A catalog id: one of `ROLE_IDS`, or a role the operator created in the
+      console. Consumers that only accept a seed id check `ROLE_IDS`. */
+  id: string;
   name: string;
   description: string;
   config: RoleConfig;

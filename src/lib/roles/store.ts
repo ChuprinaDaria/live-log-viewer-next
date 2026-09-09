@@ -100,7 +100,9 @@ export function saveRoleOverrides(overrides: Partial<Record<RoleId, RoleOverride
 
 export function mergeRoleDefinitions(overrides: Partial<Record<RoleId, RoleOverride>>): RoleDefinition[] {
   return ROLE_DEFAULTS.map((role) => {
-    const override = overrides[role.id];
+    /* Every `ROLE_DEFAULTS` id is a seed id; the catalog's wider ids never
+       reach the overrides file, which the console mirrors for seeds only. */
+    const override = overrides[role.id as RoleId];
     return {
       ...role,
       config: { ...role.config, ...override?.config },

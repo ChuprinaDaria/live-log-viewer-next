@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { fleetctl, fleetctlInstalled, fleetctlMessage, fleetctlStatus } from "@/lib/fleetctl/client";
-import { ROLE_DEFAULTS } from "@/lib/roles/defaults";
-import { listRoles } from "@/lib/roles/registry";
+import { fleetctl, fleetctlMessage, fleetctlStatus } from "@/lib/fleetctl/client";
+import { catalogRoleOf, loadRoleCatalog, type CatalogRole, type ConsoleRole, type RoleCatalog } from "@/lib/roles/catalog";
 import { ROLE_OVERRIDES_SCHEMA_VERSION } from "@/lib/roles/store";
-import { ROLE_IDS, type RoleDefinition } from "@/lib/roles/types";
+import { type RoleDefinition } from "@/lib/roles/types";
 import { rejectCrossOrigin } from "@/lib/sameOrigin";
 
 /*
@@ -13,33 +12,19 @@ import { rejectCrossOrigin } from "@/lib/sameOrigin";
  * `defaults.ts` is the SEED the console was filled from once, not the source:
  * a role's engine, model, effort and prompt are data the operator edits, and
  * the console is the one writer of that data — its CLI, its MCP server and
- * this route read the same catalog. The board still edits only its supported
- * seed IDs; additional console roles are explicitly read-only here.
+ * this route read the same catalog, through `lib/roles/catalog.ts`. Every
+ * console role is editable here, additional ones included: the console edits
+ * them all, and a page that showed a role it could not write was the whole
+ * complaint (§1.1 of the audit).
  *
  * The route still answers when the console is absent: it falls back to the
- * built-in catalog merged with the overrides file and says so in `source`, so
- * a machine without the console keeps a working draft pane instead of an empty
- * role picker.
+ * built-in catalog and NAMES the degradation, so a machine without the console
+ * keeps a working role picker while nothing pretends a write is available.
  */
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 const headers = { "Cache-Control": "no-store" };
-
-interface ConsoleRole {
-  id: string;
-  name?: string;
-  description?: string;
-  config?: { engine?: string; model?: string; effort?: string };
-  parameters?: unknown;
-  promptScaffold?: string;
-  safetyFences?: unknown;
-  capabilities?: unknown;
-  edited?: boolean;
-  updated_at?: string | null;
-  seed_promptScaffold?: string;
-  grants?: { mcp?: string[]; skills?: string[] };
-}
 
 export interface RoleView extends RoleDefinition {
   editable: boolean;
@@ -50,74 +35,49 @@ export interface RoleView extends RoleDefinition {
   updatedAt: string | null;
   /** What «повернути початковий» would restore; absent when unknown. */
   seedPromptScaffold?: string;
+  /** A role the operator created in the console has no seed to return to. */
+  origin: "seed" | "local";
+  /** The launch path's own verdict: this config resolves at spawn time. */
+  launchable: boolean;
+  /** Why a launch would refuse it, in the launch validator's words. */
+  blockedReason: string | null;
+  /** Consumers that refuse this role before a launch (frozen seed contracts). */
+  unsupported: readonly ("pipeline" | "mcp")[];
   grants?: { mcp: string[]; skills: string[] };
 }
 
-const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []);
-
-/** One console role in the shape every existing consumer already reads, so
-    switching the source changes where the values come from and nothing else. */
-function viewOf(role: ConsoleRole, fallback: RoleDefinition | undefined): RoleView | null {
-  const base = fallback ?? null;
-  const engine = role.config?.engine === "codex" ? "codex" : role.config?.engine === "claude" ? "claude" : base?.config.engine;
-  const model = role.config?.model ?? base?.config.model;
-  const effort = role.config?.effort ?? base?.config.effort;
-  if (!engine || !model || !effort) return null;
-  const prompt = typeof role.promptScaffold === "string" ? role.promptScaffold : base?.promptScaffold ?? "";
+/** One catalog row in the shape every existing consumer already reads. */
+function viewOf(role: CatalogRole): RoleView {
   return {
-    id: role.id as RoleDefinition["id"],
-    editable: (ROLE_IDS as readonly string[]).includes(role.id),
-    name: role.name ?? base?.name ?? role.id,
-    description: role.description ?? base?.description ?? "",
-    config: { engine, model, effort },
-    parameters: (Array.isArray(role.parameters) ? role.parameters : base?.parameters ?? []) as RoleDefinition["parameters"],
-    promptScaffold: prompt,
-    safetyFences: (Array.isArray(role.safetyFences) ? strings(role.safetyFences) : base?.safetyFences ?? []) as RoleDefinition["safetyFences"],
-    capabilities: (Array.isArray(role.capabilities) ? strings(role.capabilities) : base?.capabilities ?? []) as RoleDefinition["capabilities"],
-    promptPreview: prompt,
-    edited: role.edited === true,
-    updatedAt: typeof role.updated_at === "string" ? role.updated_at : null,
-    ...(typeof role.seed_promptScaffold === "string" ? { seedPromptScaffold: role.seed_promptScaffold } : {}),
-    grants: { mcp: strings(role.grants?.mcp), skills: strings(role.grants?.skills) },
+    ...role.definition,
+    editable: role.editable,
+    promptPreview: role.definition.promptScaffold,
+    edited: role.edited,
+    updatedAt: role.updatedAt,
+    ...(role.seedPromptScaffold === null ? {} : { seedPromptScaffold: role.seedPromptScaffold }),
+    origin: role.origin,
+    launchable: role.launchable,
+    blockedReason: role.blockedReason,
+    unsupported: role.unsupported,
+    grants: role.grants,
   };
 }
 
-/** The console holds the prompt only in `role_show`, so the catalog is one
-    list call plus one show per role, run together rather than in sequence. */
-async function consoleRoles(): Promise<RoleView[]> {
-  const listed = await fleetctl<{ roles: { id: string }[] }>({ fn: "roles_list" });
-  const ids = listed.roles.map((role) => role.id);
-  const shown = await Promise.all(ids.map((id) => fleetctl<ConsoleRole>({ fn: "role_show", params: { role: id } })));
-  const defaults = new Map(ROLE_DEFAULTS.map((role) => [role.id as string, role]));
-  return shown.flatMap((role) => {
-    const view = viewOf(role, defaults.get(role.id));
-    return view ? [view] : [];
-  });
+function catalogBody(catalog: RoleCatalog): Record<string, unknown> {
+  return {
+    schemaVersion: ROLE_OVERRIDES_SCHEMA_VERSION,
+    source: catalog.source === "fleetctl" ? "fleetctl" : "fallback",
+    readAt: catalog.readAt,
+    degraded: catalog.degraded,
+    /** The pre-existing name for the same fact, kept so older clients still
+        see that this answer is degraded. */
+    warning: catalog.degraded?.reason ?? null,
+    roles: catalog.roles.map(viewOf),
+  };
 }
 
 export async function GET(): Promise<NextResponse> {
-  let warning: "console-unavailable" | "invalid-overrides" | null = null;
-  if (fleetctlInstalled()) {
-    try {
-      const roles = await consoleRoles();
-      if (roles.length) {
-        return NextResponse.json({ schemaVersion: ROLE_OVERRIDES_SCHEMA_VERSION, source: "fleetctl", roles }, { headers });
-      }
-    } catch {
-      warning = "console-unavailable";
-      /* Fall through to the built-in catalog: a role picker that answers is
-         worth more than a page that fails because the console is busy. */
-    }
-  }
-  let fallback: readonly RoleDefinition[];
-  try { fallback = listRoles(); }
-  catch { fallback = ROLE_DEFAULTS; warning = "invalid-overrides"; }
-  return NextResponse.json({
-    warning,
-    schemaVersion: ROLE_OVERRIDES_SCHEMA_VERSION,
-    source: "fallback",
-    roles: fallback.map((role) => ({ ...role, editable: false, promptPreview: role.promptScaffold, edited: false, updatedAt: null })),
-  }, { headers });
+  return NextResponse.json(catalogBody(await loadRoleCatalog()), { headers });
 }
 
 /**
@@ -126,6 +86,11 @@ export async function GET(): Promise<NextResponse> {
  *
  * `{ role, reset: true }` restores; otherwise every present field is written
  * and every absent one is left alone.
+ *
+ * The write and the read-back are separate outcomes. A write that landed and a
+ * read-back that failed is reported as exactly that — `written` with no
+ * confirmed role — because telling the operator the save failed invites a
+ * second blind write of the same text.
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const rejection = rejectCrossOrigin(request);
@@ -136,9 +101,29 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   } catch {
     return NextResponse.json({ error: "invalid JSON" }, { status: 400, headers });
   }
-  const role = typeof body.role === "string" ? body.role : "";
-  if (!(ROLE_IDS as readonly string[]).includes(role)) {
-    return NextResponse.json({ error: "role must be one of the known role ids" }, { status: 400, headers });
+  const role = typeof body.role === "string" ? body.role.trim() : "";
+  /* An id shape, not an id list: which roles are writable is the console's
+     answer, because the console is the writer. A role it holds is a role it
+     can edit, additional ones included. */
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(role)) {
+    return NextResponse.json({ error: "role must be a role id" }, { status: 400, headers });
+  }
+  /* One `role_show` establishes three things before anything is written: that
+     the console is reachable, that it holds this role, and whether the role has
+     a seed to reset to. Its own refusal even names the ids it does hold. */
+  let target: CatalogRole | null;
+  try {
+    target = catalogRoleOf(await fleetctl<ConsoleRole>({ fn: "role_show", params: { role } }));
+  } catch (error) {
+    return NextResponse.json({ error: fleetctlMessage(error) }, { status: fleetctlStatus(error), headers });
+  }
+  if (!target) {
+    return NextResponse.json({ error: "the console answered a role without a runtime configuration" }, { status: 502, headers });
+  }
+  /* A role the console created has no seed; `role_reset` would refuse it, and
+     refusing here keeps the button's absence and the API's answer aligned. */
+  if (body.reset === true && target.seedPromptScaffold === null) {
+    return NextResponse.json({ error: "this role has no seed to restore" }, { status: 400, headers });
   }
   const text = (value: unknown): string | undefined => (typeof value === "string" && value.trim() ? value.trim() : undefined);
   try {
@@ -156,10 +141,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         ? { fn: "role_edit", params }
         : { fn: "role_edit", params, stdinParam: "prompt", stdinValue: prompt });
     }
-    const updated = await fleetctl<ConsoleRole>({ fn: "role_show", params: { role } });
-    const defaults = ROLE_DEFAULTS.find((definition) => definition.id === role);
-    return NextResponse.json({ role: viewOf(updated, defaults) }, { headers });
   } catch (error) {
     return NextResponse.json({ error: fleetctlMessage(error) }, { status: fleetctlStatus(error), headers });
+  }
+  try {
+    const updated = catalogRoleOf(await fleetctl<ConsoleRole>({ fn: "role_show", params: { role } }));
+    if (!updated) throw new Error("the console answered a role without a runtime configuration");
+    return NextResponse.json({ written: true, role: viewOf(updated) }, { headers });
+  } catch (error) {
+    return NextResponse.json({ written: true, role: null, unconfirmed: fleetctlMessage(error) }, { headers });
   }
 }

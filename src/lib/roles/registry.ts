@@ -2,13 +2,13 @@ import { effortScale } from "@/lib/agent/efforts";
 import { validateLaunchModel } from "@/lib/agent/models";
 
 import { BUILDER_APPLY_FIXES_CONFIG, BUILDER_FRONTEND_CONFIG } from "./paramConfig";
-import { defaultRoleParameterValue } from "./parameters";
+import { defaultRoleParameterValue, defaultRoleParameterValues } from "./parameters";
 import { loadRoleDefinitions } from "./store";
-import type { ResolvedRole, RoleConfig, RoleDefinition, RoleId, RoleParamValues } from "./types";
+import type { ResolvedRole, RoleConfig, RoleDefinition, RoleParamValues } from "./types";
 
 type ExplicitRoleConfig = Partial<RoleConfig>;
 type RoleResolution = { ok: true; value: ResolvedRole } | { ok: false; error: string };
-type SpawnRoleResolution = { ok: true; value: { config: RoleConfig; scaffold: string; role: RoleId } | null } | { ok: false; error: string };
+export type SpawnRoleResolution = { ok: true; value: { config: RoleConfig; scaffold: string; role: string } | null } | { ok: false; error: string };
 
 function boundedText(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -109,6 +109,19 @@ function resolveConfig(definition: RoleDefinition, params: RoleParamValues, expl
   return { ok: true, value: config };
 }
 
+/**
+ * The LAUNCH path's verdict on a role's runtime configuration — engine, model,
+ * effort — with no parameters supplied. This is `resolveConfig`, the same check
+ * a spawn runs, so «доступна для запуску» in the catalog cannot disagree with
+ * what the launch answers a second later. Required parameters are deliberately
+ * not checked: a missing `diffSource` is what the caller supplies at launch,
+ * not a broken role.
+ */
+export function roleConfigError(definition: RoleDefinition): string | null {
+  const result = resolveConfig(definition, defaultRoleParameterValues(definition), {});
+  return result.ok ? null : result.error;
+}
+
 export function resolveRole(role: string, params: unknown = {}, explicit: ExplicitRoleConfig = {}, definitions: RoleDefinition[] = loadRoleDefinitions()): RoleResolution {
   const definition = definitions.find((candidate) => candidate.id === role);
   if (!definition) return { ok: false, error: `unknown role: ${role} (allowed: ${definitions.map((candidate) => candidate.id).join(", ")})` };
@@ -133,10 +146,13 @@ export function listRoles(): RoleDefinition[] {
 }
 
 /** Resolve a role-shaped spawn body before the route creates a CLI spec. */
-export function resolveSpawnRole(body: { role?: unknown; roleParams?: unknown; confirm?: unknown; engine?: unknown; model?: unknown; effort?: unknown }): SpawnRoleResolution {
+export function resolveSpawnRole(
+  body: { role?: unknown; roleParams?: unknown; confirm?: unknown; engine?: unknown; model?: unknown; effort?: unknown },
+  definitions?: RoleDefinition[],
+): SpawnRoleResolution {
   if (body.role === undefined || body.role === null || body.role === "") return { ok: true, value: null };
   if (typeof body.role !== "string") return { ok: false, error: "role must be a string" };
-  const base = resolveRole(body.role, body.roleParams);
+  const base = resolveRole(body.role, body.roleParams, {}, definitions);
   if (!base.ok) return base;
   const explicit: ExplicitRoleConfig = {};
   if (body.engine !== undefined) {
@@ -146,7 +162,7 @@ export function resolveSpawnRole(body: { role?: unknown; roleParams?: unknown; c
   }
   if (typeof body.model === "string" && body.model.trim()) explicit.model = body.model.trim();
   if (typeof body.effort === "string" && body.effort.trim()) explicit.effort = body.effort.trim();
-  const resolved = resolveRole(body.role, body.roleParams, explicit);
+  const resolved = resolveRole(body.role, body.roleParams, explicit, definitions);
   if (!resolved.ok) return resolved;
   if (resolved.value.requiresDeploymentConfirmation && body.confirm !== "deploy") {
     return { ok: false, error: "deployer requires confirm: deploy" };
