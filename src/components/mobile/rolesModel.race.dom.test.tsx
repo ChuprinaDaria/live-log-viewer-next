@@ -73,9 +73,9 @@ test("an older GET completing during Save has no authority over the catalog", as
   await mount();
   await flush(() => { void model.refresh(); });
   await flush(() => { void model.save(original.id, { prompt: "New prompt" }); });
-  await flush(() => requests[1].answer({ source: "fallback", roles: [{ ...original, promptScaffold: "Stale fallback" }], warning: "stale" }));
+  await flush(() => requests[1].answer({ source: "fallback", roles: [{ ...original, promptScaffold: "Stale fallback" }], degraded: { reason: "console-unavailable", detail: null } }));
   expect(model.source).toBe("fleetctl");
-  expect(model.warning).toBeNull();
+  expect(model.degraded).toBeNull();
   expect(model.roles?.[0].promptScaffold).toBe("Old prompt");
   await flush(() => requests[2].answer({ role: { ...original, promptScaffold: "New prompt" } }));
   expect(model.roles?.[0].promptScaffold).toBe("New prompt");
