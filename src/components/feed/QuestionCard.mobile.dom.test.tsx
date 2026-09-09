@@ -4,6 +4,7 @@ import type { ReactElement } from "react";
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 
+import { MOBILE_LAYOUT_QUERY } from "@/lib/attention/eligibility";
 import { en } from "@/lib/i18n/en";
 import { translate } from "@/lib/i18n";
 import type { FileEntry, PendingQuestion } from "@/lib/types";
@@ -23,7 +24,9 @@ let narrowViewport = false;
 
 const normalize = (query: string) => String(query).replace(/\s+/g, "");
 const matchMediaStub = (query: string) => ({
-  matches: normalize(query) === "(max-width:767px)" ? narrowViewport : false,
+  /* The hook's own query, so the stub cannot drift from it again (a 767px
+     literal here answered «desktop» once the hook moved to 640×600). */
+  matches: normalize(query) === normalize(MOBILE_LAYOUT_QUERY) ? narrowViewport : false,
   media: String(query),
   onchange: null,
   addEventListener() {},

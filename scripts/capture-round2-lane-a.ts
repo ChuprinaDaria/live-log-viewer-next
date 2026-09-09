@@ -1,0 +1,709 @@
+/**
+ * Rendered proof for UI round 2, lane A (docs/ui-round2-spec.md): on the phone
+ * the reply drafts and the «back to live» control never cover the transcript.
+ *
+ *   bun run build && bun scripts/capture-round2-lane-a.ts
+ *
+ * The production build is served against a synthetic home under the temp root
+ * (never the operator's live state, no real path or identity in any frame),
+ * the phone is emulated at 390×844 and at the narrow 360×780, in TWO columns
+ * — the geometry the board gets from the home screen and the one it gets in a
+ * browser tab — and the one conversation is driven through the three states
+ * the lane is about:
+ *
+ *   standalone   the target environment since the board became installable
+ *                (manifest `display: standalone`, `viewport-fit=cover`): the
+ *                layout viewport is the whole frame, `(display-mode:
+ *                standalone)` matches, and the phone's safe-area insets are
+ *                emulated through CDP so the frame shows what the column pays
+ *                for the home indicator (today: nothing — no chat surface
+ *                reads `env(safe-area-inset-bottom)`, which the report states
+ *                as `gapUnderComposerPx`).
+ *   tab          the same frame minus the browser's own rows: the ~85 px
+ *                Safari keeps on an iPhone (docs/ui-round2-spec.md, lane C)
+ *                and the 80 px of status bar plus toolbar Chrome keeps on a
+ *                360-wide Android. Recorded so the two can be compared; the
+ *                budget's floors are gated in the standalone column only,
+ *                because that is where the operator uses the board.
+ *
+ *   bottom       the magnet holds: the drafts band sits under the transcript
+ *   scrolled-up  the magnet is released: the round «back to live» button is up,
+ *                the band is still in the flow, and the transcript has grown
+ *                behind the operator so the button carries a count
+ *   keyboard     scrolled up AND the keyboard open (the visual viewport shrunk
+ *                through the signal `useKeyboardInset` subscribes to, #983)
+ *
+ * Every frame is MEASURED, not only rendered, and the numbers go to
+ * `report.json` beside the frames so the proof reads in a diff without opening
+ * a PNG: the band's height against `SUGGESTED_CHIPS_PX`, the composer unit at
+ * rest and under the keyboard, the transcript's share of the visible viewport
+ * against `chatBudget`, and for every state the bottom of the lowest visible
+ * transcript row against the top of the band. A frame that fails a gate still
+ * lands, and the report says which gate — then the run fails.
+ *
+ * Frames land outside the repository (a browser render is not deterministic,
+ * so it can carry no privacy-manifest provenance and the publication gate
+ * refuses it committed); the report is the artefact that travels.
+ *
+ *   <tmp>/llv-issue-20260909-latest/out/lane-a-<frame>-<column>-<state>.png
+ *   <tmp>/llv-issue-20260909-latest/out/report.json
+ *
+ * (The capture directory wants an issue number; round 2 has a spec dated
+ * 2026-09-09 instead, so that date is the number.)
+ */
+import { spawn, type ChildProcess } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+
+import { chromium, type Browser, type Page } from "playwright-core";
+
+import {
+  KEYBOARD_PX,
+  MIN_KEYBOARD_TRANSCRIPT_SHARE,
+  MIN_TRANSCRIPT_SHARE,
+  SUGGESTED_CHIPS_PX,
+  chatBudget,
+} from "@/components/mobile/chatBudget";
+
+import { createCaptureDirectory } from "./capture-directory";
+import { demoPort } from "./demo-capture";
+
+const REPO_ROOT = path.resolve(import.meta.dir, "..");
+const BASE = createCaptureDirectory({
+  envName: "LANE_A_CAPTURE_DIR",
+  prefix: "llv-issue-20260909",
+  raw: process.env.LANE_A_CAPTURE_DIR,
+  repoRoot: REPO_ROOT,
+});
+const HOME = path.join(BASE, "home");
+const OUT_DIR = path.join(BASE, "out");
+const REPO_DIR = path.join(HOME, "Projects", "atlas");
+const CAPTURE_MS = Date.parse("2100-01-02T12:00:00.000Z");
+
+export interface Frame {
+  name: string;
+  width: number;
+  height: number;
+  /** The browser's own rows in a tab, taken off the layout viewport. */
+  browserRowsPx: number;
+  /** The phone's safe-area insets in standalone, emulated through CDP. */
+  safeArea: { top: number; bottom: number };
+}
+export const FRAMES: readonly Frame[] = [
+  /* iPhone 390×844: the status bar and the home indicator; Safari's persistent
+     row costs ~85 px (lane C's measurement). */
+  { name: "390x844", width: 390, height: 844, browserRowsPx: 85, safeArea: { top: 47, bottom: 34 } },
+  /* A narrow Android 360×780: a 24 px status bar, a 56 px Chrome toolbar,
+     gesture navigation overlaid (no bottom inset). */
+  { name: "360x780", width: 360, height: 780, browserRowsPx: 80, safeArea: { top: 24, bottom: 0 } },
+];
+export const COLUMNS = ["standalone", "tab"] as const;
+export type Column = (typeof COLUMNS)[number];
+export const STATES = ["bottom", "scrolled-up", "keyboard"] as const;
+export type State = (typeof STATES)[number];
+
+/** The layout viewport one column gives a frame. */
+export function columnViewport(frame: Frame, column: Column): { width: number; height: number } {
+  return { width: frame.width, height: column === "tab" ? frame.height - frame.browserRowsPx : frame.height };
+}
+
+/** The lane's own drafts, as the operator's photo showed them. */
+const DRAFTS = [
+  { label: "Запускай раунд 2", text: "Запускай раунд 2, лейни A і E паралельно." },
+  { label: "Спершу покажи аудит", text: "Спершу покажи аудит astra, потім вирішимо." },
+  { label: "Закоммить і запуш", text: "Закоммить і запуш, я подивлюсь у PR." },
+  { label: "Що з клавіатурою?", text: "Що з клавіатурою на 390×844 — виміряно?" },
+];
+
+const projectSlug = (cwd: string) => cwd.replace(/[^A-Za-z0-9]/g, "-");
+/* Composed, not written out: a literal UUID in a published source file is
+   what the privacy gate's resource-identifier rule catches. */
+const SESSION_UUID = ["00000a2a", "0000", "4000", "8000", "000000000000"].join("-");
+const TRANSCRIPT_PATH = path.join(HOME, ".claude/projects", projectSlug(REPO_DIR), `${SESSION_UUID}.jsonl`);
+
+/** A conversation long enough to scroll on a phone, in the operator's language,
+    with the paragraph shapes the photo had: prose, a list, inline code. */
+function transcriptLines(): string[] {
+  const at = (minutesAgo: number) => new Date(CAPTURE_MS - minutesAgo * 60_000).toISOString();
+  const user = (id: string, minutesAgo: number, text: string) =>
+    ({ type: "user", uuid: `${SESSION_UUID}-${id}`, timestamp: at(minutesAgo), cwd: REPO_DIR, message: { role: "user", content: text } });
+  const assistant = (id: string, minutesAgo: number, text: string) =>
+    ({ type: "assistant", uuid: `${SESSION_UUID}-${id}`, timestamp: at(minutesAgo), cwd: REPO_DIR, message: { role: "assistant", model: "claude-opus-4-6", content: [{ type: "text", text }] } });
+  const lines = [
+    user("u1", 48, "Подивись, що з дошкою на телефоні. Чіпи лежать поверх тексту."),
+    assistant("a1", 47, [
+      "Подивився. Раунд 1 полагодив контракти й форми, але не те, як кімната виглядає на телефоні.",
+      "",
+      "Три речі зламано:",
+      "- драфти рендеряться поверх транскрипту, коли стрічка не примагнічена до низу;",
+      "- пігулка «N нових» стоїть посеред абзацу без підкладки;",
+      "- третій чіп обрізаний по літері, і нічого не каже, що ряд гортається.",
+      "",
+      "Точки в коді: `src/components/LogFeed.tsx`, `src/components/feed/SuggestedReplies.tsx`, `src/components/mobile/chatBudget.ts`.",
+    ].join("\n")),
+    user("u2", 40, "Скільки це коштує по хрому? Бюджет каже 32 px на чіпи."),
+    assistant("a2", 39, [
+      "Бюджет декларує 32 px у потоці над композером, а DOM рендерить overlay. Дві різні поведінки на одній поверхні, і телефонна — неправильна.",
+      "",
+      "Чесна цифра — висота hit-зони чіпа, бо правило «всі контроли ≥ 44 px» діє і тут. Тобто смуга драфтів у потоці коштує 44 px, а не 32, і бюджет має казати саме це.",
+      "",
+      "З клавіатурою рахунок такий: бар, композер без home-inset, смуга чіпів. Решта — транскрипт. Число виміряю на живому рендері, не на папері.",
+    ].join("\n")),
+    user("u3", 31, "А пігулка «N нових»? Її теж у смугу?"),
+    assistant("a3", 30, [
+      "Ні. Пігулка в смузі коштувала б ще 44 px хрому щоразу, коли оператор гортає вгору, і смуга б стрибала.",
+      "",
+      "Правильний патерн — той, що в будь-якому месенджері: кругла кнопка в куті стрічки, непрозора, з тінню, а лічильник — бейдж на її обідку. Вона накриває тільки правий нижній кут, який transcript і так тримає порожнім через власний відступ, і ніколи не ділить рядок із текстом.",
+    ].join("\n")),
+    user("u4", 22, "Добре. Що з обрізаним чіпом?"),
+    assistant("a4", 21, [
+      "Ряд лишається одним рядком — перенос у два рядки подвоїв би хром і зробив бюджет плаваючим.",
+      "",
+      "Замість цього край ряду каже, що є ще: градієнт на тому боці, де ряд продовжується, і тільки поки він продовжується. Після свайпу ряд стає на межу чіпа (`scroll-snap`), тож лівий край завжди чистий, а останній чіп має запас, щоб вийти з-під градієнта повністю.",
+      "",
+      "Це рівно те, що спека називає «видно, що ряд гортається, і жоден чіп не обрізаний по літері».",
+    ].join("\n")),
+    user("u5", 12, "Знімки з телефону будуть?"),
+    assistant("a5", 11, [
+      "Будуть, і не лише знімки: кожен кадр міряється. У `report.json` — висота смуги, композер у спокої і з клавіатурою, частка транскрипту на обох рамках, і для кожного стану нижній рядок тексту проти верхньої межі смуги.",
+      "",
+      "Саме ця пара чисел і є доказом, що під чіпами немає тексту. PNG — щоб подивитись очима; числа — щоб перевірити в дифі.",
+    ].join("\n")),
+  ];
+  return lines.map((line) => JSON.stringify(line));
+}
+
+/** Two more answers, appended while the operator is scrolled up, so the
+    «back to live» button has a count to carry. */
+function arrivalLines(): string[] {
+  const at = (secondsAgo: number) => new Date(CAPTURE_MS - secondsAgo * 1000).toISOString();
+  return [
+    { type: "assistant", uuid: `${SESSION_UUID}-a6`, timestamp: at(20), cwd: REPO_DIR, message: { role: "assistant", model: "claude-opus-4-6", content: [{ type: "text", text: "Збірка на ryzen пройшла, тести зелені. Запускаю знімки." }] } },
+    { type: "assistant", uuid: `${SESSION_UUID}-a7`, timestamp: at(5), cwd: REPO_DIR, message: { role: "assistant", model: "claude-opus-4-6", content: [{ type: "text", text: "Перший кадр є. Смуга під транскриптом, текст цілий." }] } },
+  ].map((line) => JSON.stringify(line));
+}
+
+function seedHome(): void {
+  fs.mkdirSync(REPO_DIR, { recursive: true });
+  fs.mkdirSync(OUT_DIR, { recursive: true });
+  fs.mkdirSync(path.join(BASE, "tmp", `claude-${process.getuid?.() ?? 1000}`), { recursive: true });
+  fs.mkdirSync(path.join(HOME, ".config/agent-log-viewer/state"), { recursive: true });
+  fs.mkdirSync(path.join(HOME, ".codex/sessions"), { recursive: true });
+  fs.mkdirSync(path.dirname(TRANSCRIPT_PATH), { recursive: true });
+  fs.writeFileSync(TRANSCRIPT_PATH, transcriptLines().join("\n") + "\n", "utf8");
+}
+
+function buildEnvironment(port: number): NodeJS.ProcessEnv {
+  const config = path.join(HOME, ".config");
+  return {
+    NODE_ENV: "production",
+    PATH: process.env.PATH,
+    HOME,
+    TMPDIR: path.join(BASE, "tmp"),
+    TMUX_TMPDIR: path.join(BASE, "tmux"),
+    XDG_CONFIG_HOME: config,
+    XDG_CACHE_HOME: path.join(BASE, "cache"),
+    XDG_RUNTIME_DIR: path.join(BASE, "runtime"),
+    LLV_STATE_DIR: path.join(config, "agent-log-viewer", "state"),
+    LLV_CLAUDE_HOME: path.join(HOME, ".claude"),
+    LLV_CODEX_HOME: path.join(HOME, ".codex"),
+    LLV_ACCOUNT_CONTROLLER_DISABLED: "1",
+    LLV_REAPER_ENABLED: "0",
+    NEXT_TELEMETRY_DISABLED: "1",
+    PORT: String(port),
+    TZ: "UTC", LANG: "C.UTF-8", LC_ALL: "C.UTF-8", USER: "demo", LOGNAME: "demo", SHELL: "/bin/sh",
+  };
+}
+
+async function waitForServer(url: string, child: ChildProcess): Promise<void> {
+  const deadline = Date.now() + 90_000;
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null) throw new Error(`production server exited with ${child.exitCode}`);
+    try {
+      if ((await fetch(`${url}/api/files`)).ok) return;
+    } catch {
+      /* still booting */
+    }
+    await Bun.sleep(300);
+  }
+  throw new Error("production server did not become ready");
+}
+
+const seedInit = () => {
+  const captureTime = Date.parse("2100-01-02T12:00:00.000Z");
+  const NativeDate = Date;
+  class CaptureDate extends NativeDate {
+    constructor(...args: unknown[]) {
+      super(...((args.length ? args : [captureTime]) as []));
+    }
+    static now() { return captureTime; }
+  }
+  Object.defineProperty(globalThis, "Date", { configurable: true, value: CaptureDate });
+  Object.defineProperty(globalThis, "EventSource", { configurable: true, value: undefined });
+  localStorage.clear();
+  sessionStorage.clear();
+  /* The operator's phone reads the board in Ukrainian; so does the proof. */
+  localStorage.setItem("llv_lang", "uk");
+  localStorage.setItem("llvSound", "0");
+};
+
+/** What a home-screen launch answers that a tab does not. */
+const standaloneInit = () => {
+  const native = window.matchMedia.bind(window);
+  window.matchMedia = (query: string) => {
+    const result = native(query);
+    if (/display-mode:\s*standalone/.test(query)) Object.defineProperty(result, "matches", { configurable: true, value: true });
+    return result;
+  };
+  Object.defineProperty(navigator, "standalone", { configurable: true, value: true });
+};
+
+/** How many draft reads the page made, for the diagnostic when none render. */
+let suggestionRequests = 0;
+
+const SEL = {
+  shell: '[data-testid="mobile-chat-shell"]',
+  scroller: "[data-log-feed-scroller]",
+  rows: "[data-log-feed-scroller] [data-feed-key]",
+  band: "[data-feed-drafts-band]",
+  chipsRow: "[data-mobile-chips]",
+  chips: "[data-reply-suggestion]",
+  fadeEnd: '[data-chips-fade="end"]',
+  fadeStart: '[data-chips-fade="start"]',
+  jump: "[data-feed-jump-tail]",
+  newCount: "[data-feed-new-count]",
+  composerBox: "[data-mobile2-composer]",
+  field: '[data-mobile2-field], [data-testid="mobile-chat-shell"] textarea',
+  send: '[data-mobile2-send], [data-testid="mobile-chat-shell"] form button[type="submit"]',
+  floating: '[data-reply-suggestions="floating"]',
+};
+
+interface Rect { top: number; bottom: number; left: number; right: number; width: number; height: number }
+
+/** What one frame shows, in layout px, read off the live DOM. */
+export interface Geometry {
+  layout: { width: number; height: number };
+  /** Bottom edge of what the operator can see (the keyboard's top once open). */
+  visibleBottom: number;
+  scroller: Rect | null;
+  /** The lowest transcript row that is at least partly inside the scroller,
+      clipped to the scroller: its bottom is where text can last be. */
+  lowestTextBottom: number | null;
+  visibleRows: number;
+  band: Rect | null;
+  chipsRow: Rect | null;
+  chips: Rect[];
+  /** Chips whose right edge is past the row's right edge (cut by the row). */
+  chipsCutRight: number;
+  fadeEnd: boolean;
+  fadeStart: boolean;
+  /** The row swiped to its end: the last chip whole, the fade moved to the
+      start. Read after the frame, and the row is put back. */
+  rowEnd: { lastChipClear: boolean; fadeStart: boolean; fadeEnd: boolean } | null;
+  jump: (Rect & { opaque: boolean; count: string | null }) | null;
+  floating: number;
+  composerBox: Rect | null;
+  /** From the band's bottom (or the scroller's, with no band) to the visible
+      bottom: the composer UNIT as the budget counts it. */
+  composerUnit: number | null;
+  /** What lies between the composer box and the visible bottom: padding, and
+      whatever the column pays for a home indicator (today nothing does). */
+  gapUnderComposer: number | null;
+  standaloneMedia: boolean;
+  send: Rect | null;
+  fieldFocused: boolean;
+  documentScrollWidth: number;
+  /** Every box in the chat column from the bar down, by name and height, so
+      a chrome total that disagrees with the budget can be read row by row. */
+  anatomy: { name: string; top: number; height: number }[];
+}
+
+async function readGeometry(page: Page): Promise<Geometry> {
+  return page.evaluate((sel) => {
+    const rect = (el: Element | null): Rect | null => {
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { top: Math.round(r.top), bottom: Math.round(r.bottom), left: Math.round(r.left), right: Math.round(r.right), width: Math.round(r.width), height: Math.round(r.height) };
+    };
+    const visual = window.visualViewport;
+    const visibleBottom = Math.round(visual ? visual.offsetTop + visual.height : window.innerHeight);
+    const scroller = rect(document.querySelector(sel.scroller));
+    let lowestTextBottom: number | null = null;
+    let visibleRows = 0;
+    if (scroller) {
+      for (const row of document.querySelectorAll(sel.rows)) {
+        const r = row.getBoundingClientRect();
+        if (r.bottom <= scroller.top || r.top >= scroller.bottom || r.height === 0) continue;
+        visibleRows += 1;
+        const clippedBottom = Math.round(Math.min(r.bottom, scroller.bottom));
+        if (lowestTextBottom === null || clippedBottom > lowestTextBottom) lowestTextBottom = clippedBottom;
+      }
+    }
+    const band = rect(document.querySelector(sel.band));
+    const chipsRowEl = document.querySelector(sel.chipsRow);
+    const chipsRow = rect(chipsRowEl);
+    const chips = [...document.querySelectorAll(sel.chips)].map((chip) => rect(chip)!) as Rect[];
+    const chipsCutRight = chipsRow ? chips.filter((chip) => chip.left < chipsRow.right && chip.right > chipsRow.right).length : 0;
+    const jumpEl = document.querySelector(sel.jump);
+    const jumpRect = rect(jumpEl);
+    let jump: Geometry["jump"] = null;
+    if (jumpEl && jumpRect) {
+      const bg = getComputedStyle(jumpEl).backgroundColor;
+      const alpha = bg.startsWith("rgba") ? Number(bg.slice(bg.lastIndexOf(",") + 1, -1)) : bg.includes("/") ? Number(bg.slice(bg.lastIndexOf("/") + 1, -1)) : 1;
+      jump = { ...jumpRect, opaque: alpha >= 0.999, count: jumpEl.querySelector(sel.newCount)?.textContent ?? null };
+    }
+    const composerBox = rect(document.querySelector(sel.composerBox));
+    const bandOrScrollerBottom = band && band.height > 0 ? band.bottom : scroller?.bottom ?? null;
+    const field = document.querySelector(sel.field);
+    /* Hooks by NAME; a value only when it is a short word (a state, a slot
+       kind) — never a path or an id, which the report must not carry. */
+    const name = (el: Element): string => {
+      const hooks = [...el.attributes].filter((a) => a.name.startsWith("data-")).map((a) => /^[a-z-]{1,16}$/.test(a.value) ? `${a.name}=${a.value}` : a.name);
+      return hooks.length ? hooks.join(" ") : `${el.tagName.toLowerCase()}.${String(el.className).split(" ").slice(0, 3).join(".")}`;
+    };
+    const anatomy: { name: string; top: number; height: number }[] = [];
+    const shell = document.querySelector(sel.shell);
+    const walk = (el: Element, depth: number) => {
+      if (depth > 10) return;
+      for (const child of el.children) {
+        const r = child.getBoundingClientRect();
+        if (r.height >= 8 && r.width >= 100) anatomy.push({ name: `${"  ".repeat(depth)}${name(child)}`, top: Math.round(r.top), height: Math.round(r.height) });
+        if (!child.matches(sel.scroller)) walk(child, depth + 1);
+      }
+    };
+    if (shell) walk(shell, 0);
+    return {
+      anatomy,
+      layout: { width: window.innerWidth, height: window.innerHeight },
+      visibleBottom,
+      scroller,
+      lowestTextBottom,
+      visibleRows,
+      band,
+      chipsRow,
+      chips,
+      chipsCutRight,
+      fadeEnd: Boolean(document.querySelector(sel.fadeEnd)),
+      fadeStart: Boolean(document.querySelector(sel.fadeStart)),
+      rowEnd: null,
+      jump,
+      floating: document.querySelectorAll(sel.floating).length,
+      composerBox,
+      composerUnit: bandOrScrollerBottom === null ? null : visibleBottom - bandOrScrollerBottom,
+      gapUnderComposer: composerBox ? visibleBottom - composerBox.bottom : null,
+      standaloneMedia: window.matchMedia("(display-mode: standalone)").matches,
+      send: rect(document.querySelector(sel.send)),
+      fieldFocused: Boolean(field) && document.activeElement === field,
+      documentScrollWidth: document.documentElement.scrollWidth,
+    };
+  }, SEL);
+}
+
+/** Swipe the row to its end, read the edge, and put it back. */
+async function readRowEnd(page: Page): Promise<Geometry["rowEnd"]> {
+  const rowEnd = await page.evaluate(async (sel) => {
+    const row = document.querySelector<HTMLElement>(sel.chipsRow);
+    if (!row) return null;
+    const before = row.scrollLeft;
+    row.scrollLeft = row.scrollWidth;
+    row.dispatchEvent(new Event("scroll", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    const rowRect = row.getBoundingClientRect();
+    const chips = [...document.querySelectorAll(sel.chips)];
+    const last = chips.at(-1)?.getBoundingClientRect();
+    const result = {
+      lastChipClear: Boolean(last) && last!.right <= rowRect.right + 0.5 && last!.left >= rowRect.left - 0.5,
+      fadeStart: Boolean(document.querySelector(sel.fadeStart)),
+      fadeEnd: Boolean(document.querySelector(sel.fadeEnd)),
+    };
+    row.scrollLeft = before;
+    row.dispatchEvent(new Event("scroll", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    return result;
+  }, SEL);
+  return rowEnd;
+}
+
+export interface FrameReport {
+  frame: string;
+  column: Column;
+  state: State;
+  file: string;
+  viewport: { width: number; height: number };
+  safeArea: { requested: { top: number; bottom: number }; applied: boolean };
+  geometry: Geometry;
+  /** What the budget expects of this frame, for the numbers beside it. */
+  budget: { chrome: number; transcript: number; share: number; floor: number };
+  measured: { transcriptShare: number | null; bandHeight: number; composerUnit: number | null };
+  failures: string[];
+}
+
+/**
+ * The gates, pure so the numbers can be read back without a browser. Every
+ * failure names the number that failed it.
+ */
+export function judge(viewport: { width: number; height: number }, column: Column, state: State, g: Geometry): Omit<FrameReport, "frame" | "column" | "state" | "file" | "viewport" | "safeArea"> {
+  const failures: string[] = [];
+  const keyboard = state === "keyboard" ? KEYBOARD_PX : 0;
+  const budget = chatBudget({ height: viewport.height, chips: true, keyboard });
+  const floor = keyboard ? MIN_KEYBOARD_TRANSCRIPT_SHARE : MIN_TRANSCRIPT_SHARE;
+  const visibleHeight = viewport.height - keyboard;
+  const frame = viewport;
+  const bandHeight = g.band?.height ?? 0;
+  const transcriptShare = g.scroller ? g.scroller.height / visibleHeight : null;
+
+  if (!g.scroller) failures.push("no transcript scroller rendered");
+  if (g.visibleRows === 0) failures.push("no transcript row is visible, so the frame proves nothing");
+  if (g.floating > 0) failures.push(`${g.floating} floating draft row(s) over the transcript on the phone`);
+  if (!g.band || bandHeight === 0) failures.push("no drafts band rendered — the set was not offered");
+  if (g.chips.length !== DRAFTS.length) failures.push(`${g.chips.length} chips rendered of ${DRAFTS.length}`);
+  /* A1: the band is below the scroller, so no transcript pixel can be under it. */
+  if (g.band && g.scroller && g.band.top < g.scroller.bottom) failures.push(`the drafts band starts at ${g.band.top}px, above the scroller's bottom at ${g.scroller.bottom}px`);
+  if (g.band && g.lowestTextBottom !== null && g.lowestTextBottom > g.band.top) failures.push(`the lowest transcript row ends at ${g.lowestTextBottom}px, under the band that starts at ${g.band.top}px`);
+  /* A1: the band reserves exactly what the budget says it does. */
+  if (g.band && bandHeight !== SUGGESTED_CHIPS_PX) failures.push(`the drafts band is ${bandHeight}px, SUGGESTED_CHIPS_PX says ${SUGGESTED_CHIPS_PX}`);
+  for (const chip of g.chips) if (chip.height < 44) failures.push(`a chip's target is ${chip.height}px, under the 44px floor`);
+  /* A3: a chip the row cuts is faded, not sliced. */
+  if (g.chipsCutRight > 0 && !g.fadeEnd) failures.push(`${g.chipsCutRight} chip(s) cut by the row's right edge and no fade says the row goes on`);
+  if (g.chipsCutRight === 0 && g.fadeEnd) failures.push("an end fade shows with nothing cut behind it");
+  if (g.rowEnd) {
+    if (!g.rowEnd.lastChipClear) failures.push("swiped to the end, the last chip is still cut");
+    if (g.rowEnd.fadeEnd) failures.push("swiped to the end, an end fade still says the row goes on");
+    if (g.chipsCutRight > 0 && !g.rowEnd.fadeStart) failures.push("swiped to the end, no start fade says where the row came from");
+  }
+  /* A2: the way back is a 44px opaque control inside the scroller, off the band. */
+  if (state !== "bottom") {
+    if (!g.jump) failures.push("scrolled up and no «back to live» control");
+    else {
+      if (g.jump.width < 44 || g.jump.height < 44) failures.push(`the «back to live» control is ${g.jump.width}×${g.jump.height}px`);
+      if (!g.jump.opaque) failures.push("the «back to live» control has a translucent surface");
+      if (g.band && g.jump.bottom > g.band.top) failures.push(`the «back to live» control ends at ${g.jump.bottom}px, into the band at ${g.band.top}px`);
+      if (g.scroller && (g.jump.right > g.scroller.right || g.jump.left < g.scroller.left)) failures.push("the «back to live» control leaves the scroller's width");
+    }
+  } else if (g.jump) failures.push("a «back to live» control shows while the magnet holds");
+  /* The keyboard: the whole column, band and send included, above it. */
+  if (keyboard) {
+    if (!g.fieldFocused) failures.push("the field never took focus, so the keyboard case was not exercised");
+    if (g.visibleBottom !== visibleHeight) failures.push(`the visual viewport ends at ${g.visibleBottom}px, expected ${visibleHeight}px`);
+    if (g.band && g.band.bottom > visibleHeight) failures.push(`the band ends at ${g.band.bottom}px, under the keyboard's top at ${visibleHeight}px`);
+    if (!g.send) failures.push("no send control");
+    else if (g.send.bottom > visibleHeight) failures.push(`send ends at ${g.send.bottom}px, under the keyboard's top at ${visibleHeight}px`);
+  }
+  /* The budget's floor is RECORDED beside the measured share in both columns
+     (`budgetHolds`), not gated here: what this lane owns of the chrome is the
+     44 px band, and that is gated above. The shortfall the report shows is
+     the composer form's — 155 px against the 109 the budget counts, the
+     `selected-context` row and a 52 px field the budget never had — and a
+     green run here must not be read as that being settled. */
+  if (column === "standalone" && !g.standaloneMedia) failures.push("the standalone column does not match (display-mode: standalone)");
+  if (g.documentScrollWidth > frame.width) failures.push(`the document scrolls to ${g.documentScrollWidth}px at ${frame.width}px`);
+  return {
+    geometry: g,
+    budget: { chrome: budget.chrome, transcript: budget.transcript, share: Number(budget.share.toFixed(4)), floor },
+    measured: { transcriptShare: transcriptShare === null ? null : Number(transcriptShare.toFixed(4)), bandHeight, composerUnit: g.composerUnit },
+    failures,
+  };
+}
+
+async function settle(page: Page, ms = 400): Promise<void> {
+  await page.waitForTimeout(ms);
+}
+
+async function openChat(page: Page, baseUrl: string, transcript: string): Promise<void> {
+  /* «load», not «networkidle»: the board polls, so the network never idles. */
+  await page.goto(`${baseUrl}/#f=${encodeURIComponent(transcript)}`, { waitUntil: "load" });
+  await page.waitForSelector(SEL.shell, { timeout: 20_000 });
+  await page.waitForSelector(SEL.rows, { timeout: 20_000 });
+  /* The drafts read off the stream with a 1.5 s floor between reads. When
+     they never come, say what the page had instead of a bare timeout. */
+  await page.waitForSelector(SEL.chips, { timeout: 10_000 }).catch(async (error: unknown) => {
+    const seen = await page.evaluate((sel) => ({
+      band: document.querySelectorAll(sel.band).length,
+      bandHtml: document.querySelector(sel.band)?.outerHTML.slice(0, 300) ?? null,
+      rows: document.querySelectorAll(sel.rows).length,
+      screen: document.querySelector("[data-mobile2-screen]")?.getAttribute("data-mobile2-screen") ?? null,
+      floating: document.querySelectorAll(sel.floating).length,
+    }), SEL);
+    throw new Error(`no draft chips: ${JSON.stringify(seen)}; suggestion requests answered: ${suggestionRequests}; ${String(error)}`);
+  });
+  const dismiss = page.locator("[data-attention-toast-dismiss]").first();
+  if (await dismiss.count()) { await dismiss.click(); await settle(page, 120); }
+  await settle(page, 700);
+}
+
+/** Release the magnet the way a thumb does: an upward gesture the feed sees,
+    then the scroll it causes. */
+async function scrollUp(page: Page): Promise<void> {
+  await page.evaluate((selector) => {
+    const el = document.querySelector<HTMLElement>(selector)!;
+    el.dispatchEvent(new WheelEvent("wheel", { deltaY: -320, bubbles: true, cancelable: true }));
+    el.scrollTop = Math.max(0, el.scrollTop - 320);
+  }, SEL.scroller);
+  await page.waitForSelector(SEL.jump, { timeout: 5_000 });
+  await settle(page, 300);
+}
+
+/** Two answers arrive while the operator is scrolled up; the tail re-reads on
+    the product's own refresh signal and the control shows the count. */
+async function letAnswersArrive(page: Page): Promise<void> {
+  fs.appendFileSync(TRANSCRIPT_PATH, arrivalLines().join("\n") + "\n", "utf8");
+  await page.evaluate(() => window.dispatchEvent(new Event("llv:files-changed")));
+  await page.waitForSelector(SEL.newCount, { timeout: 12_000 }).catch(() => undefined);
+  await settle(page, 300);
+}
+
+/** Open the keyboard the way #979/#983 do: focus the field and shrink the
+    visual viewport through the signal the layout subscribes to. */
+async function openKeyboard(page: Page): Promise<void> {
+  await page.focus(SEL.field);
+  await page.evaluate((keyboard) => {
+    const visual = window.visualViewport!;
+    const full = visual.height;
+    Object.defineProperty(visual, "height", { configurable: true, get: () => full - keyboard });
+    visual.dispatchEvent(new Event("resize"));
+  }, KEYBOARD_PX);
+  await settle(page, 500);
+}
+
+async function captureFrame(browser: Browser, baseUrl: string, transcript: string, frame: Frame, column: Column): Promise<FrameReport[]> {
+  const reports: FrameReport[] = [];
+  const viewport = columnViewport(frame, column);
+  const context = await browser.newContext({ viewport, colorScheme: "dark", deviceScaleFactor: 2, isMobile: true, hasTouch: true, reducedMotion: "reduce", timezoneId: "UTC", locale: "uk-UA" });
+  await context.addInitScript(seedInit);
+  if (column === "standalone") await context.addInitScript(standaloneInit);
+  await context.route("**/api/log/suggestions*", (route) => {
+    suggestionRequests += 1;
+    const url = new URL(route.request().url());
+    const conversationId = url.searchParams.get("conversationId") ?? "";
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ set: { conversationId, setId: `rsg_lane_a_${frame.name}`, at: new Date(CAPTURE_MS - 10 * 60_000).toISOString(), origin: { kind: "manager", conversationId: "seat", role: "orchestrator" }, replies: DRAFTS } }),
+    });
+  });
+  /* A seeded transcript scans with no conversation identity and no process
+     behind it, and the drafts are read BY conversation id: the files answer
+     is patched on this side, the way `capture-mobile-v2` does it, so the one
+     conversation is hosted and addressable. Everything else is the scan. */
+  await context.route("**/api/files*", async (route) => {
+    const headers = { ...route.request().headers() };
+    delete headers["if-none-match"];
+    delete headers["if-modified-since"];
+    const response = await route.fetch({ headers });
+    const text = response.status() === 200 ? await response.text() : "";
+    if (!text) { await route.fulfill({ response }); return; }
+    const body = JSON.parse(text) as { files?: Record<string, unknown>[] };
+    for (const entry of body.files ?? []) {
+      if (entry.cwd !== REPO_DIR) continue;
+      entry.conversationId = `conversation_lane_a_${frame.name}_${column}`;
+      entry.proc = "running";
+      entry.pid = 4_990;
+    }
+    await route.fulfill({ response, body: JSON.stringify(body) });
+  });
+  const page = await context.newPage();
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(String(error)));
+  /* The phone's safe area, in standalone: `viewport-fit=cover` hands the
+     insets to the page, and what the page pays for them is what this column
+     shows. Best effort — an engine without the override records `applied:
+     false` rather than pretending. */
+  let safeAreaApplied = false;
+  if (column === "standalone") {
+    try {
+      const cdp = await context.newCDPSession(page);
+      await cdp.send("Emulation.setSafeAreaInsetsOverride" as never, { insets: { top: frame.safeArea.top, left: 0, bottom: frame.safeArea.bottom, right: 0 } } as never);
+      safeAreaApplied = true;
+    } catch {
+      safeAreaApplied = false;
+    }
+  }
+  try {
+    /* The transcript is re-seeded per frame so the arrivals do not compound. */
+    fs.writeFileSync(TRANSCRIPT_PATH, transcriptLines().join("\n") + "\n", "utf8");
+    await openChat(page, baseUrl, transcript);
+    for (const state of STATES) {
+      if (state === "scrolled-up") { await scrollUp(page); await letAnswersArrive(page); }
+      if (state === "keyboard") await openKeyboard(page);
+      const file = path.join(OUT_DIR, `lane-a-${frame.name}-${column}-${state}.png`);
+      await page.screenshot({ path: file, fullPage: false });
+      const geometry = await readGeometry(page);
+      geometry.rowEnd = await readRowEnd(page);
+      const verdict = judge(viewport, column, state, geometry);
+      if (errors.length) verdict.failures.push(...errors.splice(0).map((error) => `page error: ${error}`));
+      reports.push({ frame: frame.name, column, state, file, viewport, safeArea: { requested: frame.safeArea, applied: safeAreaApplied }, ...verdict });
+      console.log(`${frame.name}/${column}/${state}: ${verdict.failures.length ? verdict.failures.join("; ") : "ok"}`);
+    }
+  } finally {
+    await context.close();
+  }
+  return reports;
+}
+
+async function main(): Promise<void> {
+  const port = demoPort(process.env.LANE_A_CAPTURE_PORT, 4990, "LANE_A_CAPTURE_PORT");
+  const baseUrl = `http://127.0.0.1:${port}`;
+  if (!fs.existsSync(path.join(REPO_ROOT, ".next", "BUILD_ID"))) throw new Error("no production build: run `bun run build` first");
+  seedHome();
+  const server = spawn("bun", ["--bun", "node_modules/.bin/next", "start", "--hostname", "127.0.0.1", "--port", String(port)], {
+    cwd: REPO_ROOT,
+    env: buildEnvironment(port),
+    stdio: ["ignore", "inherit", "inherit"],
+  });
+  const executablePath = process.env.CHROME_BIN
+    ?? ["/usr/bin/chromium", "/usr/bin/google-chrome-stable", "/usr/bin/google-chrome"].find((candidate) => fs.existsSync(candidate));
+  const browser = await chromium.launch({ headless: true, ...(executablePath ? { executablePath } : {}) });
+  const reports: FrameReport[] = [];
+  try {
+    await waitForServer(baseUrl, server);
+    const scanned = await (await fetch(`${baseUrl}/api/files`)).json() as { files?: { cwd?: string; path?: string }[] };
+    const transcript = (scanned.files ?? []).find((file) => file.cwd === REPO_DIR)?.path ?? "";
+    if (!transcript) throw new Error("the seeded conversation did not scan");
+    console.log(`frames: ${OUT_DIR}`);
+    for (const frame of FRAMES) for (const column of COLUMNS) reports.push(...await captureFrame(browser, baseUrl, transcript, frame, column));
+  } finally {
+    await browser.close();
+    server.kill("SIGTERM");
+  }
+  const report = {
+    lane: "round2-lane-a",
+    generatedAt: new Date().toISOString(),
+    constants: { SUGGESTED_CHIPS_PX, KEYBOARD_PX, MIN_TRANSCRIPT_SHARE, MIN_KEYBOARD_TRANSCRIPT_SHARE },
+    columns: { standalone: "the whole frame, (display-mode: standalone), safe-area insets emulated", tab: "the frame minus the browser's rows (85 px Safari on 390×844, 80 px Chrome on 360×780)" },
+    frames: reports.map((entry) => ({
+      frame: entry.frame,
+      column: entry.column,
+      state: entry.state,
+      file: path.basename(entry.file),
+      ok: entry.failures.length === 0,
+      failures: entry.failures,
+      viewport: entry.viewport,
+      safeArea: entry.safeArea,
+      gapUnderComposerPx: entry.geometry.gapUnderComposer,
+      bandHeightPx: entry.measured.bandHeight,
+      bandTopPx: entry.geometry.band?.top ?? null,
+      lowestTextBottomPx: entry.geometry.lowestTextBottom,
+      textClearsBandBy: entry.geometry.band && entry.geometry.lowestTextBottom !== null ? entry.geometry.band.top - entry.geometry.lowestTextBottom : null,
+      scrollerHeightPx: entry.geometry.scroller?.height ?? null,
+      composerUnitPx: entry.measured.composerUnit,
+      composerBoxPx: entry.geometry.composerBox?.height ?? null,
+      visibleBottomPx: entry.geometry.visibleBottom,
+      transcriptShare: entry.measured.transcriptShare,
+      budget: entry.budget,
+      budgetHolds: entry.measured.transcriptShare !== null && entry.measured.transcriptShare >= entry.budget.floor,
+      backToLive: entry.geometry.jump ? { size: `${entry.geometry.jump.width}×${entry.geometry.jump.height}`, opaque: entry.geometry.jump.opaque, count: entry.geometry.jump.count, bottomPx: entry.geometry.jump.bottom } : null,
+      chips: { rendered: entry.geometry.chips.length, cutByRowEdge: entry.geometry.chipsCutRight, fadeEnd: entry.geometry.fadeEnd, fadeStart: entry.geometry.fadeStart, atRowEnd: entry.geometry.rowEnd },
+      floatingRows: entry.geometry.floating,
+      anatomy: entry.geometry.anatomy,
+    })),
+  };
+  fs.writeFileSync(path.join(OUT_DIR, "report.json"), JSON.stringify(report, null, 2) + "\n");
+  const failed = reports.filter((entry) => entry.failures.length);
+  console.log(`\nreport: ${path.join(OUT_DIR, "report.json")}`);
+  if (failed.length) {
+    console.error(`${failed.length} of ${reports.length} frames failed a gate`);
+    process.exitCode = 1;
+  }
+}
+
+if (import.meta.main) await main();

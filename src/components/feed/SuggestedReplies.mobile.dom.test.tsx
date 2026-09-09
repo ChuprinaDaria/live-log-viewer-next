@@ -3,6 +3,7 @@ import { Window } from "happy-dom";
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 
+import { MOBILE_LAYOUT_QUERY } from "@/lib/attention/eligibility";
 import { en } from "@/lib/i18n/en";
 import type { FileEntry, PendingQuestion } from "@/lib/types";
 
@@ -18,8 +19,11 @@ import type { FileEntry, PendingQuestion } from "@/lib/types";
 let narrowViewport = false;
 
 const normalize = (query: string) => String(query).replace(/\s+/g, "");
+/* The phone is whatever `useIsMobile` asks the window — the same query, so the
+   stub cannot drift from the hook again (it did: the hook moved to the
+   640×600 desktop minimum and a 767px literal here answered «desktop»). */
 const matchMediaStub = (query: string) => ({
-  matches: normalize(query) === "(max-width:767px)" ? narrowViewport : false,
+  matches: normalize(query) === normalize(MOBILE_LAYOUT_QUERY) ? narrowViewport : false,
   media: String(query),
   onchange: null,
   addEventListener() {},
@@ -228,4 +232,44 @@ test("desktop: a chip still only fills the composer draft", async () => {
   expect(readOutbox("conv_desk")).toHaveLength(0);
   expect(requests.some((entry) => entry.url === "/api/answer")).toBe(false);
   expect(host.querySelectorAll("[data-reply-suggestion]")).toHaveLength(drafts.length);
+});
+
+/*
+ * Round 2 lane A (A3): the row says when it goes on. A chip cut by the row's
+ * edge is faded, and the fade is only there while there IS more row in that
+ * direction — happy-dom reports no geometry, so the row's is stubbed and the
+ * measurement is driven through the row's own scroll event.
+ */
+function setRowGeometry(row: HTMLElement, scrollWidth: number, clientWidth: number, scrollLeft: number) {
+  let left = scrollLeft;
+  Object.defineProperties(row, {
+    scrollWidth: { configurable: true, get: () => scrollWidth },
+    clientWidth: { configurable: true, get: () => clientWidth },
+    scrollLeft: { configurable: true, get: () => left, set: (value: number) => { left = Number(value); } },
+  });
+}
+
+test("phone: the row fades on the side it continues to, and only there", async () => {
+  narrowViewport = true;
+  const host = mount(<SuggestedReplies file={file("conv_fade")} revision="1" />);
+  await settle(host, "[data-reply-suggestion]", drafts.length);
+  const row = host.querySelector("[data-mobile-chips]") as HTMLElement;
+  /* Nothing measured yet: happy-dom's zero geometry reads as «everything fits». */
+  expect(host.querySelector("[data-chips-fade]")).toBeNull();
+  expect(classOf(row)).toContain("h-11");
+  expect(classOf(row)).toContain("snap-x");
+  /* Wider than the viewport, parked at the start: the row goes on to the right. */
+  setRowGeometry(row, 720, 360, 0);
+  flushSync(() => { row.dispatchEvent(new Event("scroll", { bubbles: true })); });
+  expect(host.querySelector('[data-chips-fade="end"]')).toBeTruthy();
+  expect(host.querySelector('[data-chips-fade="start"]')).toBeNull();
+  /* Swiped to the end: the last chip is clear, the start is what is behind. */
+  setRowGeometry(row, 720, 360, 360);
+  flushSync(() => { row.dispatchEvent(new Event("scroll", { bubbles: true })); });
+  expect(host.querySelector('[data-chips-fade="end"]')).toBeNull();
+  expect(host.querySelector('[data-chips-fade="start"]')).toBeTruthy();
+  /* The fades never take a tap: they are decoration over the row. */
+  expect(classOf(host.querySelector('[data-chips-fade="start"]'))).toContain("pointer-events-none");
+  /* Every chip stays a 44 px target that snaps to the row's edge. */
+  for (const chip of host.querySelectorAll("[data-reply-suggestion]")) expect(classOf(chip)).toContain("snap-start");
 });

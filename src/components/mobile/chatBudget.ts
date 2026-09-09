@@ -17,13 +17,38 @@
  * ONE unit (§2 rule 8) — so the band is two regions, and every region left in
  * it is one this module can name:
  *
- *   bar 52 + composer 109                    = 161 px  (81% transcript at 844)
- *   … + the banner slot 45                   = 206 px  (76%)
- *   … + suggested chips 32, keyboard 336     = 193 px of 508 visible (62%)
+ *   bar 52 + composer 109 + selected context 38 = 199 px  (76% transcript at 844)
+ *   … + the banner slot 45                      = 244 px  (71%)
+ *   … + suggested chips 44, keyboard 336        = 243 px of 508 visible (52%)
  *
  * Those are the three numbers §3.4 publishes, and `chatBudget.test.ts` is what
  * holds them. `MobileFocusView` stamps {@link MIN_TRANSCRIPT_SHARE} onto the
  * focus root, so the contract travels with the DOM it governs.
+ *
+ * Round 2 lane A (docs/ui-round2-spec.md) measured the rendered column —
+ * `scripts/capture-round2-lane-a.ts`, production build, 390×844, standalone
+ * and browser-tab columns — and found two things the sum above had wrong,
+ * exactly the way #419's sum was wrong: a region on screen and not in it.
+ *
+ *   - The chips' row is its 44 px hit, in the flow of the column, not the
+ *     pill's 32 px. The keyboard case published from 32 (315 px, 62%) was
+ *     12 px too generous.
+ *   - The composer FORM carries a `selected-context` row above the box —
+ *     32 px plus its 6 px gap — on every focused conversation. The box itself
+ *     measured 104 against the 109 counted here, so COMPOSER_PX stands; the
+ *     38 px were never named, so they are now: {@link SELECTED_CONTEXT_PX}.
+ *
+ * What the phone actually showed (transcript / visible, chips up):
+ *
+ *   standalone  390×844  587 / 844 = 69.5%     keyboard  251 / 508 = 49.4%
+ *   browser tab 390×759  502 / 759 = 66.1%     keyboard  166 / 423 = 39.2%
+ *   standalone  360×780  523 / 780 = 67.1%     keyboard  187 / 444 = 42.1%
+ *
+ * The floors below are set from the standalone column, where the operator
+ * uses the board (the tab column loses the browser's own rows on top, lane C's
+ * subject). They read low because 38 px of them is a row lane H is expected to
+ * take out of the operator's sight; when it does, the region goes to 0 here
+ * and the floors go back up — by name, not by wish.
  */
 
 /** The one bar (§3.2): back, title cell, at most three 44 px targets. */
@@ -37,13 +62,26 @@ export const BAR_PX = 52;
     and it is what the grow ceiling reserves so a dictated field never pushes
     the tools row out of the box (#1483). */
 export const COMPOSER_PX = 109;
+/** The selected-context row the composer form renders ABOVE its box — the
+    `data-selected-context` summary saying what the operator is looking at —
+    32 px plus the form's 6 px gap, measured on the production build at 390×844
+    in standalone (round 2 lane A, `scripts/capture-round2-lane-a.ts`). It is
+    on screen for as long as a conversation is focused, so it is persistent
+    chrome until lane H takes the prelude out of the operator's sight; then it
+    is 0 here, by name. (The same measurement found no chat surface paying
+    `env(safe-area-inset-bottom)`: the 14 px inset COMPOSER_PX describes is
+    not spent by anything today, in either column.) */
+export const SELECTED_CONTEXT_PX = 38;
 /** The one banner slot under the bar (§2 rule 3): offline, degraded, or a
     decision that arrived elsewhere. It reserves its height in flow, so it is
     chrome for as long as it is up. */
 export const BANNER_PX = 45;
-/** Suggested-reply chips, 32 px visual inside a 44 px hit, directly above the
-    composer box (§4.3). They stay while the keyboard is open. */
-export const SUGGESTED_CHIPS_PX = 32;
+/** Suggested-reply chips: 32 px pills inside a 44 px hit, ONE row directly
+    above the composer box (§4.3), in the flow of the column — `LogFeed`'s
+    `data-feed-drafts-band`. The row is exactly the hit tall and carries no
+    margin, so the band reserves this and `scripts/capture-round2-lane-a.ts`
+    measures it. They stay while the keyboard is open. */
+export const SUGGESTED_CHIPS_PX = 44;
 /** An iOS keyboard's share of a 390×844 phone (#983, §4.3). */
 export const KEYBOARD_PX = 336;
 
@@ -51,6 +89,7 @@ export const KEYBOARD_PX = 336;
 export const PERSISTENT_CHROME = {
   bar: BAR_PX,
   composer: COMPOSER_PX,
+  selectedContext: SELECTED_CONTEXT_PX,
 } as const;
 
 /**
@@ -94,12 +133,18 @@ export const UNCOUNTED_CHROME = {
 } as const;
 
 /** The transcript's guaranteed share of the viewport, keyboard closed. The
-    worst persistent case is the banner slot up (206 px of 844 = 76%), so the
-    floor is what that case clears — a full 15 points above the #419 contract. */
-export const MIN_TRANSCRIPT_SHARE = 0.75;
-/** The same guarantee with the keyboard open (§4.3): 315 px of the 508 that are
-    visible, with the whole question card inside them. */
-export const MIN_KEYBOARD_TRANSCRIPT_SHARE = 0.6;
+    worst persistent case is the banner slot up: the budget says 244 of 844
+    (71%), and the standalone measurement says 213 px of chrome without chips
+    plus the 45 px slot = 586 of 844 (69.4%). The floor is what the measured
+    case clears. It was 0.75 while the 38 px selected-context row was not in
+    the sum; it goes back up when lane H removes that row. */
+export const MIN_TRANSCRIPT_SHARE = 0.69;
+/** The same guarantee with the keyboard open (§4.3): the budget says 265 of
+    the 508 that are visible (52%), and the standalone measurement 251 (49.4%),
+    with the whole question card inside them. The floor is the measured case.
+    It was 0.6 from a sum that counted the chips at 32 px and no context row:
+    12 px of chips and 38 px of the row are the whole difference. */
+export const MIN_KEYBOARD_TRANSCRIPT_SHARE = 0.49;
 /** The tab bar (TZ-UI.md): five labelled roots, at the bottom of the stack
     only. Chrome on a tab ROOT, 0 px on every pushed screen, and it yields to
     the keyboard, so it never rides the keyboard case. */
@@ -108,8 +153,11 @@ export const TAB_BAR_PX = 56;
     agent to name and the keyboard is down. */
 export const AGENTS_STRIP_PX = 44;
 /** The transcript's floor on a TAB ROOT, keyboard closed: the worst persistent
-    case is bar + strip + composer + tab bar + banner = 306 of 844 (63.7%). */
-export const MIN_TAB_ROOT_TRANSCRIPT_SHARE = 0.62;
+    case is bar + strip + composer + context row + tab bar + banner = 344 of
+    844 (59.2%). Not measured by the lane A capture (it renders a pushed
+    conversation, which has no tab bar); set from the budget's own sum, with
+    the same 38 px caveat as the floors above. */
+export const MIN_TAB_ROOT_TRANSCRIPT_SHARE = 0.59;
 
 export interface Viewport {
   /** Layout viewport height in CSS px (844 at iPhone 390×844). */
@@ -144,7 +192,7 @@ export function chatBudget({ height, banner = false, chips = false, keyboard = 0
   const usable = Math.max(0, height - Math.max(0, keyboard));
   /* The tab bar and the strip both yield to the keyboard, so they count only while it is closed. */
   const roots = keyboard > 0 ? 0 : (tabBar ? TAB_BAR_PX : 0) + (agentsStrip ? AGENTS_STRIP_PX : 0);
-  const chrome = BAR_PX + COMPOSER_PX + (banner ? BANNER_PX : 0) + (chips ? SUGGESTED_CHIPS_PX : 0) + roots;
+  const chrome = BAR_PX + COMPOSER_PX + SELECTED_CONTEXT_PX + (banner ? BANNER_PX : 0) + (chips ? SUGGESTED_CHIPS_PX : 0) + roots;
   const transcript = Math.max(0, usable - chrome);
   const share = usable > 0 ? Math.min(1, transcript / usable) : 0;
   const floor = keyboard > 0 ? MIN_KEYBOARD_TRANSCRIPT_SHARE : tabBar ? MIN_TAB_ROOT_TRANSCRIPT_SHARE : MIN_TRANSCRIPT_SHARE;

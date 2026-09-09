@@ -903,13 +903,37 @@ export function LogFeed({ file, showSvc, lineFilter, onStatus, paused, follow, s
               <ArrowDownToLine className="h-3 w-3" aria-hidden /> {t("feed.liveTail")}
             </div>
           ) : null
+        ) : phone ? (
+          /* Round 2 lane A (A2): on the phone the way back is a round 44 px
+             button in the scroller's corner with an OPAQUE raised surface and
+             a shadow, and the count is a badge on its rim — never a text pill
+             sitting in the middle of a paragraph. It hugs the corner the
+             transcript's own padding already keeps clear, and the drafts band
+             below the scroller is outside its anchor, so the two never meet. */
+          <button
+            data-feed-jump-tail
+            className="absolute bottom-3 right-3 z-10 inline-flex h-11 w-11 items-center justify-center rounded-full border border-border bg-raised text-primary shadow-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+            aria-label={newCount ? `${t("feed.backToLive")} · ${t("feed.newCount", { count: newCount })}` : t("feed.backToLive")}
+            onClick={jumpToTail}
+          >
+            <ArrowDown className="h-4 w-4" aria-hidden />
+            {newCount ? (
+              <span
+                data-feed-new-count
+                aria-hidden
+                className="absolute -right-1 -top-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-accent px-1 text-[10px] font-bold leading-none tabular-nums text-white"
+              >
+                {newCount > 99 ? "99+" : newCount}
+              </span>
+            ) : null}
+          </button>
         ) : (
           <button
-            className={`absolute bottom-2 ${phone ? "right-2" : pillPos} z-10 inline-flex min-w-11 items-center justify-center gap-1 whitespace-nowrap rounded-full border border-border bg-raised px-2.5 py-1 text-label font-semibold text-primary shadow-1 [@media(pointer:coarse)]:min-h-11 hover:border-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40`}
+            className={`absolute bottom-2 ${pillPos} z-10 inline-flex min-w-11 items-center justify-center gap-1 whitespace-nowrap rounded-full border border-border bg-raised px-2.5 py-1 text-label font-semibold text-primary shadow-1 [@media(pointer:coarse)]:min-h-11 hover:border-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40`}
             aria-label={t("feed.backToLive")}
             onClick={jumpToTail}
           >
-            <ArrowDown className="h-3.5 w-3.5" aria-hidden /> {newCount ? t("feed.newCount", { count: newCount }) : phone ? null : t("feed.down")}
+            <ArrowDown className="h-3.5 w-3.5" aria-hidden /> {newCount ? t("feed.newCount", { count: newCount }) : t("feed.down")}
           </button>
         )
       ) : null}
@@ -917,8 +941,10 @@ export function LogFeed({ file, showSvc, lineFilter, onStatus, paused, follow, s
           to the bottom of the pane — above the «back to live» chip, so the two
           bottom controls never share a row. Empty wrapper space targets the
           feed; vertical pill gestures are forwarded because this overlay and
-          the feed scroller are siblings. */}
-      {file && !magnet ? (
+          the feed scroller are siblings. Desktop only: on the phone the drafts
+          never float over the transcript (round 2 lane A, A1) — they live in
+          the band under the scroller, whatever the magnet says. */}
+      {file && !magnet && !phone ? (
         <div
           className="pointer-events-none absolute inset-x-2 bottom-11 z-10 flex justify-center"
           onWheel={(event) => {
@@ -1178,7 +1204,7 @@ export function LogFeed({ file, showSvc, lineFilter, onStatus, paused, follow, s
                 above the composer once the magnet is released and that turn is
                 no longer the thing the operator is looking at, so the drafts
                 are offered in exactly one place at a time. */}
-            {magnet ? (
+            {magnet && !phone ? (
               <SuggestedReplies
                 file={file}
                 revision={suggestionsRevision}
@@ -1204,6 +1230,22 @@ export function LogFeed({ file, showSvc, lineFilter, onStatus, paused, follow, s
       </PrependViewport>
       </div>
     </div>
+    {/* Round 2 lane A (A1), mobile v2 §4.3: on the phone the drafts are ONE
+        row directly above the composer box, in the flow of the column, so they
+        reserve their own height and no pixel of the transcript is ever under
+        them — with the magnet held or released, keyboard up or down. The band
+        is `SUGGESTED_CHIPS_PX` tall when a set is offered and 0 otherwise;
+        `chatBudget` counts exactly that. */}
+    {file && phone ? (
+      <div data-feed-drafts-band className="shrink-0 px-3">
+        <SuggestedReplies
+          file={file}
+          revision={suggestionsRevision}
+          items={feed.items}
+          outbox={pendingOutbox}
+        />
+      </div>
+    ) : null}
     {/* Bottom working-status slot: live elapsed from the transcript receipt.
         Completed totals stay beside their response rows in the scroller. Not on
         the phone (mobile v2 §3.4): the bar's meta line carries the state phrase
