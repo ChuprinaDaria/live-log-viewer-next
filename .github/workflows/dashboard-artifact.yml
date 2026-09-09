@@ -1,0 +1,73 @@
+# Збірка дашборда в CI, щоб walter її більше не робив.
+#
+# Walter має 7.7 ГБ і тримає дві дошки, два runtime host, Qdrant, Jeeves,
+# бридж і всіх агентів. `next build --webpack` бере там до 1.5 ГБ і зупиняє
+# машину: 2026-09-09 така збірка загнала її у своп, load дійшов до 78, а
+# Tailscale і сам дашборд стали недосяжні ззовні, доки збірку не прибили.
+#
+# Тому збирає GitHub, а walter лише ЗАБИРАЄ готове. Модель лишається pull:
+# runner нічого нікуди не пушить і доступу в тайлнет не має — це та сама
+# причина, з якої `deploy/fleet-sync.sh` від початку тягне сам, а не чекає,
+# поки хтось надішле. Self-hosted runner тут не використовується свідомо:
+# репозиторій публічний, і такий runner виконував би код будь-якого стороннього PR.
+name: Dashboard artifact
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dashboard-artifact-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      # Та сама версія, що стоїть на walter: артефакт, зібраний іншим bun,
+      # ніхто не перевіряв, а рантайм-хост уже одного разу помер на такій
+      # неперевіреній зміні (див. AGENTS.md, «Two processes run under Bun»).
+      - name: Read the pinned bun version
+        id: bun
+        run: echo "version=$(grep -oE 'oven/bun:[0-9]+\.[0-9]+\.[0-9]+' Dockerfile | head -1 | cut -d: -f2)" >> "$GITHUB_OUTPUT"
+
+      - uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2
+        with:
+          bun-version: ${{ steps.bun.outputs.version || 'latest' }}
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Build
+        env:
+          # Standalone кладе сервер і його залежності в .next/standalone,
+          # тож walter розпаковує і запускає, не встановлюючи нічого.
+          LLV_STANDALONE: "1"
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: bun run build
+
+      # Один архів замість дерева: rsync через тайлнет на слабку машину
+      # переживає значно менше файлів, ніж дерево .next.
+      - name: Pack
+        run: |
+          set -euo pipefail
+          tar -czf dashboard-${{ github.sha }}.tar.gz \
+            .next/standalone .next/static dist/mcp-server.mjs public
+          sha256sum dashboard-${{ github.sha }}.tar.gz > dashboard-${{ github.sha }}.tar.gz.sha256
+          ls -la dashboard-${{ github.sha }}.tar.gz*
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dashboard-${{ github.sha }}
+          path: |
+            dashboard-${{ github.sha }}.tar.gz
+            dashboard-${{ github.sha }}.tar.gz.sha256
+          retention-days: 14
+          if-no-files-found: error
