@@ -60,7 +60,9 @@ function resultError(result: unknown, fallback: string): string {
   const message = typeof record(value.error).message === "string"
     ? String(record(value.error).message).trim()
     : "";
-  return direct || message || fallback.trim() || "MCP call failed";
+  const evidence = { ...record(value.details), ...value };
+  const reason = typeof evidence.reason === "string" ? evidence.reason.trim() : "";
+  return direct || message || reason || fallback.trim() || "MCP call failed";
 }
 
 function useConversationAvailability(provided?: ReadonlySet<string>): ConversationAvailabilitySnapshot {

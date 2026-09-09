@@ -88,6 +88,7 @@ test("renders success and upgrades a disabled conversation chip when scanning ca
         conversationId: "conversation-431",
         transcriptPath: "/sessions/reviewer.jsonl",
         operationId: "op-1",
+        launchId: "op-1", state: "settled", initialMessage: "delivered",
       },
     },
   });
@@ -164,4 +165,23 @@ test("routes task chips through the viewer entity navigation channel", () => {
   } finally {
     window.removeEventListener("llv:mcp-navigate", listener);
   }
+});
+
+test("a conflicted spawn recovery shows the refusal even when the tool wrapper says ok", () => {
+  const container = render(toolEvent({ status: "ok", mcp: { ...toolEvent().mcp!, result: {
+    ok: true, outcome: "settled", state: "conflicted", launched: false,
+    conversationId: "conversation_conflict", launchId: "launch_conflict", reason: "The launch owner conflicts with the receipt",
+  } } }));
+  expect(container.querySelector('[data-agent-action]')?.getAttribute("data-delivery")).toBe("failed");
+  expect(container.querySelector("summary")?.textContent).toContain("Action failed");
+  expect(container.querySelector('[role="alert"]')?.textContent).toContain("The launch owner conflicts");
+});
+
+test("an outcome_unknown refusal remains unconfirmed instead of displaying a final failure", () => {
+  const container = render(toolEvent({ status: "err", mcp: { ...toolEvent().mcp!, toolName: "send_message", result: {
+    ok: false, code: "outcome_unknown", details: { outcome: "unknown", nextAction: "original-key-lookup", conversationId: "conversation_uncertain" },
+  } } }));
+  expect(container.querySelector('[data-agent-action]')?.getAttribute("data-delivery")).toBe("unknown");
+  expect(container.querySelector("summary")?.textContent).toContain("Delivery not confirmed");
+  expect(container.querySelector('[role="alert"]')).toBeNull();
 });
