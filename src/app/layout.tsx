@@ -8,6 +8,15 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Agent Log Viewer",
   description: "Agent Log Viewer for Codex and Claude agent logs",
+  /* Поставлена на домашній екран, дошка відкривається без адресної смуги
+     Safari — тих ~85 px із 844, на які бюджети висоти в `chatBudget.ts` і так
+     не розраховують. `appleWebApp` — те, чим iOS вмикає цей режим; сам
+     маніфест лежить у `manifest.ts` поруч. */
+  appleWebApp: {
+    capable: true,
+    title: "Флот",
+    statusBarStyle: "default",
+  },
 };
 
 /* The on-screen keyboard shrinks the layout instead of covering it, so the

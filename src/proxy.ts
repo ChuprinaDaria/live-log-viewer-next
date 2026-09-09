@@ -79,4 +79,8 @@ export function proxy(request: NextRequest): NextResponse {
   return forbidden(request);
 }
 
-export const config = { matcher: ["/((?!_next/static|favicon.ico).*)"] };
+/* Маніфест іде повз гейт свідомо: браузер запитує його БЕЗ кук (за
+   специфікацією — `credentials: "omit"`), тож за токеном він отримав би 403 і
+   дошка не ставилася б на домашній екран. Секретів у ньому немає — назва,
+   кольори і намальована іконка. */
+export const config = { matcher: ["/((?!_next/static|favicon.ico|manifest.webmanifest).*)"] };
