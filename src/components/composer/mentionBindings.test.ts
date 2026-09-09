@@ -11,7 +11,7 @@ test("same-named agents do not overwrite each other's binding", () => {
   const first = bindAgentMention([], agent("conversation_a"));
   const second = bindAgentMention([first], agent("conversation_b"));
   expect(second.token).toBe("@Оглядач-2");
-  expect(resolveAgentMentions("@Оглядач-2 і @Оглядач", [first, second])).toBe("[@Оглядач](#c=conversation_b) і [@Оглядач](#c=conversation_a)");
+  expect(resolveAgentMentions("@Оглядач-2 і @Оглядач", [first, second])).toBe("[@Оглядач-2](#c=conversation_b) і [@Оглядач](#c=conversation_a)");
 });
 test("a reload or rename preserves the ID, and edits do not resolve a partial name", () => {
   const original = bindAgentMention([], agent("conversation_a"));
@@ -23,4 +23,20 @@ test("a reload or rename preserves the ID, and edits do not resolve a partial na
 test("a malformed stored table cannot invent a recipient", () => {
   expect(readMentionBindings("broken")).toEqual([]);
   expect(readMentionBindings('[{"token":"@Agent","id":null}]')).toEqual([]);
+});
+
+test("only a complete token resolves; dots and quotes remain part of a name", () => {
+  const chosen = bindAgentMention([], agent("conversation_a", "Reviewer"));
+  for (const value of ["@Reviewer.new", "@Reviewer-extra", "@Reviewer's", "@Reviewer’new", "@Reviewer_name", "@Reviewer2", "name@Reviewer"]) {
+    expect(resolveAgentMentions(value, [chosen])).toBe(value);
+  }
+  expect(resolveAgentMentions("(@Reviewer), @Reviewer!", [chosen])).toBe("([@Reviewer](#c=conversation_a)), [@Reviewer](#c=conversation_a)!");
+  const dotted = bindAgentMention([chosen], agent("conversation_b", "Reviewer.new"));
+  expect(resolveAgentMentions("(@Reviewer.new)", [chosen, dotted])).toBe("([@Reviewer.new](#c=conversation_b))");
+});
+
+test("an already serialized link keeps its own explicit recipient", () => {
+  const chosen = bindAgentMention([], agent("conversation_a", "Reviewer"));
+  const link = "[@Reviewer](#c=conversation_b)";
+  expect(resolveAgentMentions(link, [chosen])).toBe(link);
 });

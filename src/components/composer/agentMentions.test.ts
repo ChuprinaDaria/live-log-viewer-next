@@ -24,6 +24,11 @@ test("recognizes a Ukrainian query at the caret, without treating email or a sel
 test("selection replaces only the query, preserves suffix and binds the exact conversation", () => {
   const agent = liveAgentMentions([row("conversation_b", "Оглядач [тест]")])[0];
   const inserted = insertAgentMention("Ask @ог about this", { start: 4, end: 7 }, agent);
-  expect(inserted.text).toBe("Ask [@Оглядач \\[тест\\]](#c=conversation_b)  about this");
+  expect(inserted.text).toBe("Ask [@Оглядач-тест](#c=conversation_b)  about this");
   expect(inserted.text.slice(inserted.caret)).toBe(" about this");
+});
+
+test("the picker uses the same token grammar inside parentheses and after a dot", () => {
+  expect(activeMention("(@Reviewer.new", 14)).toEqual({ start: 1, end: 14, query: "Reviewer.new" });
+  expect(activeMention("name@Reviewer", 13)).toBeNull();
 });

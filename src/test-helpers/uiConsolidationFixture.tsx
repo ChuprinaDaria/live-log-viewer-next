@@ -16,6 +16,7 @@ import { setLocale } from "@/lib/i18n";
 import { publishConversationAvailability } from "@/lib/mcp/availability";
 import type { FileEntry } from "@/lib/types";
 import type { ToolEvent } from "@/components/feed/parse";
+import { md } from "@/components/feed/markdown";
 import { SelectedContextBadge } from "@/components/SelectedContextBadge";
 
 setLocale("uk");
@@ -34,6 +35,13 @@ const agents = [
     id: "conversation_worker_b",
     name: "Оглядач",
     project: "Проєкт Б",
+    role: "reviewer",
+    engine: "codex",
+  },
+  {
+    id: "conversation_worker_ui",
+    name: "Reviewer [UI]",
+    project: "Project UI",
     role: "reviewer",
     engine: "codex",
   },
@@ -99,8 +107,12 @@ function Chat() {
         </p>
         <McpCallCard event={action} />
         {sent.map((text, i) => (
-          <p key={i} data-sent className="whitespace-pre-wrap break-words">
-            {text}
+          <p
+            key={i}
+            data-sent={text}
+            className="whitespace-pre-wrap break-words"
+          >
+            {md(text)}
           </p>
         ))}
       </div>

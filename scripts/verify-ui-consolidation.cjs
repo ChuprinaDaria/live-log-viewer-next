@@ -240,9 +240,9 @@ const assert = require("node:assert/strict");
     assert.equal(await page.locator("[data-sent]").count(), 0);
     await page.getByRole("button", { name: "Надіслати", exact: true }).click();
     assert(
-      (await page.locator("[data-sent]").first().textContent()).includes(
-        "conversation_worker_b",
-      ),
+      (
+        await page.locator("[data-sent]").first().getAttribute("data-sent")
+      ).includes("conversation_worker_b"),
     );
     await text.fill("Перший рядок\nДругий рядок\nТретій рядок");
     await text.press(width < 768 ? "Enter" : "Shift+Enter");
@@ -250,6 +250,15 @@ const assert = require("node:assert/strict");
     assert.equal(await page.locator("[data-sent]").count(), 1);
     await page.getByRole("button", { name: "Надіслати", exact: true }).click();
     assert.equal(await page.locator("[data-sent]").count(), 2);
+    await text.fill("(@Rev");
+    await page.getByRole("option", { name: /@Reviewer \[UI\]/ }).click();
+    assert.equal(await text.inputValue(), "(@Reviewer-UI ");
+    await page.getByRole("button", { name: "Надіслати", exact: true }).click();
+    const mentionLink = page.locator(
+      '[data-sent] a[href="#c=conversation_worker_ui"]',
+    );
+    assert.equal(await mentionLink.count(), 1);
+    assert.equal(await mentionLink.textContent(), "@Reviewer-UI");
     await page.locator("[data-agent-action] > details > summary").click();
     assert(await page.locator("[data-agent-action-text]").isVisible());
     assert.equal(

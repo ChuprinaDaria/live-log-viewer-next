@@ -2109,7 +2109,9 @@ export function TmuxComposerCore({
   const queueSubmit = (overrideText?: string, options?: { preserveDraft?: boolean }) => {
     const preserveDraft = options?.preserveDraft ?? false;
     const draftText = overrideText ?? textRef.current;
-    const requestedText = mentionFiles ? mentionBindings.resolve(draftText) : draftText;
+    // The catalog controls suggestions only. A saved recipient survives HQ →
+    // card navigation and draft remounts even when no picker is available.
+    const requestedText = mentionBindings.resolve(draftText);
     const requestedImages: PendingImage[] = preserveDraft ? [] : attachments.imagesRef.current.map((image) => ({ ...image }));
     const requestedFiles: PendingFile[] = preserveDraft ? [] : attachments.filesRef.current.map((file) => ({ ...file }));
     if (voiceSending || reconcilingSend) return;
