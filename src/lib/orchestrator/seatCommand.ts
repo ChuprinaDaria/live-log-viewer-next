@@ -11,6 +11,7 @@ import { VIEWER_SPAWN_CAPABILITY_HEADER } from "@/lib/agent/spawnPolicy";
 import { deliverConversationMessage } from "@/lib/delivery";
 import { structuredHostsEnabled } from "@/lib/runtime/flags";
 import { loadOrgBridge } from "@/lib/projects/orgBridge";
+import { projectBriefing, withProjectBriefing } from "./projectBriefing";
 import { projectForCwd } from "@/lib/scanner/describe";
 import { resolveSpawnRole } from "@/lib/roles/registry";
 import { MAX_STRUCTURED_TEXT_BYTES } from "@/lib/runtime/structuredContent";
@@ -583,6 +584,7 @@ export async function executeOrchestratorSeatRequest(
       return { status: 409, body: { error, code: "adoption_target_unavailable", seat: orchestratorSeatFor(project).pending } };
     }
 
+    const briefing = projectBriefing(project);
     const delivery = await dependencies.deliver({
       conversationId: deliveryTarget.conversationId,
       path: deliveryTarget.path,
@@ -591,7 +593,7 @@ export async function executeOrchestratorSeatRequest(
       clientMessageId: `orchmandate_${clientRequestId}`,
       /* On a pending replay the ORIGINAL intent's mandate is what completes:
          a retry that recomposed its text must not deliver a second variant. */
-      text: orchestratorMandateForDelivery(begun.kind === "replay" ? begun.seat.mandate : mandate),
+      text: orchestratorMandateForDelivery(withProjectBriefing(begun.kind === "replay" ? begun.seat.mandate : mandate, briefing)),
     });
     if (!delivery.ok) {
       const error = delivery.error ?? "mandate delivery failed";
@@ -686,7 +688,8 @@ export async function executeOrchestratorSeatRequest(
   /* A pending replay spawns the ORIGINAL intent's mandate: the spawn receipt is
      matched by clientAttemptId AND request digest, so a recomposed retry would
      otherwise conflict with its own first attempt. */
-  const spawnMandate = orchestratorMandateForDelivery(begun.kind === "replay" ? begun.seat.mandate : mandate);
+  const briefing = projectBriefing(project);
+  const spawnMandate = orchestratorMandateForDelivery(withProjectBriefing(begun.kind === "replay" ? begun.seat.mandate : mandate, briefing));
 
   const spawnFields = ["cwd", "effort", "fast", "accountId", "images", "roleParams", "allowSubagents"] as const;
   const spawnRuntime = begun.kind === "replay"
@@ -858,6 +861,7 @@ export async function executeOrchestratorRotation(
      replace; converge it first so the rotation sees its real incumbent. */
   const reconciliation = reconcilePendingSeatIntent(project, dependencies);
   if (reconciliation) await reconciliation;
+  const briefing = projectBriefing(project);
   const incumbent = orchestratorSeatFor(project).active;
   if (!incumbent?.conversationId) {
     return {
@@ -906,6 +910,7 @@ export async function executeOrchestratorRotation(
     handoff,
     predecessor: predecessor ? { path: predecessor.path, engine: predecessor.engine } : null,
     roleParams: rawBody.roleParams,
+    briefing,
   }, dependencies);
   const composed = composition instanceof Promise ? await composition : composition;
   const rotatedFrom = {
@@ -1019,6 +1024,8 @@ interface RotationComposition {
   handoff: HandoffParts;
   predecessor: { path: string; engine: "claude" | "codex" } | null;
   roleParams: unknown;
+  /** The project briefing, resolved once by the caller. */
+  briefing: string | null;
 }
 
 function composeRotationMandate(
@@ -1074,7 +1081,7 @@ function renderRotationMandate(
     history,
     handoff: input.handoff,
     budgetBytes: MAX_STRUCTURED_TEXT_BYTES - overhead,
-    deliver: orchestratorMandateForDelivery,
+    deliver: (text: string) => orchestratorMandateForDelivery(withProjectBriefing(text, input.briefing)),
   });
   if (composed.kind === "too_large") {
     return {

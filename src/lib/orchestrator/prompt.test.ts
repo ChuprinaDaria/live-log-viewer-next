@@ -88,8 +88,8 @@ test("bridge reports survive as the second channel, for the operator away from t
 
 /* Seats record the mandate version they were spawned on; `get_orchestrator` reports
    this constant as defaultPromptVersion, so an older seat reads as stale without a diff. */
-test("the default mandate is at version 14", () => {
-  expect(ORCHESTRATOR_PROMPT_VERSION).toBe(14);
+test("the default mandate is at version 15", () => {
+  expect(ORCHESTRATOR_PROMPT_VERSION).toBe(15);
 });
 
 /* #1428 v13 — agents kept re-solving what an earlier conversation had already
@@ -152,11 +152,31 @@ test("the mandate tells the seat to offer reply drafts whenever it asks or propo
   expect(ORCHESTRATOR_SYSTEM_PROMPT).toContain("never a decision");
 });
 
-test("the mandate greets a fresh seat and preserves the exact rotation standby status", () => {
+/* v15 — the canned greeting is gone. The operator's objection was that the
+   default mandate knew nothing about the project and made her configure the
+   seat by hand every time, from facts the console already held. So a fresh
+   seat reads first and then runs a setup pass WITH her, one question at a
+   time, over the four things a seat cannot invent for itself: what it owns,
+   which agents it needs, what access it should hold, and which channels it may
+   speak on. The rotation half is unchanged and asserted verbatim, because a
+   successor's first status is a different contract that #903 and #1067 both
+   depend on. */
+test("a fresh seat runs a setup pass with the operator instead of a canned greeting", () => {
   expect(ORCHESTRATOR_SYSTEM_PROMPT).toContain("## Initial visible status");
   expect(ORCHESTRATOR_SYSTEM_PROMPT).toContain("Your first turn after receiving this mandate");
-  expect(ORCHESTRATOR_SYSTEM_PROMPT).toContain("FRESH seat with no missions");
-  expect(ORCHESTRATOR_SYSTEM_PROMPT).toContain("Ready in {project}.\nTell me what to ship — I open lanes, spawn implementers and reviewers, and merge on APPROVE. Nothing starts until you ask.");
+  expect(ORCHESTRATOR_SYSTEM_PROMPT).toContain("A FRESH seat does NOT open with a slogan");
+  expect(ORCHESTRATOR_SYSTEM_PROMPT).not.toContain("Tell me what to ship");
+  /* Read before speaking: the briefing names the queries, this requires them. */
+  expect(ORCHESTRATOR_SYSTEM_PROMPT).toContain("Read first.");
+  expect(ORCHESTRATOR_SYSTEM_PROMPT).toContain("what BROKE here");
+  /* The four subjects of the pass, in the order the operator named them. */
+  expect(ORCHESTRATOR_SYSTEM_PROMPT).toContain("ONE question per message, never a list of questions in one breath");
+  expect(ORCHESTRATOR_SYSTEM_PROMPT).toContain("(a) the mandate itself");
+  expect(ORCHESTRATOR_SYSTEM_PROMPT).toContain("(b) the agents and roles");
+  expect(ORCHESTRATOR_SYSTEM_PROMPT).toContain("(c) access");
+  expect(ORCHESTRATOR_SYSTEM_PROMPT).toContain("(d) Telegram and the other channels");
+  expect(ORCHESTRATOR_SYSTEM_PROMPT).toContain("Start no pipeline and spawn no agent during the setup pass");
+  /* Unchanged rotation contract. */
   expect(ORCHESTRATOR_SYSTEM_PROMPT).toContain("ROTATION");
   expect(ORCHESTRATOR_SYSTEM_PROMPT).toContain("inventory the mandate missions and state your plan");
   expect(ORCHESTRATOR_SYSTEM_PROMPT).toContain("all mandate missions are complete; standing by");

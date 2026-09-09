@@ -9,6 +9,8 @@ import { AgentRegistry, setAgentRegistryForTests } from "@/lib/agent/registry";
 import { resolveSpawnRole } from "@/lib/roles/registry";
 import { MAX_STRUCTURED_TEXT_BYTES } from "@/lib/runtime/structuredContent";
 
+import { PROJECT_BRIEFING_BUDGET_BYTES, PROJECT_BRIEFING_HEADING } from "./projectBriefing";
+
 import {
   HANDOFF_HEADING,
   HISTORY_BUDGET_BYTES,
@@ -1493,9 +1495,10 @@ test("AC4: an oversized mandate is refused with an actionable 413 before any int
     conversationId: OLD_ID,
   }, deps);
 
-  /* Existing-mode delivery asserts the text alone, so it carries no overhead. */
+  /* Existing-mode delivery prepends no role scaffold, but it does append the
+     project briefing, so its overhead is that block's reserved budget. */
   expect(existingMode.status).toBe(413);
-  expect(existingMode.body).toMatchObject({ code: "mandate_too_large", overhead: 0 });
+  expect(existingMode.body).toMatchObject({ code: "mandate_too_large", overhead: PROJECT_BRIEFING_BUDGET_BYTES + 2 });
   expect(recorded.deliveries).toEqual([]);
   expect(orchestratorSeatFor("proj-a").pending).toBeNull();
 });
@@ -1516,9 +1519,10 @@ test("AC4: rotation drops the history, then trims the notes, and refuses only wh
     clientRequestId: "req_00001036",
     /* A core sized to leave room for the handoff after the ladder runs. The
        headroom tracks what delivery appends around a mandate — the initial
-       status contract and, since #1245, the clock handover — so a core that
-       once trimmed to a fit now has ~1.8 KB less to play with. */
-    mandate: stackedMandate("c".repeat(27_000), 2),
+       status contract, the clock handover since #1245, and the project
+       briefing's reserved 4 KB since v15 — so a core that once trimmed to a
+       fit keeps losing room as delivery grows. */
+    mandate: stackedMandate("c".repeat(20_000), 2),
     handoffNotes: "n".repeat(2_000),
   }, deps);
 
@@ -1949,5 +1953,55 @@ test("spawn mode without a cwd falls back to the directory the console gives the
     fs.rmSync(checkout, { recursive: true, force: true });
     if (previous === undefined) delete process.env.LLV_ORCHESTRATOR_CWD;
     else process.env.LLV_ORCHESTRATOR_CWD = previous;
+  }
+});
+
+/* The operator's objection to the default mandate: it knew nothing about the
+   project, so every new seat had to be configured by hand from facts the
+   console already held. Delivery now composes the console's record into the
+   mandate — and does it from the bridge CACHE, never a console call, because
+   `seatSpawnConsole.test.ts` holds this path to zero of those. */
+test("the spawned mandate carries the console's record of the project", async () => {
+  const checkout = fs.mkdtempSync(path.join(os.tmpdir(), "llv-seat-briefing-"));
+  const boardId = checkout.replace(/[/_.]/g, "-");
+  fs.writeFileSync(
+    path.join(sandbox, "org-bridge.json"),
+    JSON.stringify({
+      builtAt: AT,
+      rows: [{
+        firm: "noologic",
+        firmName: "Noologic",
+        project: "kafe",
+        projectName: "Кафе",
+        path: checkout,
+        repo: "https://example.invalid/kafe.git",
+        grants: [{ item: "telegram", from: "project" }],
+        secretNames: ["kafe_db_password"],
+        ruleCount: 2,
+        via: "path",
+      }],
+    }),
+  );
+  forgetOrgBridge();
+  try {
+    const { deps, recorded } = dependencies();
+    const result = await executeOrchestratorSeatRequest({
+      ...spawnRequest("req_00000210"),
+      project: boardId,
+    }, deps);
+
+    expect(result.status).toBe(200);
+    const prompt = String(recorded.spawns[0]!.prompt);
+    expect(prompt).toContain(PROJECT_BRIEFING_HEADING);
+    expect(prompt).toContain("Кафе");
+    expect(prompt).toContain("Noologic");
+    expect(prompt).toContain("https://example.invalid/kafe.git");
+    expect(prompt).toContain("telegram");
+    expect(prompt).toContain("kafe_db_password");
+    /* Composed at delivery, never frozen into the record a rotation replays. */
+    expect(orchestratorSeatFor(boardId).active?.mandate).not.toContain(PROJECT_BRIEFING_HEADING);
+  } finally {
+    forgetOrgBridge();
+    fs.rmSync(checkout, { recursive: true, force: true });
   }
 });

@@ -9,6 +9,7 @@ import { resolveSpawnRole } from "@/lib/roles/registry";
 import { MAX_STRUCTURED_TEXT_BYTES } from "@/lib/runtime/structuredContent";
 import { hardenedRedact } from "@/lib/view/compactText";
 
+import { PROJECT_BRIEFING_BUDGET_BYTES } from "./projectBriefing";
 import { orchestratorMandateForDelivery } from "./prompt";
 
 /* Bounded rotation handoffs (issue #1067).
@@ -296,10 +297,17 @@ export function fallbackHistory(priorHistory: string | null, priorHandoffs: stri
  * delivery asserts the delivered text alone.
  */
 export function launchOverheadBytes(mode: "spawn" | "existing", roleParams: unknown): number {
-  if (mode === "existing") return 0;
+  /* The project briefing is composed at delivery, after this bound is checked,
+     so its budget is reserved here whether or not the project turns out to
+     have one. Reserving unconditionally is the point: a mandate accepted for a
+     project the console does not know yet must still fit once the operator
+     files it, and a bound that moves when an unrelated store changes is not a
+     bound. */
+  const briefing = PROJECT_BRIEFING_BUDGET_BYTES + 2;
+  if (mode === "existing") return briefing;
   const role = resolveSpawnRole({ role: "orchestrator", roleParams: roleParams ?? { mode: "standard" } });
-  if (!role.ok || !role.value) return 0;
-  return byteLength(role.value.scaffold) + 2;
+  if (!role.ok || !role.value) return briefing;
+  return byteLength(role.value.scaffold) + 2 + briefing;
 }
 
 export type MandatePreflight =

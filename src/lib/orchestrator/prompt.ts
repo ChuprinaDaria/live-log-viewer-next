@@ -25,7 +25,14 @@
  * reads its report looking for a server this machine does not run. v13 (#1428)
  * sends the seat to prior conversations first: the Viewer indexes every message
  * of every transcript, and seats kept re-solving what an earlier one had
- * already solved because nothing they read told them to look. */
+ * already solved because nothing they read told them to look. v15 ends the
+ * canned greeting: a fresh seat now reads the project first — the console
+ * record composed into the mandate by `projectBriefing`, the memory tools,
+ * the checkout — and then runs a setup pass WITH the operator over the
+ * mandate, the agents, the access grants and the channels, one question at a
+ * time, before anything starts. The two-line "tell me what to ship" made the
+ * operator configure the seat by hand every time, from facts the console
+ * already held. */
 
 /** Initial draft values. The operator may choose any engine, model, account, and
     effort the shared launch controls support before creating the project seat. */
@@ -41,7 +48,7 @@ export const ORCHESTRATOR_SPAWN_CONFIG = {
     `ORCHESTRATOR_SYSTEM_PROMPT`: seats record the version their mandate was
     based on, and `get_orchestrator` reports it so a stale incumbent is visible
     without diffing prompts. */
-export const ORCHESTRATOR_PROMPT_VERSION = 14;
+export const ORCHESTRATOR_PROMPT_VERSION = 15;
 
 /** Whether a seat's recorded mandate version is behind the current default —
     the one question rotation, the seat card and `rotate_orchestrator` ask
@@ -53,10 +60,17 @@ export function orchestratorMandateStale(promptVersion: number | null | undefine
 /** Appended to bespoke and stale mandates at delivery time; the current
     versioned default already contains it. */
 export const ORCHESTRATOR_INITIAL_STATUS_DIRECTIVE = `## Initial visible status
-Your first turn after receiving this mandate must produce a visible assistant status in this conversation. For a FRESH seat with no missions, greet in exactly two lines:
-Ready in {project}.
-Tell me what to ship — I open lanes, spawn implementers and reviewers, and merge on APPROVE. Nothing starts until you ask.
-Use the actual project name in place of {project}. For a ROTATION, when work remains, inventory the mandate missions and state your plan in that status. When every rotation mission is already complete, reply exactly: "all mandate missions are complete; standing by". A generic continuation nudge never replaces or suppresses this first visible status.`;
+Your first turn after receiving this mandate must produce a visible assistant status in this conversation.
+
+A FRESH seat does NOT open with a slogan. Two lines of "tell me what to ship" put the whole burden of configuring you back on the operator, who has a console, a memory and a history that already answer most of it. So a fresh seat's first turn is a SETUP PASS, run WITH the operator, in their own language:
+
+1. Read first. Carry out the memory reads this mandate's project briefing names — the transcript index, sessionmem including what BROKE here, the knowledge base — and read the project's own checkout: its README, its recent git log, its open tasks. This happens before you write, not after.
+2. Then open with what you know, in a handful of short lines: the project and firm as the console records them, the checkout and repository, the MCP servers, skills and secrets it may reach and where each is inherited from, the operator's standing rules, and what the history says — the last sessions by title and date, and the failures worth not repeating. Where the briefing is empty, say it is empty.
+3. Then walk the operator through the setup, ONE question per message, never a list of questions in one breath. The order: (a) the mandate itself — what this seat owns for this project, what it must never touch, what "done" means here; (b) the agents and roles this project should have, and which of them to seat now; (c) access — which MCP servers, skills and secrets this project should hold, and which of the current grants are wrong; (d) Telegram and the other channels and resources: which chat you may write to, what is worth writing there, and what must never leave this room. Offer suggest_replies drafts with every one of those questions.
+4. Record each answer where it belongs rather than only in this conversation: the console for grants, rules and roles; the board's tasks for work. Say in one line what you recorded.
+5. Start no pipeline and spawn no agent during the setup pass. The operator ends it — by answering the last question, or by telling you to skip ahead and get to work. Then the start-by-default contract below applies as written.
+
+For a ROTATION, when work remains, inventory the mandate missions and state your plan in that first status; the setup pass above is a fresh seat's, not a successor's. When every rotation mission is already complete, reply exactly: "all mandate missions are complete; standing by". A generic continuation nudge never replaces or suppresses this first visible status.`;
 
 /** Identifies the clock section below inside a mandate, however its body was
     edited. Delivery keys off THIS rather than the whole text: a caller who

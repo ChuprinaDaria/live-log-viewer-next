@@ -46,6 +46,21 @@ export interface OrgAttribution {
   repo?: string;
   /** Where it sits on other machines. */
   paths?: string[];
+  /** The operator's note on the project, when it has one. */
+  note?: string;
+  /* The access layer, as far as the two LIST calls can see it: grants the
+     project holds itself plus those it inherits from its firm, each with its
+     origin, and the NAMES of the secrets shared with it. Values never travel
+     here — the console shares a value with an agent, and nothing that ends up
+     in a mandate, a cache file or a rotation digest may carry one.
+
+     Rule TEXT is deliberately absent: the list calls report a count, and the
+     text needs a per-project console call that the seat path may not make.
+     A count plus "read them yourself" is honest; an empty list would not be. */
+  grants?: { item: string; from: string }[];
+  skills?: { item: string; from: string }[];
+  secretNames?: string[];
+  ruleCount?: number;
   /** How the join was made — useful when a row looks wrong. */
   via: "board-id" | "path";
 }
@@ -62,6 +77,9 @@ export interface OrgBridge {
 interface ConsoleFirm {
   id: string;
   name?: string | null;
+  grants?: { mcp?: string[] | null; skills?: string[] | null } | null;
+  secrets?: string[] | null;
+  rules?: number | null;
 }
 
 interface ConsoleProject {
@@ -80,6 +98,10 @@ interface ConsoleProject {
    * string, and that hash is per-path. The repo answers for hosts that have
    * the checkout; this answers for the rest. */
   paths?: string[] | null;
+  note?: string | null;
+  grants?: { mcp?: string[] | null; skills?: string[] | null } | null;
+  secrets?: string[] | null;
+  rules?: number | null;
 }
 
 const CACHE_FILE = "org-bridge.json";
@@ -135,8 +157,27 @@ function boardIdsForPath(projectPaths: string | string[], repo?: string | null):
   return ids;
 }
 
+/** Grants a project effectively holds: its own, plus its firm's, each labelled
+    with where it came from. The console computes the same set per project in
+    `project_show`; this reproduces it from the two list calls the bridge
+    already makes, so nothing on the seat path has to shell out again. */
+function effectiveGrants(own: readonly string[] | null | undefined, inherited: readonly string[] | null | undefined, firm: string): { item: string; from: string }[] {
+  const rows: { item: string; from: string }[] = [];
+  const seen = new Set<string>();
+  for (const [items, from] of [[own ?? [], "project"], [inherited ?? [], `firm:${firm}`]] as const) {
+    for (const raw of items) {
+      const item = raw?.trim();
+      if (!item || seen.has(item)) continue;
+      seen.add(item);
+      rows.push({ item, from });
+    }
+  }
+  return rows;
+}
+
 function buildBridge(firms: ConsoleFirm[], projects: ConsoleProject[]): OrgBridge {
   const firmNames = new Map(firms.map((firm) => [firm.id, firm.name?.trim() || firm.id]));
+  const firmRows = new Map(firms.map((firm) => [firm.id, firm]));
   const byBoardId = new Map<string, OrgAttribution>();
   const byPath: { path: string; attribution: OrgAttribution }[] = [];
 
@@ -150,6 +191,11 @@ function buildBridge(firms: ConsoleFirm[], projects: ConsoleProject[]): OrgBridg
       path: projectPath,
       repo: project.repo?.trim() || "",
       paths: (project.paths ?? []).filter((item) => item?.trim()),
+      note: project.note?.trim() || "",
+      grants: effectiveGrants(project.grants?.mcp, firmRows.get(project.firm)?.grants?.mcp, project.firm),
+      skills: effectiveGrants(project.grants?.skills, firmRows.get(project.firm)?.grants?.skills, project.firm),
+      secretNames: effectiveGrants(project.secrets, firmRows.get(project.firm)?.secrets, project.firm).map((row) => row.item),
+      ruleCount: (project.rules ?? 0) + (firmRows.get(project.firm)?.rules ?? 0),
       via: "board-id",
     };
     const everyPath = [projectPath, ...(project.paths ?? [])].filter((item) => item?.trim());
@@ -223,6 +269,23 @@ const EMPTY_BRIDGE: OrgBridge = {
 /** The org layer as the console currently reports it. Falls back to the last
     cached answer when the console is missing or fails, so a dashboard on a
     machine without `fleetctl` degrades to stale-but-true rather than blank. */
+/** The bridge WITHOUT ever calling the console: the live memo when it is
+    fresh, otherwise the cache file, otherwise nothing.
+ *
+ * The seat path may not shell out. `seatSpawnConsole.test.ts` states the rule
+ * and the reason: `fleetctl/client.ts` allows 20 s per call, so a console that
+ * is missing, refusing or hanging would stop a seat from being taken and a
+ * rotation from completing — and then nothing is left that could launch the
+ * agent which would repair the console. A bounded wait is not the fix either;
+ * the requirement is zero calls. This reader is how a caller under that rule
+ * still gets the org layer: the board warms both memo and cache on every
+ * render, so in practice it answers, and when it does not the caller composes
+ * nothing rather than waiting. */
+export function cachedOrgBridge(): OrgBridge | null {
+  if (memo) return memo.bridge;
+  return readCache();
+}
+
 export async function loadOrgBridge(options?: { force?: boolean }): Promise<OrgBridge> {
   if (!options?.force && memo && Date.now() - memo.at < TTL_MS) return memo.bridge;
 
