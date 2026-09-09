@@ -2,6 +2,7 @@ import { afterAll, beforeEach, expect, mock, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { NextRequest } from "next/server";
 
 import { PIPELINE_ROLE_IDS } from "@/lib/pipelines/roles";
 
@@ -11,42 +12,91 @@ import { ROLE_IDS } from "./types";
 /*
  * §1.1 of the audit, as a check: one catalog for reading, editing and LAUNCHING.
  *
- * The console is mocked — the real `roles_list`/`role_show` call a `load()` that
- * may WRITE the operator's store when it adds a seed role, so no test here goes
- * near it. The role under test is synthetic and additional: an id outside
- * `ROLE_IDS`, which is exactly the case the seed contracts cannot express.
+ * The console here is a STATEFUL stand-in, not a fixed answer: `role_edit`
+ * applies what it is sent the way the real console does, and `role_show`
+ * returns what was stored. That is what makes the chain below a chain — a mock
+ * that ignored the payload would let a "read → edit → read → launch" test pass
+ * while the edit went nowhere.
+ *
+ * The real console is never touched: its `roles_list`/`role_show` run a
+ * `load()` that may WRITE the operator's store when it adds a seed role. The
+ * role under test is synthetic and additional — an id outside `ROLE_IDS`, the
+ * case the seed contracts cannot express.
  */
 
 const client = await import("@/lib/fleetctl/client");
 
+interface Entry {
+  id: string;
+  name?: string;
+  description?: string;
+  config: { engine?: string; model?: string; effort?: string };
+  promptScaffold?: string;
+  origin?: string;
+  seed?: string | null;
+  updated_at?: string | null;
+}
+
+const SEED_BUILDER = "Builder seed prompt";
+let store: Map<string, Entry>;
 let installed = true;
 let brokenConsole = false;
-let prompt = "Review the form";
-const custom = {
-  id: "custom-reviewer",
-  name: "Custom reviewer",
-  description: "Reviews one form.",
-  config: { engine: "codex", model: "gpt-5.6-terra", effort: "high" },
-  origin: "local",
-  edited: true,
-  seed_promptScaffold: null,
-};
+/** Roles whose `role_show` fails, by id — one unreadable role among healthy ones. */
+let unreadable = new Set<string>();
+
+function freshStore(): Map<string, Entry> {
+  return new Map<string, Entry>([
+    ["builder", { id: "builder", name: "Builder", config: { engine: "codex", model: "gpt-5.6-terra", effort: "high" }, promptScaffold: SEED_BUILDER, origin: "seed", seed: SEED_BUILDER }],
+    ["custom-reviewer", {
+      id: "custom-reviewer",
+      name: "Custom reviewer",
+      description: "Reviews one form.",
+      config: { engine: "codex", model: "gpt-5.6-terra", effort: "high" },
+      promptScaffold: "Review the form",
+      origin: "local",
+      seed: null,
+    }],
+  ]);
+}
 
 mock.module("@/lib/fleetctl/client", () => ({
   ...client,
   fleetctlInstalled: () => installed,
-  fleetctl: async (call: { fn: string; params?: { role?: string } }) => {
+  fleetctl: async (call: { fn: string; params?: Record<string, unknown>; stdinParam?: string; stdinValue?: string }) => {
     if (!installed) throw new client.FleetctlError("MISSING", "fleetctl is not installed on this machine");
     if (brokenConsole) throw new client.FleetctlError("FAILED", "console unavailable");
-    if (call.fn === "roles_list") return { roles: [{ id: "builder" }, { id: custom.id }] };
+    const id = typeof call.params?.role === "string" ? call.params.role : "";
+    if (call.fn === "roles_list") return { roles: [...store.keys()].map((role) => ({ id: role })) };
+    const entry = store.get(id);
     if (call.fn === "role_show") {
-      if (call.params?.role === custom.id) return { ...custom, promptScaffold: prompt };
-      return { id: "builder", promptScaffold: "Builder text" };
+      if (unreadable.has(id)) throw new client.FleetctlError("FAILED", `сховище зайняте: ${id}`);
+      if (!entry) throw new client.FleetctlError("FAILED", `немає такої ролі: ${id}`);
+      return {
+        ...entry,
+        edited: entry.promptScaffold !== entry.seed,
+        seed_promptScaffold: entry.seed ?? null,
+      };
     }
-    if (call.fn === "role_edit") { prompt = "Edited form review"; return { role: custom.id, changed: true }; }
+    if (call.fn === "role_edit") {
+      if (!entry) throw new client.FleetctlError("FAILED", `немає такої ролі: ${id}`);
+      /* Exactly what the console writes: the prompt arrives over stdin, the
+         runtime fields as flags, and absent fields are left alone. */
+      if (call.stdinParam === "prompt" && typeof call.stdinValue === "string") entry.promptScaffold = call.stdinValue;
+      for (const field of ["engine", "model", "effort"] as const) {
+        if (typeof call.params?.[field] === "string") entry.config[field] = call.params[field] as string;
+      }
+      entry.updated_at = "2026-09-09T09:00:00.000Z";
+      return { role: id, changed: true };
+    }
+    if (call.fn === "role_reset") {
+      if (!entry || entry.seed == null) throw new client.FleetctlError("FAILED", `немає такої ролі в насінні: ${id}`);
+      entry.promptScaffold = entry.seed;
+      return { role: id, changed: true };
+    }
     return { ok: true };
   },
 }));
+
 afterAll(() => {
   mock.module("@/lib/fleetctl/client", () => client);
   if (previousStateDir === undefined) delete process.env.LLV_STATE_DIR;
@@ -59,55 +109,133 @@ afterAll(() => {
 const previousStateDir = process.env.LLV_STATE_DIR;
 const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "llv-lane-e-catalog-"));
 beforeEach(() => {
-  installed = true; brokenConsole = false; prompt = "Review the form";
+  installed = true;
+  brokenConsole = false;
+  unreadable = new Set();
+  store = freshStore();
   process.env.LLV_STATE_DIR = stateDir;
   fs.rmSync(path.join(stateDir, "role-presets.json"), { force: true });
 });
 
 const { loadRoleCatalog, resolveSpawnRoleFromCatalog } = await import("./catalog");
+const { GET, POST } = await import("@/app/api/roles/route");
 
-const customRow = async () => {
-  const catalog = await loadRoleCatalog();
-  const row = catalog.roles.find((role) => role.definition.id === custom.id);
-  if (!row) throw new Error("the synthetic role is missing from the catalog");
-  return row;
-};
+const CUSTOM = "custom-reviewer";
+
+/** The page's own read, through the route the page calls. */
+async function pageRead(): Promise<{ source: string; degraded: unknown; roles: Record<string, unknown>[] }> {
+  return (await (await GET()).json()) as { source: string; degraded: unknown; roles: Record<string, unknown>[] };
+}
+
+async function pageWrite(body: unknown): Promise<{ status: number; body: Record<string, unknown> }> {
+  const response = await POST(new NextRequest("http://localhost/api/roles", {
+    method: "POST",
+    headers: { host: "localhost", "content-type": "application/json" },
+    body: JSON.stringify(body),
+  }));
+  return { status: response.status, body: (await response.json()) as Record<string, unknown> };
+}
+
+const row = (roles: Record<string, unknown>[], id: string) => roles.find((role) => role.id === id)!;
 
 test("an additional role reads, edits, re-reads and launches with one config and prompt", async () => {
-  const first = await customRow();
-  expect(first.definition.config).toEqual({ engine: "codex", model: "gpt-5.6-terra", effort: "high" });
-  expect(first.definition.promptScaffold).toBe("Review the form");
-  expect(first.editable).toBe(true);
-  expect(first.launchable).toBe(true);
+  const first = row((await pageRead()).roles, CUSTOM);
+  expect(first).toMatchObject({ editable: true, launchable: true, origin: "local", promptScaffold: "Review the form" });
 
-  const launchBefore = await resolveSpawnRoleFromCatalog({ role: custom.id });
-  expect(launchBefore).toEqual({ ok: true, value: { role: custom.id, config: first.definition.config, scaffold: "Review the form" } });
+  const before = await resolveSpawnRoleFromCatalog({ role: CUSTOM });
+  expect(before).toEqual({ ok: true, value: { role: CUSTOM, config: first.config as never, scaffold: "Review the form" } });
 
-  await client.fleetctl({ fn: "role_edit", params: { role: custom.id } });
+  /* The edit goes through the page's own write, not past it. */
+  const written = await pageWrite({ role: CUSTOM, prompt: "Edited form review", effort: "low" });
+  expect(written.status).toBe(200);
+  expect(written.body).toMatchObject({ written: true });
 
-  const second = await customRow();
-  expect(second.definition.promptScaffold).toBe("Edited form review");
-  const launchAfter = await resolveSpawnRoleFromCatalog({ role: custom.id });
-  expect(launchAfter.ok && launchAfter.value?.scaffold).toBe(second.definition.promptScaffold);
-  expect(launchAfter.ok && launchAfter.value?.config).toEqual(second.definition.config);
+  const second = row((await pageRead()).roles, CUSTOM);
+  expect(second.promptScaffold).toBe("Edited form review");
+  expect(second.config).toEqual({ engine: "codex", model: "gpt-5.6-terra", effort: "low" });
+
+  /* And the launch resolves the SAME two values the page just showed. */
+  const after = await resolveSpawnRoleFromCatalog({ role: CUSTOM });
+  expect(after.ok && after.value?.scaffold).toBe(second.promptScaffold as string);
+  expect(after.ok && after.value?.config).toEqual(second.config as never);
+  /* The write really did move: the chain would pass on a mock that ignored it
+     only if nothing had changed at all. */
+  expect(after).not.toEqual(before);
 });
 
 test("consumers frozen to the seed ids refuse an additional role before a launch", async () => {
-  const row = await customRow();
-  expect(row.unsupported).toEqual(["pipeline", "mcp"]);
+  const catalog = await loadRoleCatalog();
+  const custom = catalog.roles.find((role) => role.definition.id === CUSTOM)!;
+  expect(custom.unsupported).toEqual(["pipeline", "mcp"]);
   /* Not an opinion about those consumers — their own contracts: a pipeline
      stage and an MCP `role` argument are validated against these lists, so the
      refusal happens at validation time, never after something started. */
-  expect((PIPELINE_ROLE_IDS as readonly string[]).includes(custom.id)).toBe(false);
-  expect((ROLE_IDS as readonly string[]).includes(custom.id)).toBe(false);
+  expect((PIPELINE_ROLE_IDS as readonly string[]).includes(CUSTOM)).toBe(false);
+  expect((ROLE_IDS as readonly string[]).includes(CUSTOM)).toBe(false);
+  /* And the board has no delegation policy for it, so it creates no children. */
+  expect(custom.canDelegate).toBe(false);
+  expect(catalog.roles.find((role) => role.definition.id === "builder")!.canDelegate).toBe(true);
+});
+
+test("a broken role is refused with the console's own values, never with substituted ones", async () => {
+  /* An engine the union does not contain, and an empty model: both used to be
+     quietly replaced by the seed's values, so the row claimed a launch would
+     work using a configuration that exists nowhere. */
+  store.set("broken-engine", { id: "broken-engine", config: { engine: "kettle", model: "opus", effort: "high" }, promptScaffold: "x", origin: "local", seed: null });
+  store.get("builder")!.config.model = "";
+  const roles = (await pageRead()).roles;
+
+  const brokenEngine = row(roles, "broken-engine");
+  expect(brokenEngine.launchable).toBe(false);
+  expect((brokenEngine.config as { engine: string }).engine).toBe("kettle");
+  expect(brokenEngine.blockedReason).toContain("engine");
+
+  /* A seed role whose console entry lost its model is refused by name and
+     still visible — the seed's own model is NOT silently substituted. */
+  const builder = row(roles, "builder");
+  expect(builder.launchable).toBe(false);
+  expect((builder.config as { model: string }).model).toBe("");
+  expect(builder.blockedReason).toContain("model");
+
+  /* The healthy one is untouched by its neighbours. */
+  expect(row(roles, CUSTOM).launchable).toBe(true);
+});
+
+test("one unreadable role does not replace the whole catalog with the built-in one", async () => {
+  unreadable = new Set(["builder"]);
+  const answer = await pageRead();
+  /* Still the console's catalog: the source, the additional role, and its
+     editability all survive one failed `role_show`. */
+  expect(answer.source).toBe("fleetctl");
+  expect(answer.degraded).toBeNull();
+  expect(answer.roles).toHaveLength(2);
+  expect(row(answer.roles, CUSTOM)).toMatchObject({ editable: true, launchable: true });
+  const broken = row(answer.roles, "builder");
+  expect(broken.launchable).toBe(false);
+  expect(broken.editable).toBe(false);
+  expect(broken.blockedReason).toContain("сховище зайняте");
+});
+
+test("a catalog whose every role is broken is still the console's, not an empty one", async () => {
+  for (const entry of store.values()) entry.config = { engine: "kettle", model: "", effort: "" };
+  const answer = await pageRead();
+  expect(answer.source).toBe("fleetctl");
+  /* «console-empty» would say the console holds no roles. It holds two, and
+     both are refused: the operator has to see which. */
+  expect(answer.degraded).toBeNull();
+  expect(answer.roles).toHaveLength(2);
+  expect(answer.roles.every((role) => role.launchable === false)).toBe(true);
+  /* And a console that genuinely lists nothing still degrades, with a reason. */
+  store.clear();
+  const empty = await pageRead();
+  expect(empty.source).toBe("fallback");
+  expect(empty.degraded).toMatchObject({ reason: "console-empty" });
 });
 
 test("a role whose runtime config the launch refuses is visible and says why", async () => {
   const catalog = await loadRoleCatalog();
   const builder = catalog.roles.find((role) => role.definition.id === "builder")!;
   expect(builder.launchable).toBe(true);
-  /* The same validator the launch runs, asked of a config the board's model
-     catalog does not hold. */
   const { roleConfigError } = await import("./registry");
   const refused = roleConfigError({ ...builder.definition, config: { engine: "claude", model: "gpt-6-astra", effort: "high" } });
   expect(refused).toContain("gpt-6-astra");
@@ -123,7 +251,7 @@ test("a console that is down degrades by name and still launches a seed role", a
   /* The seat and the launch must never wait on the console to come back. */
   const launch = await resolveSpawnRoleFromCatalog({ role: "architect" });
   expect(launch.ok && launch.value?.role).toBe("architect");
-  const additional = await resolveSpawnRoleFromCatalog({ role: custom.id });
+  const additional = await resolveSpawnRoleFromCatalog({ role: CUSTOM });
   expect(additional.ok).toBe(false);
   expect(!additional.ok && additional.error).toContain("unknown role");
 });

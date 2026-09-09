@@ -1,3 +1,4 @@
+import { isDelegationDeniedRole } from "@/lib/agent/spawnAdmission";
 import { fleetctl, fleetctlInstalled, fleetctlMessage } from "@/lib/fleetctl/client";
 
 import { ROLE_DEFAULTS } from "./defaults";
@@ -61,6 +62,10 @@ export type CatalogRole = {
   /** Why a launch would refuse it, in the launch validator's own words. */
   blockedReason: string | null;
   unsupported: readonly RoleConsumer[];
+  /** Whether a session in this role may create child agents at all. A role the
+      board cannot classify delegates nothing (`isDelegationDeniedRole`), and
+      the page says so rather than letting the limit be discovered at spawn. */
+  canDelegate: boolean;
   grants: { mcp: string[]; skills: string[] };
 };
 
@@ -99,19 +104,27 @@ function unsupportedConsumers(id: string): RoleConsumer[] {
   return isSeedId(id) ? [] : ["pipeline", "mcp"];
 }
 
-/** One console role in the shape every existing consumer already reads, so
-    switching the source changes where the values come from and nothing else.
-    The built-in seed fills only what the console left out. */
-function definitionOf(role: ConsoleRole, fallback: RoleDefinition | undefined): RoleDefinition | null {
-  const engine = role.config?.engine === "codex" ? "codex" : role.config?.engine === "claude" ? "claude" : fallback?.config.engine;
-  const model = role.config?.model ?? fallback?.config.model;
-  const effort = role.config?.effort ?? fallback?.config.effort;
-  if (!engine || !model || !effort) return null;
+/**
+ * One console role in the shape every existing consumer already reads.
+ *
+ * The seed fills only what the console did NOT say. A value the console DID
+ * say travels verbatim, even when it is nonsense: substituting the seed's
+ * engine for a console `engine: "kettle"` would hand the launch validator a
+ * value the console does not hold, and the row would read «доступна для
+ * запуску» about a config that does not exist anywhere. Whatever is left
+ * missing stays empty and the complaint below names it.
+ */
+function definitionOf(role: ConsoleRole, fallback: RoleDefinition | undefined): RoleDefinition {
+  const said = role.config ?? {};
+  const engine = said.engine ?? fallback?.config.engine ?? "";
+  const model = said.model ?? fallback?.config.model ?? "";
+  const effort = said.effort ?? fallback?.config.effort ?? "";
   return {
     id: role.id,
     name: role.name ?? fallback?.name ?? role.id,
     description: role.description ?? fallback?.description ?? "",
-    config: { engine, model, effort },
+    /* An engine outside the union is exactly what the validator must see. */
+    config: { engine: engine as RoleDefinition["config"]["engine"], model, effort },
     parameters: (Array.isArray(role.parameters) ? role.parameters : fallback?.parameters ?? []) as RoleDefinition["parameters"],
     promptScaffold: typeof role.promptScaffold === "string" ? role.promptScaffold : fallback?.promptScaffold ?? "",
     safetyFences: (Array.isArray(role.safetyFences) ? strings(role.safetyFences) : fallback?.safetyFences ?? []) as RoleDefinition["safetyFences"],
@@ -119,12 +132,23 @@ function definitionOf(role: ConsoleRole, fallback: RoleDefinition | undefined): 
   };
 }
 
+/** Why a launch would refuse this role: an absent runtime field named as
+    absent, else the launch validator's own verdict. */
+function launchComplaint(definition: RoleDefinition): string | null {
+  const missing = (["engine", "model", "effort"] as const).filter((field) => !definition.config[field]);
+  if (missing.length) return `the console gave this role no ${missing.join(", ")}`;
+  return roleConfigError(definition);
+}
+
 /** A console entry as one catalog row: its definition plus the verdicts, with
-    launchability asked of the launch validator itself. */
-export function catalogRoleOf(role: ConsoleRole, fallback = ROLE_DEFAULTS.find((seed) => seed.id === role.id)): CatalogRole | null {
+    launchability asked of the launch validator itself.
+
+    A row is never dropped. A role the console cannot describe is a role the
+    operator must SEE refused — dropping it silently is the same lie as
+    launching it, told the other way round. */
+export function catalogRoleOf(role: ConsoleRole, fallback = ROLE_DEFAULTS.find((seed) => seed.id === role.id)): CatalogRole {
   const definition = definitionOf(role, fallback);
-  if (!definition) return null;
-  const blockedReason = roleConfigError(definition);
+  const blockedReason = launchComplaint(definition);
   return {
     definition,
     editable: true,
@@ -135,7 +159,28 @@ export function catalogRoleOf(role: ConsoleRole, fallback = ROLE_DEFAULTS.find((
     launchable: blockedReason === null,
     blockedReason,
     unsupported: unsupportedConsumers(definition.id),
+    canDelegate: !isDelegationDeniedRole(definition.id),
     grants: { mcp: strings(role.grants?.mcp), skills: strings(role.grants?.skills) },
+  };
+}
+
+/** The row for a role whose own `role_show` failed: it exists in the catalog,
+    it is not launchable, and it says which read failed. One unreadable role
+    does not get to replace every readable one. */
+function unreadableRole(id: string, detail: string): CatalogRole {
+  const fallback = ROLE_DEFAULTS.find((seed) => seed.id === id);
+  return {
+    definition: definitionOf({ id }, fallback),
+    editable: false,
+    seedPromptScaffold: null,
+    edited: false,
+    origin: "seed",
+    updatedAt: null,
+    launchable: false,
+    blockedReason: `the console could not read this role: ${detail}`,
+    unsupported: unsupportedConsumers(id),
+    canDelegate: !isDelegationDeniedRole(id),
+    grants: { mcp: [], skills: [] },
   };
 }
 
@@ -143,11 +188,14 @@ export function catalogRoleOf(role: ConsoleRole, fallback = ROLE_DEFAULTS.find((
     list call plus one show per role, run together rather than in sequence. */
 async function consoleRoles(): Promise<CatalogRole[]> {
   const listed = await fleetctl<{ roles: { id: string }[] }>({ fn: "roles_list" });
-  const shown = await Promise.all(listed.roles.map((role) => fleetctl<ConsoleRole>({ fn: "role_show", params: { role: role.id } })));
-  return shown.flatMap((role) => {
-    const view = catalogRoleOf(role);
-    return view ? [view] : [];
-  });
+  /* Settled, not all-or-nothing: one role the console cannot show is one
+     broken row, not a reason to answer with a stale built-in catalog and let
+     the other fifteen read as if they came from the console. The list call
+     failing IS whole-catalog, and it throws to the degraded path above. */
+  const shown = await Promise.allSettled(listed.roles.map((role) => fleetctl<ConsoleRole>({ fn: "role_show", params: { role: role.id } })));
+  return shown.map((answer, index) => (answer.status === "fulfilled"
+    ? catalogRoleOf(answer.value)
+    : unreadableRole(listed.roles[index]!.id, fleetctlMessage(answer.reason))));
 }
 
 /** The built-in catalog, merged with the console's overrides mirror — the
@@ -167,7 +215,7 @@ function builtinCatalog(degraded: RoleCatalogDegradation): RoleCatalog {
     degraded: reason,
     readAt: new Date().toISOString(),
     roles: definitions.map((definition) => {
-      const blockedReason = roleConfigError(definition);
+      const blockedReason = launchComplaint(definition);
       return {
         definition,
         editable: false,
@@ -178,6 +226,7 @@ function builtinCatalog(degraded: RoleCatalogDegradation): RoleCatalog {
         launchable: blockedReason === null,
         blockedReason,
         unsupported: unsupportedConsumers(definition.id),
+        canDelegate: !isDelegationDeniedRole(definition.id),
         grants: { mcp: [], skills: [] },
       };
     }),

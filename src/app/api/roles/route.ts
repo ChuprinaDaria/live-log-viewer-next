@@ -43,6 +43,8 @@ export interface RoleView extends RoleDefinition {
   blockedReason: string | null;
   /** Consumers that refuse this role before a launch (frozen seed contracts). */
   unsupported: readonly ("pipeline" | "mcp")[];
+  /** A session in this role may create child agents. */
+  canDelegate: boolean;
   grants?: { mcp: string[]; skills: string[] };
 }
 
@@ -59,6 +61,7 @@ function viewOf(role: CatalogRole): RoleView {
     launchable: role.launchable,
     blockedReason: role.blockedReason,
     unsupported: role.unsupported,
+    canDelegate: role.canDelegate,
     grants: role.grants,
   };
 }
@@ -111,14 +114,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   /* One `role_show` establishes three things before anything is written: that
      the console is reachable, that it holds this role, and whether the role has
      a seed to reset to. Its own refusal even names the ids it does hold. */
-  let target: CatalogRole | null;
+  let target: CatalogRole;
   try {
     target = catalogRoleOf(await fleetctl<ConsoleRole>({ fn: "role_show", params: { role } }));
   } catch (error) {
     return NextResponse.json({ error: fleetctlMessage(error) }, { status: fleetctlStatus(error), headers });
-  }
-  if (!target) {
-    return NextResponse.json({ error: "the console answered a role without a runtime configuration" }, { status: 502, headers });
   }
   /* A role the console created has no seed; `role_reset` would refuse it, and
      refusing here keeps the button's absence and the API's answer aligned. */
@@ -146,7 +146,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
   try {
     const updated = catalogRoleOf(await fleetctl<ConsoleRole>({ fn: "role_show", params: { role } }));
-    if (!updated) throw new Error("the console answered a role without a runtime configuration");
     return NextResponse.json({ written: true, role: viewOf(updated) }, { headers });
   } catch (error) {
     return NextResponse.json({ written: true, role: null, unconfirmed: fleetctlMessage(error) }, { headers });
