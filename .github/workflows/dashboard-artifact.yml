@@ -36,7 +36,13 @@ jobs:
       # неперевіреній зміні (див. AGENTS.md, «Two processes run under Bun»).
       - name: Read the pinned bun version
         id: bun
-        run: echo "version=$(grep -oE 'oven/bun:[0-9]+\.[0-9]+\.[0-9]+' Dockerfile | head -1 | cut -d: -f2)" >> "$GITHUB_OUTPUT"
+        # Block scalar, not a plain one: `cut -d: -f2` puts ": " inside the
+        # value, which YAML reads as a nested mapping. That parse error made
+        # every run of this workflow fail in zero seconds with no job at all,
+        # and GitHub listed the workflow by its path because it never got as
+        # far as reading `name:`.
+        run: |
+          echo "version=$(grep -oE 'oven/bun:[0-9]+\.[0-9]+\.[0-9]+' Dockerfile | head -1 | cut -d: -f2)" >> "$GITHUB_OUTPUT"
 
       - uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2
         with:
