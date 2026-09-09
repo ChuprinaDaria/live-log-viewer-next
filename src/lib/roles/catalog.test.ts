@@ -292,7 +292,7 @@ test("a said value that is not a value blocks its own row and leaves its neighbo
   expect(row(answer.roles, "builder")).toMatchObject({ launchable: false });
   expect(String(row(answer.roles, "builder").blockedReason)).toContain("null for engine");
   expect(String(row(answer.roles, "wrong-type").blockedReason)).toContain("number for model");
-  expect(String(row(answer.roles, "bad-parameters").blockedReason)).toContain("parameter without a key");
+  expect(String(row(answer.roles, "bad-parameters").blockedReason)).toContain("null for parameter 1");
 
   /* Neither the launch nor the neighbour is touched by any of it. */
   for (const id of ["builder", "wrong-type", "bad-parameters"]) {
@@ -303,6 +303,78 @@ test("a said value that is not a value blocks its own row and leaves its neighbo
   expect(healthy.config).toEqual({ engine: "codex", model: "gpt-5.6-terra", effort: "high" });
   const launch = await resolveSpawnRoleFromCatalog({ role: CUSTOM });
   expect(launch).toEqual({ ok: true, value: { role: CUSTOM, config: healthy.config as never, scaffold: "Review the form" } });
+});
+
+test("a prompt or a config the console said but could not have meant blocks its own row", async () => {
+  /* `role_show` returns whatever the store holds, so a null prompt is a real
+     row, not a probe's invention. Read as an omission it becomes the built-in
+     scaffold — the role is then shown, and launched, carrying text the console
+     never served. */
+  store.get("builder")!.promptScaffold = null as unknown as string;
+  store.set("no-config", { id: "no-config", promptScaffold: "x", origin: "local", seed: null, config: null as unknown as { engine?: string } });
+  store.set("prompt-object", { id: "prompt-object", config: { engine: "codex", model: "gpt-5.6-terra", effort: "high" }, promptScaffold: {} as unknown as string, origin: "local", seed: null });
+
+  const answer = await pageRead();
+  expect(answer.source).toBe("fleetctl");
+  expect(answer.degraded).toBeNull();
+
+  const builder = row(answer.roles, "builder");
+  expect(builder.launchable).toBe(false);
+  expect(String(builder.blockedReason)).toContain("null for promptScaffold");
+  /* And nothing of the seed leaked into what is shown. */
+  expect(builder.promptScaffold).toBe("");
+  expect(builder.promptPreview).toBe("");
+
+  const noConfig = row(answer.roles, "no-config");
+  expect(noConfig.launchable).toBe(false);
+  expect(String(noConfig.blockedReason)).toContain("null for config");
+  /* A rejected config object does not let the seed supply the runtime either. */
+  expect(noConfig.config).toEqual({ engine: "", model: "", effort: "" });
+
+  expect(String(row(answer.roles, "prompt-object").blockedReason)).toContain("for promptScaffold");
+
+  for (const id of ["builder", "no-config", "prompt-object"]) {
+    const refused = await resolveSpawnRoleFromCatalog({ role: id });
+    expect(refused.ok, id).toBe(false);
+  }
+});
+
+test("a parameter shape the resolver would choke on blocks its row instead of throwing at launch", async () => {
+  /* `validateRoleParams` calls `options.includes` and compares integer bounds.
+     A `select` whose options is an object passes a "looks like an object with a
+     key" check and then throws where it is USED — after the adapter has run,
+     so no per-row catch is in the way. */
+  const choking: Record<string, unknown[]> = {
+    "select-options-object": [{ key: "pick", kind: "select", options: {} }],
+    "select-options-mixed": [{ key: "pick", kind: "select", options: ["a", 7] }],
+    "integer-bounds": [{ key: "count", kind: "integer", min: "1" }],
+    "unknown-kind": [{ key: "pick", kind: "colour" }],
+    "text-default": [{ key: "note", kind: "text", default: 5 }],
+  };
+  for (const [id, parameters] of Object.entries(choking)) {
+    store.set(id, { id, config: { engine: "codex", model: "gpt-5.6-terra", effort: "high" }, promptScaffold: "x", origin: "local", seed: null });
+    (store.get(id) as unknown as { parameters: unknown }).parameters = parameters;
+  }
+
+  const answer = await pageRead();
+  expect(answer.degraded).toBeNull();
+  for (const id of Object.keys(choking)) {
+    const blocked = row(answer.roles, id);
+    expect(blocked.launchable, id).toBe(false);
+    /* The reason names the parameter it is about, not just "invalid". */
+    expect(String(blocked.blockedReason), id).toContain(String((choking[id]![0] as { key: string }).key));
+    /* The launch refuses with that reason rather than throwing on the way. */
+    const refused = await resolveSpawnRoleFromCatalog({ role: id, roleParams: { pick: "x", count: 2, note: "n" } });
+    expect(refused.ok, id).toBe(false);
+    expect(!refused.ok && refused.error, id).toContain("cannot launch");
+  }
+
+  /* A well-formed select still resolves — the guard checks the shapes the
+     resolver consumes, it does not refuse parameters as such. */
+  store.set("good-select", { id: "good-select", config: { engine: "codex", model: "gpt-5.6-terra", effort: "high" }, promptScaffold: "Pick {{pick}}", origin: "local", seed: null });
+  (store.get("good-select") as unknown as { parameters: unknown }).parameters = [{ key: "pick", label: "Pick", description: "which", kind: "select", options: ["a", "b"] }];
+  const good = await resolveSpawnRoleFromCatalog({ role: "good-select", roleParams: { pick: "b" } });
+  expect(good).toEqual({ ok: true, value: { role: "good-select", config: { engine: "codex", model: "gpt-5.6-terra", effort: "high" }, scaffold: "Pick b" } });
 });
 
 test("a role whose runtime config the launch refuses is visible and says why", async () => {

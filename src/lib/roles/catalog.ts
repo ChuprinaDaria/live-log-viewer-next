@@ -104,49 +104,78 @@ function unsupportedConsumers(id: string): RoleConsumer[] {
   return isSeedId(id) ? [] : ["pipeline", "mcp"];
 }
 
+/** How a value the console said, but could not have meant, is named. */
+const saidType = (value: unknown): string => (value === null ? "null" : Array.isArray(value) ? "an array" : `a ${typeof value}`);
+
+type Said<T> = { value: T; complaint: string | null };
+
 /**
- * One runtime field as the console said it.
+ * One field as the console said it.
  *
- * A string travels verbatim, nonsense included: substituting the seed's engine
- * for a console `engine: "kettle"` would hand the launch validator a value the
- * console does not hold, and the row would read «доступна для запуску» about a
- * config that exists nowhere. An ABSENT key is an omission, and only then does
- * the seed fill it. Anything else — `null`, a number, an object — is a said
- * value that is not a value: it is neither usable nor an omission, so it
- * blocks its own row and says which field and what arrived.
+ * A usable value travels verbatim, nonsense included: substituting the seed's
+ * engine for a console `engine: "kettle"` would hand the launch validator a
+ * value the console does not hold, and the row would read «доступна для
+ * запуску» about a config that exists nowhere. An ABSENT key is an omission,
+ * and only then does the seed fill it. Anything else — `null`, a number, an
+ * object — is a said value that is not a value: neither usable nor an
+ * omission, so it blocks its own row and names the field and what arrived.
  */
-function saidField(
-  said: Record<string, unknown>,
-  key: "engine" | "model" | "effort",
-  seed: string | undefined,
-): { value: string; complaint: string | null } {
-  if (!(key in said) || said[key] === undefined) {
+function saidValue<T>(
+  present: boolean,
+  value: unknown,
+  usable: (candidate: unknown) => candidate is T,
+  empty: T,
+  seed: T | undefined,
+  field: string,
+): Said<T> {
+  if (!present || value === undefined) {
     return seed === undefined
-      ? { value: "", complaint: `the console gave this role no ${key}` }
+      ? { value: empty, complaint: `the console gave this role no ${field}` }
       : { value: seed, complaint: null };
   }
-  const value = said[key];
-  if (typeof value === "string") return { value, complaint: null };
-  return { value: "", complaint: `the console gave this role ${value === null ? "null" : `a ${typeof value}`} for ${key}` };
+  if (usable(value)) return { value, complaint: null };
+  return { value: empty, complaint: `the console gave this role ${saidType(value)} for ${field}` };
 }
 
-/** Role parameters the launch path can actually walk: every element an object
-    with a string `key`. One malformed element blocks its own row rather than
-    throwing out of the adapter and taking the whole catalog with it. */
-function saidParameters(
-  value: unknown,
-  seed: RoleDefinition["parameters"] | undefined,
-): { value: RoleDefinition["parameters"]; complaint: string | null } {
-  if (value === undefined) return { value: seed ?? [], complaint: null };
-  if (!Array.isArray(value)) return { value: [], complaint: `the console gave this role a ${value === null ? "null" : typeof value} for parameters` };
-  const usable = value.every((item) => Boolean(item) && typeof item === "object" && !Array.isArray(item) && typeof (item as { key?: unknown }).key === "string");
-  return usable
-    ? { value: value as RoleDefinition["parameters"], complaint: null }
-    : { value: [], complaint: "the console gave this role a parameter without a key" };
+const isString = (value: unknown): value is string => typeof value === "string";
+const isStringList = (value: unknown): value is string[] => Array.isArray(value) && value.every(isString);
+
+/**
+ * A role parameter in the shapes the RESOLVER consumes, not merely in the shape
+ * that survives a cast: `validateRoleParams` calls `options.includes`, compares
+ * integer bounds, and reads declared defaults, so a `select` whose `options` is
+ * an object throws where it is used — after this adapter has run, and therefore
+ * past the per-row catch. What the launch will walk is checked here.
+ */
+function parameterComplaint(item: unknown, index: number): string | null {
+  const at = `parameter ${index + 1}`;
+  if (!item || typeof item !== "object" || Array.isArray(item)) return `the console gave this role ${saidType(item)} for ${at}`;
+  const parameter = item as Record<string, unknown>;
+  if (!isString(parameter.key) || !parameter.key.trim()) return `the console gave this role ${at} without a key`;
+  const named = `parameter ${JSON.stringify(parameter.key)}`;
+  const kind = parameter.kind;
+  if (kind !== "text" && kind !== "integer" && kind !== "select") return `the console gave this role ${saidType(kind)} for the kind of ${named}`;
+  if (parameter.required !== undefined && typeof parameter.required !== "boolean") return `the console gave this role ${saidType(parameter.required)} for the required flag of ${named}`;
+  if (kind === "integer") {
+    for (const bound of ["default", "min", "max"] as const) {
+      if (parameter[bound] !== undefined && typeof parameter[bound] !== "number") return `the console gave this role ${saidType(parameter[bound])} for the ${bound} of ${named}`;
+    }
+    return null;
+  }
+  if (parameter.default !== undefined && !isString(parameter.default)) return `the console gave this role ${saidType(parameter.default)} for the default of ${named}`;
+  /* The one the resolver calls `.includes` on. */
+  if (kind === "select" && parameter.options !== undefined && !isStringList(parameter.options)) {
+    return `the console gave this role ${saidType(parameter.options)} for the options of ${named}`;
+  }
+  return null;
 }
 
-const saidText = (value: unknown, ...fallbacks: (string | undefined)[]): string =>
-  (typeof value === "string" ? value : fallbacks.find((candidate) => typeof candidate === "string") ?? "");
+function saidParameters(present: boolean, value: unknown, seed: RoleDefinition["parameters"] | undefined): Said<RoleDefinition["parameters"]> {
+  if (!present || value === undefined) return { value: seed ?? [], complaint: null };
+  if (!Array.isArray(value)) return { value: [], complaint: `the console gave this role ${saidType(value)} for parameters` };
+  const complaint = value.map((item, index) => parameterComplaint(item, index)).find((found) => found !== null) ?? null;
+  return complaint === null ? { value: value as RoleDefinition["parameters"], complaint: null } : { value: [], complaint };
+}
 
 /**
  * One console role in the shape every existing consumer already reads, plus
@@ -155,24 +184,54 @@ const saidText = (value: unknown, ...fallbacks: (string | undefined)[]): string 
  * that would throw where it is used.
  */
 function definitionOf(role: ConsoleRole, fallback: RoleDefinition | undefined): { definition: RoleDefinition; complaints: string[] } {
-  const said = (role.config ?? {}) as Record<string, unknown>;
-  const engine = saidField(said, "engine", fallback?.config.engine);
-  const model = saidField(said, "model", fallback?.config.model);
-  const effort = saidField(said, "effort", fallback?.config.effort);
-  const parameters = saidParameters(role.parameters, fallback?.parameters);
+  const has = (key: string): boolean => Object.prototype.hasOwnProperty.call(role, key);
+  /* `config: null` is a said value too. Read as `{}` it becomes three
+     omissions, and the seed quietly supplies the whole runtime. */
+  const configSaid = saidValue<Record<string, unknown>>(
+    has("config"),
+    role.config,
+    (candidate): candidate is Record<string, unknown> => Boolean(candidate) && typeof candidate === "object" && !Array.isArray(candidate),
+    {},
+    fallback ? {} : undefined,
+    "config",
+  );
+  const said = configSaid.value;
+  const runtimeSaid = configSaid.complaint !== null;
+  /* A rejected `config` object has no fields to read; the seed does not get to
+     stand in for the runtime of a role whose runtime the console mis-stated. */
+  const field = (key: "engine" | "model" | "effort") => (runtimeSaid
+    ? { value: "", complaint: null }
+    : saidValue<string>(Object.prototype.hasOwnProperty.call(said, key), said[key], isString, "", fallback?.config[key], key));
+  const engine = field("engine");
+  const model = field("model");
+  const effort = field("effort");
+  const parameters = saidParameters(has("parameters"), role.parameters, fallback?.parameters);
+  /* The prompt IS the launch. A non-string one read as an omission is how a
+     role could be shown, and launched, carrying the built-in scaffold the
+     console never served. Fences travel with it into the same prompt. */
+  const promptScaffold = saidValue<string>(has("promptScaffold"), role.promptScaffold, isString, "", fallback?.promptScaffold, "promptScaffold");
+  /* An absent list is an empty list — a console role may legitimately declare
+     no fences and no capabilities. Only a list the console SAID and this
+     adapter cannot use is a complaint. */
+  const safetyFences = saidValue<string[]>(has("safetyFences"), role.safetyFences, isStringList, [], [...fallback?.safetyFences ?? []], "safetyFences");
+  const capabilities = saidValue<string[]>(has("capabilities"), role.capabilities, isStringList, [], [...fallback?.capabilities ?? []], "capabilities");
   return {
     definition: {
       id: role.id,
-      name: saidText(role.name, fallback?.name, role.id),
-      description: saidText(role.description, fallback?.description, ""),
+      /* A display name is not the launch: a nonsense one falls back and does
+         not block a role that is otherwise runnable. */
+      name: isString(role.name) ? role.name : fallback?.name ?? role.id,
+      description: isString(role.description) ? role.description : fallback?.description ?? "",
       /* An engine outside the union is exactly what the validator must see. */
       config: { engine: engine.value as RoleDefinition["config"]["engine"], model: model.value, effort: effort.value },
       parameters: parameters.value,
-      promptScaffold: saidText(role.promptScaffold, fallback?.promptScaffold, ""),
-      safetyFences: (Array.isArray(role.safetyFences) ? strings(role.safetyFences) : fallback?.safetyFences ?? []) as RoleDefinition["safetyFences"],
-      capabilities: (Array.isArray(role.capabilities) ? strings(role.capabilities) : fallback?.capabilities ?? []) as RoleDefinition["capabilities"],
+      promptScaffold: promptScaffold.value,
+      safetyFences: safetyFences.value as RoleDefinition["safetyFences"],
+      capabilities: capabilities.value as RoleDefinition["capabilities"],
     },
-    complaints: [engine, model, effort, parameters].map((field) => field.complaint).filter((complaint): complaint is string => complaint !== null),
+    complaints: [configSaid, engine, model, effort, parameters, promptScaffold, safetyFences, capabilities]
+      .map((said_) => said_.complaint)
+      .filter((complaint): complaint is string => complaint !== null),
   };
 }
 

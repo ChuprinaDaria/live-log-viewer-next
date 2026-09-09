@@ -197,3 +197,33 @@ test("the seat's own in-process spawn carries the local resolution", async () =>
     if (settled !== null) expect(settled).not.toContain("unknown role");
   }
 });
+
+/*
+ * HQ is a seat too, and it was the one door this file did not open.
+ *
+ * `/api/orchestrator/hq` substitutes the seat command's `spawn` to carry its own
+ * grant class — and substituting `spawn` substitutes the dependencies the seat
+ * command would have passed with it, so the HQ launch kept the console default
+ * after the seat lane had left it. It is the operator's OWN seat: with the
+ * console down, nothing else is left that could launch the agent to repair it.
+ *
+ * Driven through the real route, like the rest of this file: whatever fails
+ * downstream in this sandbox, the console must see nothing.
+ */
+test("the HQ seat asks a broken console nothing either", async () => {
+  const { POST } = await import("@/app/api/orchestrator/hq/route");
+  for (const state of ["failing", "hanging", "missing"] as Console[]) {
+    consoleState = state;
+    calls = [];
+    let settled: string | null = null;
+    const attempt = POST({
+      headers: new Headers({ host: "127.0.0.1" }),
+      json: async () => ({ clientRequestId: `hq-console-${state}` }),
+    } as unknown as Parameters<typeof POST>[0])
+      .then(async (response) => { settled = String(((await response.json()) as { error?: string }).error ?? ""); })
+      .catch((thrown: unknown) => { settled = thrown instanceof Error ? thrown.message : String(thrown); });
+    await Promise.race([attempt, new Promise((resolve) => setTimeout(resolve, 1_200))]);
+    expect(calls, `console calls from the HQ seat with a ${state} console`).toEqual([]);
+    if (settled !== null) expect(settled).not.toContain("unknown role");
+  }
+});

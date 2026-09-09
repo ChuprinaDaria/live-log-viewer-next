@@ -6,7 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { HQ_SESSION_CLASS, hqMcpServers } from "@/lib/agent/mcpAllowlist";
 import { ensureOperatorSpawnCapability } from "@/lib/agent/operatorCapability";
 import { internalServiceHeaders, requireOperatorAuthority } from "@/lib/agent/operatorAuthority";
-import { executeSpawnRequest, productionSpawnCommandDependencies } from "@/lib/agent/spawnCommand";
+import { executeSpawnRequest, localRoleResolution, productionSpawnCommandDependencies } from "@/lib/agent/spawnCommand";
 import { VIEWER_SPAWN_CAPABILITY_HEADER } from "@/lib/agent/spawnPolicy";
 import { HQ_PROJECT, HQ_PROMPT_VERSION, HQ_SPAWN_CONFIG, hqAccessDoc, hqCwd, hqMandate, hqSshHosts, hqTelegramChat } from "@/lib/orchestrator/hq";
 import { readHqIdentity } from "@/lib/orchestrator/hqIdentity";
@@ -52,6 +52,13 @@ async function spawnHq(body: Record<string, unknown>): Promise<{ status: number;
   const response = await executeSpawnRequest(request, {
     ...productionSpawnCommandDependencies,
     internalGrant: () => ({ sessionClass: HQ_SESSION_CLASS, mcpServers: hqMcpServers() }),
+    /* This is a SEAT launch, so it resolves `orchestrator` from the built-in
+       definitions like every other seat: HQ is the operator's own seat, and a
+       console that is down must not be able to stop the one agent that could
+       repair the console. Replacing `spawn` for the HQ grant class replaces the
+       seat command's own dependencies too, which is how this path kept the
+       console default while the seat lane had already left it. */
+    resolveRole: localRoleResolution,
   });
   return { status: response.status, body: await response.json() as Record<string, unknown> };
 }
