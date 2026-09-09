@@ -377,6 +377,43 @@ test("a parameter shape the resolver would choke on blocks its row instead of th
   expect(good).toEqual({ ok: true, value: { role: "good-select", config: { engine: "codex", model: "gpt-5.6-terra", effort: "high" }, scaffold: "Pick b" } });
 });
 
+test("a default that breaks its own parameter's rules blocks the row, not just an explicit value", async () => {
+  /* A launch that supplies nothing renders the DEFAULT, and the validator used
+     to resolve an omitted parameter straight past its own bounds and options.
+     The same value passed explicitly was refused with 400 — so the row said
+     «launchable» about the one path that would have run it. */
+  const cases: Record<string, unknown> = {
+    "out-of-bounds": { key: "count", label: "n", description: "n", kind: "integer", min: 1, max: 3, default: 99 },
+    "fractional": { key: "count", label: "n", description: "n", kind: "integer", min: 1, max: 3, default: 1.5 },
+    "forbidden-option": { key: "pick", label: "p", description: "p", kind: "select", options: ["allowed"], default: "FORBIDDEN" },
+    "contradictory-bounds": { key: "count", label: "n", description: "n", kind: "integer", min: 9, max: 2 },
+  };
+  for (const [id, parameter] of Object.entries(cases)) {
+    store.set(id, { id, config: { engine: "codex", model: "gpt-5.6-terra", effort: "high" }, promptScaffold: "Prompt {{count}}{{pick}}", origin: "local", seed: null });
+    (store.get(id) as unknown as { parameters: unknown }).parameters = [parameter];
+  }
+
+  const answer = await pageRead();
+  expect(answer.degraded).toBeNull();
+  for (const [id, parameter] of Object.entries(cases)) {
+    const blocked = row(answer.roles, id);
+    expect(blocked.launchable, id).toBe(false);
+    /* Named, so the operator knows which parameter to fix. */
+    expect(String(blocked.blockedReason), id).toContain((parameter as { key: string }).key);
+    const refused = await resolveSpawnRoleFromCatalog({ role: id });
+    expect(refused.ok, id).toBe(false);
+    expect(!refused.ok && refused.error, id).toContain("cannot launch");
+  }
+
+  /* A default INSIDE its own rules still launches, and still renders. */
+  store.set("sane-default", { id: "sane-default", config: { engine: "codex", model: "gpt-5.6-terra", effort: "high" }, promptScaffold: "Prompt {{count}}", origin: "local", seed: null });
+  (store.get("sane-default") as unknown as { parameters: unknown }).parameters = [{ key: "count", label: "n", description: "n", kind: "integer", min: 1, max: 3, default: 2 }];
+  const launch = await resolveSpawnRoleFromCatalog({ role: "sane-default" });
+  expect(launch).toEqual({ ok: true, value: { role: "sane-default", config: { engine: "codex", model: "gpt-5.6-terra", effort: "high" }, scaffold: "Prompt 2" } });
+  /* And the row of a healthy neighbour is untouched by any of the four. */
+  expect(row(answer.roles, CUSTOM).launchable).toBe(true);
+});
+
 test("a role whose runtime config the launch refuses is visible and says why", async () => {
   const catalog = await loadRoleCatalog();
   const builder = catalog.roles.find((role) => role.definition.id === "builder")!;

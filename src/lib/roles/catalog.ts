@@ -2,7 +2,8 @@ import { isDelegationDeniedRole } from "@/lib/agent/spawnAdmission";
 import { fleetctl, fleetctlInstalled, fleetctlMessage } from "@/lib/fleetctl/client";
 
 import { ROLE_DEFAULTS } from "./defaults";
-import { roleConfigError, resolveSpawnRole, type SpawnRoleResolution } from "./registry";
+import { defaultRoleParameterValues } from "./parameters";
+import { roleConfigError, resolveSpawnRole, validateRoleParams, type SpawnRoleResolution } from "./registry";
 import { loadRoleDefinitions } from "./store";
 import { ROLE_IDS, type RoleDefinition } from "./types";
 
@@ -236,12 +237,23 @@ function definitionOf(role: ConsoleRole, fallback: RoleDefinition | undefined): 
 }
 
 /** Why a launch would refuse this role: what the console said that cannot be
-    used, else the launch validator's own verdict. */
+    used, else the launch validator's own verdict — on the values a launch would
+    actually run with. */
 function launchComplaint(definition: RoleDefinition, complaints: readonly string[]): string | null {
   if (complaints.length) return complaints.join("; ");
   const missing = (["engine", "model", "effort"] as const).filter((field) => !definition.config[field]);
   if (missing.length) return `the console gave this role no ${missing.join(", ")}`;
-  return roleConfigError(definition);
+  const config = roleConfigError(definition);
+  if (config) return config;
+  /* The EFFECTIVE parameters, not the declared ones. `validateRoleParams`
+     checks a value the caller supplies, but resolves an omitted one to the
+     declared default and moves on — so a `default` outside its own `min`/`max`,
+     outside its own `options`, or under contradictory bounds reaches the
+     scaffold unchecked, and a launch that supplies nothing renders it. Handing
+     the defaults in as values runs them through the SAME checks, which is also
+     what makes `launchable` mean «this launches», not «this parses». */
+  const params = validateRoleParams(definition, defaultRoleParameterValues(definition), { requireRequired: false });
+  return params.ok ? null : params.error;
 }
 
 /** A console entry as one catalog row: its definition plus the verdicts, with
