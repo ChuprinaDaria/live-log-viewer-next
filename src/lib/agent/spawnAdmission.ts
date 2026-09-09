@@ -1,4 +1,5 @@
 import type { ViewerConversationId } from "@/lib/accounts/migration/contracts";
+import { ROLE_IDS } from "@/lib/roles/types";
 
 import type { RegistryFile, SpawnReceipt } from "./registry";
 import { VIEWER_SPAWN_ENDPOINT } from "./spawnPolicy";
@@ -12,7 +13,38 @@ export function isSpawnDeniedRole(role: string | null | undefined): boolean {
   return typeof role === "string" && SPAWN_DENIED_ROLE_IDS.includes(role);
 }
 
-export type SpawnRejectionCode = "reviewer_origin_spawn" | "nesting_depth_exceeded";
+/**
+ * A role whose delegation policy this board has never classified.
+ *
+ * The console's catalog can define roles beyond the seed eight, and every
+ * delegation policy here is still written in terms of those eight ids. A copy
+ * of `verifier` saved under a new id is therefore a role that reads as
+ * "unknown" to the deny-list while carrying verifier's whole prompt — which is
+ * exactly how an isolated role would regain the child access it is denied.
+ *
+ * So an unclassified role delegates NOTHING until it carries a policy of its
+ * own. The test is identity alone: never the model, never the prompt text,
+ * never a substring of the name, and never a flag the caller supplies — each of
+ * those is data the same actor controls.
+ */
+export function isUnclassifiedRole(role: string | null | undefined): boolean {
+  if (typeof role !== "string") return false;
+  const id = role.trim();
+  return id !== "" && !(ROLE_IDS as readonly string[]).includes(id);
+}
+
+/** Whether a role may delegate at all: the isolated seeds, plus everything this
+    board cannot yet classify. */
+export function isDelegationDeniedRole(role: string | null | undefined): boolean {
+  return isSpawnDeniedRole(role) || isUnclassifiedRole(role);
+}
+
+export type SpawnRejectionCode = "reviewer_origin_spawn" | "unclassified_role_spawn" | "nesting_depth_exceeded";
+
+/** The rejection code a denied origin earns, by which denial it is. */
+export function delegationRejectionCode(role: string | null | undefined): "reviewer_origin_spawn" | "unclassified_role_spawn" {
+  return isSpawnDeniedRole(role) ? "reviewer_origin_spawn" : "unclassified_role_spawn";
+}
 
 /** Who initiated a launch. Enforcement keys on this declared/authenticated
     initiator — never on the lineage parent, which may legitimately be a
@@ -54,6 +86,14 @@ export class SpawnAdmissionError extends Error {
 export function reviewerOriginSpawnGuidance(role: string | null): string {
   const label = role === "verifier" ? "Verifier" : "Reviewer";
   return `${label} sessions run every check in-session — filesystem, shell, GitHub, and browser access stay available, but child agents do not. For more perspectives, report the need to your parent so an operator or orchestrator adds a visible reviewer stage (POST /api/pipelines or POST ${VIEWER_SPAWN_ENDPOINT}).`;
+}
+
+export function unclassifiedRoleSpawnGuidance(role: string | null): string {
+  return `The role ${role ?? "(unnamed)"} comes from the operator's console and this board has no delegation policy for it, so it runs its own work but creates no child agents. Report the need to your parent; an operator can give the role a policy in the board's role contracts, or run the work under one of the classified roles.`;
+}
+
+export function delegationDeniedGuidance(role: string | null): string {
+  return isSpawnDeniedRole(role) ? reviewerOriginSpawnGuidance(role) : unclassifiedRoleSpawnGuidance(role);
 }
 
 export function nestingDepthGuidance(childDepth: number, maxDepth: number): string {

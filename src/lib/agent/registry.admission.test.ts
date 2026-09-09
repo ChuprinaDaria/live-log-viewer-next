@@ -343,6 +343,85 @@ test("a reviewer-origin launch is terminally rejected with a durable typed recei
   expect(Object.keys(store.snapshot().receipts).length).toBe(receiptsBefore);
 });
 
+/*
+ * The copy: console roles are launchable now, so `verifier`'s whole definition
+ * can be saved under an id the deny-list never heard of. The board's answer to
+ * both must be the same — at launch, on resume, and for the child request —
+ * or role isolation is one `role_create` away from being optional.
+ */
+test("a copy of an isolated role under a new id gets zero children at launch, on resume and for its child request", () => {
+  const { store } = registryAt("unclassified-copy");
+  const implementer = store.ensureConversation("codex", "/sessions/copy-implementer.jsonl", "terra");
+  const copyBegun = store.beginSpawnRequest({
+    engine: "codex",
+    cwd: "/repo",
+    role: "custom-verifier",
+    parentConversationId: implementer.id,
+    origin: { kind: "operator" },
+    launchProfile: { title: "Verify claims under a console role", allowSubagents: true },
+  });
+  if (copyBegun.kind !== "created") throw new Error("expected create");
+  /* Launch: the operator lane cannot hand native multi-agent tooling to a role
+     the board has no policy for, exactly as it cannot to the seed verifier. */
+  expect(copyBegun.receipt.launchProfile.allowSubagents).toBe(false);
+  expect(copyBegun.receipt.agentRole).toBe("custom-verifier");
+  const copyId = settleLaunch(store, copyBegun.receipt.launchId);
+
+  /* Resume: a sticky `allowSubagents: true` does not survive the merge. */
+  const resume = store.beginSpawnRequest({
+    engine: "codex",
+    cwd: "/repo",
+    conversationId: copyId,
+    purpose: "resume-successor",
+    origin: { kind: "successor" },
+    launchProfile: { allowSubagents: true },
+  });
+  if (resume.kind !== "created") throw new Error("expected create");
+  expect(resume.receipt.launchProfile.allowSubagents).toBe(false);
+
+  /* The child request: a terminal typed rejection, and a code that names THIS
+     policy rather than borrowing the review-isolation one. */
+  let rejected: InstanceType<typeof SpawnAdmissionError> | null = null;
+  try {
+    store.beginSpawnRequest({
+      engine: "codex",
+      cwd: "/repo",
+      parentConversationId: copyId,
+      role: "builder",
+      origin: { kind: "agent", conversationId: copyId },
+      clientAttemptId: "unclassified-child-attempt-1",
+      requestDigest: "digest-unclassified-1",
+      memberships: [],
+      launchProfile: { title: "Exercise denied delegation from a console role" },
+    });
+  } catch (error) {
+    rejected = error as InstanceType<typeof SpawnAdmissionError>;
+  }
+  expect(rejected).not.toBeNull();
+  expect(rejected!.receipt.rejection).toMatchObject({
+    code: "unclassified_role_spawn",
+    origin: { kind: "agent", conversationId: copyId, role: "custom-verifier", depth: 0 },
+    requestedRole: "builder",
+  });
+  const snapshot = store.snapshot();
+  expect(snapshot.receipts[rejected!.receipt.launchId]!.state).toBe("failed");
+  expect(snapshot.conversations[rejected!.receipt.conversationId]).toBeUndefined();
+  expect(snapshot.lineageEdges[rejected!.receipt.conversationId]).toBeUndefined();
+
+  /* And the ordinary console role is not collateral: it launches and settles
+     like any other, it simply delegates nothing. */
+  const plain = store.beginSpawnRequest({
+    engine: "codex",
+    cwd: "/repo",
+    role: "custom-scribe",
+    origin: { kind: "operator" },
+    launchProfile: { title: "Write the release note" },
+  });
+  if (plain.kind !== "created") throw new Error("expected create");
+  expect(plain.receipt.rejection).toBeNull();
+  expect(settleLaunch(store, plain.receipt.launchId)).toBeTruthy();
+});
+
 test("delegation depth records at birth and the ceiling rejects the child that would exceed it", () => {
   const { store } = registryAt("depth-chain");
   const root = spawnAtDepth(store, { kind: "operator" });

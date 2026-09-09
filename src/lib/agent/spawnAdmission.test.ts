@@ -3,11 +3,17 @@ import { expect, test } from "bun:test";
 import type { ViewerConversationId } from "@/lib/accounts/migration/contracts";
 
 import type { DurableConversationMembership, RegistryConversation, RegistryFile, SpawnLineageEdge } from "./registry";
+import { ROLE_IDS } from "@/lib/roles/types";
+
 import {
   SPAWN_DENIED_ROLE_IDS,
   conversationAgentRole,
   conversationDelegationDepth,
+  delegationDeniedGuidance,
+  delegationRejectionCode,
+  isDelegationDeniedRole,
   isSpawnDeniedRole,
+  isUnclassifiedRole,
   nestingDepthGuidance,
   resolveSpawnOrigin,
   reviewerOriginSpawnGuidance,
@@ -214,4 +220,47 @@ test("rejection guidance is actionable and names the escalation paths", () => {
   expect(reviewerOriginSpawnGuidance("verifier")).toStartWith("Verifier");
   expect(nestingDepthGuidance(3, 2)).toContain("depth 2");
   expect(nestingDepthGuidance(3, 2)).toContain("maxAgentNestingDepth");
+});
+
+/*
+ * Console roles are launchable now (§1.1), and every delegation policy on this
+ * board is still written in terms of the seed ids. A copy of `verifier` saved
+ * under a new id therefore used to read as "unknown" to the deny-list while
+ * carrying verifier's whole prompt — the one way an isolated role could regain
+ * the child access it is denied. The classification is by identity alone.
+ */
+
+test("a role the board cannot classify delegates nothing, and the seed eight are unchanged", () => {
+  for (const seed of ROLE_IDS) expect(isUnclassifiedRole(seed)).toBe(false);
+  expect(isUnclassifiedRole("custom-verifier")).toBe(true);
+  expect(isUnclassifiedRole("VERIFIER-copy")).toBe(true);
+  expect(isUnclassifiedRole(" builder ")).toBe(false);
+  expect(isUnclassifiedRole("")).toBe(false);
+  expect(isUnclassifiedRole(null)).toBe(false);
+
+  /* A copy of an isolated role is denied because its id is unclassified, and a
+     copy of a permitted one is denied for exactly the same reason: the policy
+     never looks at the model, the prompt, or a substring of the name. */
+  for (const copy of ["custom-verifier", "reviewer-2", "builder-frontend", "orchestrator_v2", "zzz"]) {
+    expect(isDelegationDeniedRole(copy)).toBe(true);
+  }
+  expect(isDelegationDeniedRole("reviewer")).toBe(true);
+  expect(isDelegationDeniedRole("verifier")).toBe(true);
+  /* The classified roles that may delegate keep delegating. */
+  for (const allowed of ["orchestrator", "builder", "architect", "cleaner", "prod-auditor", "deployer"]) {
+    expect(isDelegationDeniedRole(allowed)).toBe(false);
+  }
+  expect(isDelegationDeniedRole(null)).toBe(false);
+});
+
+test("each denial names itself, and neither guidance blames the wrong policy", () => {
+  expect(delegationRejectionCode("verifier")).toBe("reviewer_origin_spawn");
+  expect(delegationRejectionCode("custom-verifier")).toBe("unclassified_role_spawn");
+  expect(delegationDeniedGuidance("verifier")).toBe(reviewerOriginSpawnGuidance("verifier"));
+  const unclassified = delegationDeniedGuidance("custom-verifier");
+  expect(unclassified).toContain("custom-verifier");
+  expect(unclassified).toContain("no delegation policy");
+  /* It is not a review isolation notice: saying so would send the operator to
+     the wrong contract. */
+  expect(unclassified).not.toContain("in-session");
 });

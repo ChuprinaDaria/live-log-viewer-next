@@ -57,6 +57,9 @@ import { liveAccountConversationIds, type AccountLivenessOptions } from "./accou
 import { loadSpawnNestingPolicy } from "./nestingPolicy";
 import {
   SpawnAdmissionError,
+  delegationDeniedGuidance,
+  delegationRejectionCode,
+  isDelegationDeniedRole,
   isSpawnDeniedRole,
   nestingDepthGuidance,
   resolveSpawnOrigin,
@@ -2957,7 +2960,7 @@ function normalizeDelegationDepth(value: unknown): number | null {
 
 function normalizeSpawnRejection(value: SpawnRejection | null | undefined): SpawnRejection | null {
   if (!value || typeof value !== "object") return null;
-  if (value.code !== "reviewer_origin_spawn" && value.code !== "nesting_depth_exceeded") return null;
+  if (value.code !== "reviewer_origin_spawn" && value.code !== "unclassified_role_spawn" && value.code !== "nesting_depth_exceeded") return null;
   const origin = value.origin;
   if (!origin || (origin.kind !== "agent" && origin.kind !== "container")) return null;
   return {
@@ -4189,8 +4192,15 @@ export class AgentRegistry {
       /* Reviewer/verifier conversations never regain native multi-agent
          tooling (#393): the sticky-true resume merge and any historically
          corrupted profile are both overridden here, so restart adoption and
-         resume successors re-derive their launch flags from a denying profile. */
-      if (isSpawnDeniedRole(existingConversation?.agentRole)) profile.allowSubagents = false;
+         resume successors re-derive their launch flags from a denying profile.
+
+         The launch's OWN role is denied on the same line, so a fresh launch is
+         held to the contract by the durable chokepoint rather than by whichever
+         entry point happened to call it — the HTTP route is one caller of
+         several. It also covers a role the board cannot classify: the console
+         can define roles beyond the seed ids every policy here is written in,
+         and a copy of verifier under a fresh id must not out-rank verifier. */
+      if (isDelegationDeniedRole(existingConversation?.agentRole) || isDelegationDeniedRole(role)) profile.allowSubagents = false;
       /* A delegated conversation never acquires a plugin grant (#687): a role
          preset or a lineage parent denies it on resume, successor and restart
          adoption alike, whatever a stored or requested profile claims. */
@@ -4278,14 +4288,14 @@ export class AgentRegistry {
       let rejection: SpawnRejection | null = null;
       if (resolvedOrigin) {
         const maxDepth = loadSpawnNestingPolicy().maxAgentNestingDepth;
-        if (isSpawnDeniedRole(resolvedOrigin.role)) {
+        if (isDelegationDeniedRole(resolvedOrigin.role)) {
           rejection = {
-            code: "reviewer_origin_spawn",
+            code: delegationRejectionCode(resolvedOrigin.role),
             origin: resolvedOrigin,
             requestedRole: role,
             childDepth: childDepth ?? 0,
             maxDepth,
-            guidance: reviewerOriginSpawnGuidance(resolvedOrigin.role),
+            guidance: delegationDeniedGuidance(resolvedOrigin.role),
             rejectedAt: now(),
           };
         } else if (childDepth !== null && childDepth > maxDepth) {
