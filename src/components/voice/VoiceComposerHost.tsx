@@ -91,6 +91,8 @@ export function VoiceComposerHost() {
             deadHost={props.deadHost}
             sendBlockedReason={props.sendBlockedReason}
             placeholder={props.placeholder}
+            hideRuntimeControl={props.hideRuntimeControl}
+            mentionFiles={props.mentionFiles}
             dockNode={getVoiceComposerCardNode(cardId)}
           />
         );

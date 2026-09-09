@@ -101,7 +101,7 @@ export function MobileHqRoom({ files, host, renderSheet }: {
             block shows. */}
         {open ? <HqRuntimePanel file={file} identity={identity} /> : null}
         {file ? (
-          <HqConversation file={file} signature={signature} />
+          <HqConversation file={file} files={files} signature={signature} />
         ) : hq.status === null && !hq.failed ? (
           <div className="flex flex-1 items-center justify-center gap-2 text-body text-muted">
             <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
@@ -129,7 +129,7 @@ export function MobileHqRoom({ files, host, renderSheet }: {
 }
 
 /** The room's transcript and its composer, and nothing else. */
-function HqConversation({ file, signature }: { file: FileEntry; signature: { name: string; avatarUrl: string | null } }) {
+function HqConversation({ file, files, signature }: { file: FileEntry; files: readonly FileEntry[]; signature: { name: string; avatarUrl: string | null } }) {
   const { t } = useLocale();
   const { caps } = useAgentCapabilities(file);
   const deadHost = caps.surface === "dead";
@@ -149,6 +149,7 @@ function HqConversation({ file, signature }: { file: FileEntry; signature: { nam
         signature={signature}
       />
       <TmuxComposer
+        mentionFiles={files}
         file={file}
         deadHost={deadHost}
         sendBlockedReason={!deadHost && sendCap.state === "disabled" ? t(sendCap.reason) : null}
@@ -196,7 +197,7 @@ function HqRuntimeRows({ file }: { file: FileEntry }) {
         {rows.map((row) => (
           <div key={row.label} className="flex min-h-9 items-center justify-between gap-3">
             <dt className="shrink-0 text-body text-secondary">{row.label}</dt>
-            <dd className="min-w-0 truncate text-body font-semibold text-primary">{row.value}</dd>
+            <dd className="min-w-0 break-words text-right text-body font-semibold text-primary">{row.value}</dd>
           </div>
         ))}
       </dl>

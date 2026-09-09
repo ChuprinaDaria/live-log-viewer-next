@@ -1,6 +1,6 @@
 "use client";
 
-import { Archive, Building2, Info, MessagesSquare, Server, ShieldCheck, SlidersHorizontal, UserRound } from "lucide-react";
+import { Archive, Blocks, Building2, KeyRound, Info, MessagesSquare, Server, ShieldCheck, SlidersHorizontal, UserRound } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { ArchiveScreen } from "@/components/archive/ArchiveScreen";
@@ -61,23 +61,29 @@ function MobileSettingsScreen({ ctx }: { ctx: MobileRootContext }) {
   const card = "flex flex-col divide-y divide-border overflow-hidden rounded-surface border border-border bg-card";
   return (
     <MobileShell screen="settings" title={<MobileBarTitle>{t("mobile2.settings.title")}</MobileBarTitle>} host={ctx.host} renderSheet={ctx.renderSheet}>
-      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-y-contain px-3 py-3" data-mobile2-settings>
-        <div className={card}>
-          <MobileSheetRow icon={<UserRound className="h-[18px] w-[18px]" aria-hidden />} label={t("mobile2.menu.accounts")} attrs={{ "data-mobile2-go": "accounts" }} onSelect={() => nav.push({ kind: "accounts" })} />
-          {ctx.hostSheet ? (
-            <MobileSheetRow icon={<Info className="h-[18px] w-[18px]" aria-hidden />} label={t("mobile2.menu.host")} trailing={ctx.hostTrailing} attrs={{ "data-mobile2-open": "host" }} onSelect={() => nav.openSheet("host")} />
-          ) : null}
-        </div>
-        {/* The configuration console's own pages: the role catalog and the org
-            layer, both edited through fleetctl rather than beside it. */}
-        <div className={card}>
-          <MobileSheetRow icon={<Server className="h-[18px] w-[18px]" aria-hidden />} label={t("machines.title")} attrs={{ "data-mobile2-go": "machines" }} onSelect={() => nav.push({ kind: "machines" })} />
-          <MobileSheetRow icon={<SlidersHorizontal className="h-[18px] w-[18px]" aria-hidden />} label={t("roles.title")} attrs={{ "data-mobile2-go": "roles" }} onSelect={() => nav.push({ kind: "roles" })} />
-          <MobileSheetRow icon={<Building2 className="h-[18px] w-[18px]" aria-hidden />} label={t("firms.title")} attrs={{ "data-mobile2-go": "firms" }} onSelect={() => nav.push({ kind: "firms" })} />
-          <MobileSheetRow icon={<ShieldCheck className="h-[18px] w-[18px]" aria-hidden />} label={t("perms.title")} attrs={{ "data-mobile2-go": "permissions" }} onSelect={() => nav.push({ kind: "permissions" })} />
-          <MobileSheetRow icon={<MessagesSquare className="h-[18px] w-[18px]" aria-hidden />} label={t("channels.title")} attrs={{ "data-mobile2-go": "channels" }} onSelect={() => nav.push({ kind: "channels" })} />
-          <MobileSheetRow icon={<Archive className="h-[18px] w-[18px]" aria-hidden />} label={t("archive.title")} attrs={{ "data-mobile2-go": "archive" }} onSelect={() => nav.push({ kind: "archive" })} />
-        </div>
+      <div className="settings-scroll flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-y-contain px-3 py-3" data-mobile2-settings>
+        <section className="flex flex-col gap-2">
+          <h2 className="px-1 text-caption font-semibold text-secondary">{t("settings.work")}</h2>
+          <div className={card}>
+            <MobileSheetRow icon={<Building2 className="h-[18px] w-[18px]" aria-hidden />} label={t("firms.title")} attrs={{ "data-mobile2-go": "firms" }} onSelect={() => nav.push({ kind: "firms" })} />
+            <MobileSheetRow icon={<SlidersHorizontal className="h-[18px] w-[18px]" aria-hidden />} label={t("roles.title")} attrs={{ "data-mobile2-go": "roles" }} onSelect={() => nav.push({ kind: "roles" })} />
+            <MobileSheetRow icon={<Archive className="h-[18px] w-[18px]" aria-hidden />} label={t("archive.title")} attrs={{ "data-mobile2-go": "archive" }} onSelect={() => nav.push({ kind: "archive" })} />
+          </div>
+        </section>
+        <section className="flex flex-col gap-2">
+          <h2 className="px-1 text-caption font-semibold text-secondary">{t("settings.access")}</h2>
+          <div className={card}>
+            <MobileSheetRow icon={<UserRound className="h-[18px] w-[18px]" aria-hidden />} label={t("mobile2.menu.accounts")} attrs={{ "data-mobile2-go": "accounts" }} onSelect={() => nav.push({ kind: "accounts" })} />
+            <MobileSheetRow icon={<KeyRound className="h-[18px] w-[18px]" aria-hidden />} label={t("mobile2.tabs.secrets")} attrs={{ "data-mobile2-go": "secrets" }} onSelect={() => nav.push({ kind: "secrets" })} />
+            <MobileSheetRow icon={<ShieldCheck className="h-[18px] w-[18px]" aria-hidden />} label={t("perms.title")} attrs={{ "data-mobile2-go": "permissions" }} onSelect={() => nav.push({ kind: "permissions" })} />
+            <MobileSheetRow icon={<Blocks className="h-[18px] w-[18px]" aria-hidden />} label={t("mobile2.tabs.mcp")} attrs={{ "data-mobile2-go": "mcp" }} onSelect={() => nav.push({ kind: "mcp" })} />
+            <MobileSheetRow icon={<MessagesSquare className="h-[18px] w-[18px]" aria-hidden />} label={t("channels.title")} attrs={{ "data-mobile2-go": "channels" }} onSelect={() => nav.push({ kind: "channels" })} />
+            <MobileSheetRow icon={<Server className="h-[18px] w-[18px]" aria-hidden />} label={t("machines.title")} attrs={{ "data-mobile2-go": "machines" }} onSelect={() => nav.push({ kind: "machines" })} />
+            {ctx.hostSheet ? <MobileSheetRow icon={<Info className="h-[18px] w-[18px]" aria-hidden />} label={t("mobile2.menu.host")} trailing={ctx.hostTrailing} attrs={{ "data-mobile2-open": "host" }} onSelect={() => nav.openSheet("host")} /> : null}
+          </div>
+          <div className={card}><AutoBalanceToggle engine="claude" /><AutoBalanceToggle engine="codex" /></div>
+        </section>
+        <h2 className="px-1 text-caption font-semibold text-secondary">{t("settings.behavior")}</h2>
         <div className={card}>
           <div className="flex min-h-11 items-center gap-2 px-4">
             <span className="min-w-0 flex-1 text-body font-semibold text-primary">{t("mobile2.menu.sound")}</span>
@@ -85,13 +91,7 @@ function MobileSettingsScreen({ ctx }: { ctx: MobileRootContext }) {
           </div>
           <div className="px-2.5"><KeepAwakeMenuRow /></div>
         </div>
-        {/* Leaving an exhausted account is a thing that happens TO a running
-            conversation, so it lives beside the other switches rather than
-            hidden in an accounts screen the phone does not have. */}
-        <div className={card}>
-          <AutoBalanceToggle engine="claude" />
-          <AutoBalanceToggle engine="codex" />
-        </div>
+
       </div>
     </MobileShell>
   );

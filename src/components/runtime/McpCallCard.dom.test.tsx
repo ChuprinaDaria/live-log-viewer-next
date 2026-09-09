@@ -72,7 +72,8 @@ test("renders a pending MCP call with a live CSS progress treatment", () => {
   const container = render(toolEvent(), new Set());
   const card = container.querySelector('[data-testid="mcp-call-card"]');
   expect(card?.getAttribute("data-state")).toBe("pending");
-  expect(card?.textContent).toContain("Creating agent: gpt-5.6-sol xhigh reviewer · Review PR #431");
+  expect(card?.textContent).toContain("Create agent:");
+  expect(card?.textContent).toContain("Review PR #431");
   expect(container.querySelector('[data-testid="mcp-call-progress"]')?.className).toContain("animate-pulse");
 });
 
@@ -87,6 +88,7 @@ test("renders success and upgrades a disabled conversation chip when scanning ca
         conversationId: "conversation-431",
         transcriptPath: "/sessions/reviewer.jsonl",
         operationId: "op-1",
+        launchId: "op-1", state: "settled", initialMessage: "delivered",
       },
     },
   });
@@ -99,7 +101,7 @@ test("renders success and upgrades a disabled conversation chip when scanning ca
   const ready = container.querySelector('[data-testid="mcp-link-conversation"]');
   expect(ready?.getAttribute("href")).toBe("#c=conversation-431");
   expect(ready?.getAttribute("aria-disabled")).toBeNull();
-  expect(container.textContent).toContain("Open agent");
+  expect(container.textContent).toContain("Open conversation");
   expect(container.textContent).toContain("750ms");
 });
 
@@ -128,7 +130,7 @@ test("renders structured MCP failures with their error text", () => {
   const card = container.querySelector('[data-testid="mcp-call-card"]');
   expect(card?.getAttribute("data-state")).toBe("error");
   expect(card?.textContent).toContain("MCP process restarted during the call");
-  expect(card?.textContent).toContain("Retryable");
+  expect(card?.querySelector('[role="alert"]')?.textContent).toContain("MCP process restarted during the call");
 });
 
 test("marks an idempotent replay in the completed card", () => {
@@ -163,4 +165,23 @@ test("routes task chips through the viewer entity navigation channel", () => {
   } finally {
     window.removeEventListener("llv:mcp-navigate", listener);
   }
+});
+
+test("a conflicted spawn recovery shows the refusal even when the tool wrapper says ok", () => {
+  const container = render(toolEvent({ status: "ok", mcp: { ...toolEvent().mcp!, result: {
+    ok: true, outcome: "settled", state: "conflicted", launched: false,
+    conversationId: "conversation_conflict", launchId: "launch_conflict", reason: "The launch owner conflicts with the receipt",
+  } } }));
+  expect(container.querySelector('[data-agent-action]')?.getAttribute("data-delivery")).toBe("failed");
+  expect(container.querySelector("summary")?.textContent).toContain("Action failed");
+  expect(container.querySelector('[role="alert"]')?.textContent).toContain("The launch owner conflicts");
+});
+
+test("an outcome_unknown refusal remains unconfirmed instead of displaying a final failure", () => {
+  const container = render(toolEvent({ status: "err", mcp: { ...toolEvent().mcp!, toolName: "send_message", result: {
+    ok: false, code: "outcome_unknown", details: { outcome: "unknown", nextAction: "original-key-lookup", conversationId: "conversation_uncertain" },
+  } } }));
+  expect(container.querySelector('[data-agent-action]')?.getAttribute("data-delivery")).toBe("unknown");
+  expect(container.querySelector("summary")?.textContent).toContain("Delivery not confirmed");
+  expect(container.querySelector('[role="alert"]')).toBeNull();
 });

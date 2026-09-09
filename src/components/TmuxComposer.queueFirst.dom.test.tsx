@@ -160,3 +160,37 @@ test("clicking Send is queue-first: the button (form submit) enqueues an optimis
 test("pressing Enter is queue-first: identical optimistic bubble and clear as clicking Send", async () => {
   await expectQueueFirst((_host, textarea) => pressEnter(textarea), "sent via enter");
 });
+
+for (const remount of [false, true]) {
+  test(`a chosen HQ mention keeps its ID in a regular card after ${remount ? "draft remount" : "surface switch"}`, async () => {
+    stubFetch();
+    const reviewer = { ...file, conversationId: "conversation_reviewer", title: "Reviewer" };
+    let { host, root } = await renderInto(<TmuxComposer file={file} mentionFiles={[reviewer]} />);
+    try {
+      await settle(() => typeInto("@Rev"));
+      let textarea = host.querySelector("textarea") as HTMLTextAreaElement;
+      const propsKey = Object.keys(textarea).find((key) => key.startsWith("__reactProps$"))!;
+      const props = (textarea as unknown as Record<string, { onFocus(): void; onSelect(event: unknown): void }>)[propsKey]!;
+      await settle(() => { props.onFocus(); textarea.setSelectionRange(4, 4); props.onSelect({ currentTarget: textarea }); });
+      const option = document.querySelector('[role="option"]') as HTMLElement;
+      expect(option).not.toBeNull();
+      await settle(() => option.click());
+      expect(textarea.value).toBe("@Reviewer ");
+      expect(sessionStorage.getItem("llvAgentMentionDraft:conv-queuefirst")).toContain("conversation_reviewer");
+      if (remount) {
+        await act(async () => root.unmount());
+        ({ host, root } = await renderInto(<TmuxComposer file={file} />));
+      } else {
+        await settle(() => root.render(<TmuxComposer file={file} />));
+      }
+      textarea = host.querySelector("textarea") as HTMLTextAreaElement;
+      expect(textarea.getAttribute("aria-autocomplete")).toBeNull();
+      expect(textarea.value).toBe("@Reviewer ");
+      await settle(() => host.querySelector("form")!.dispatchEvent(new dom.Event("submit", { bubbles: true, cancelable: true }) as unknown as Event));
+      expect(readOutbox("conv-queuefirst").map((entry) => entry.text)).toEqual(["[@Reviewer](#c=conversation_reviewer) "]);
+      expect(sessionStorage.getItem("llvAgentMentionDraft:conv-queuefirst")).toBeNull();
+    } finally {
+      await act(async () => root.unmount());
+    }
+  });
+}

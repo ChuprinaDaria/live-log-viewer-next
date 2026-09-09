@@ -86,7 +86,7 @@ export function MobileSecretsScreen({ host, renderSheet }: { host: MobileShellHo
 
   return (
     <MobileShell screen="secrets" title={<MobileBarTitle>{t("mobile2.tabs.secrets")}</MobileBarTitle>} host={host} renderSheet={renderSheet}>
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-y-contain px-3 py-3" data-mobile2-secrets>
+      <div className="settings-scroll flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto overscroll-y-contain px-3 py-3" data-mobile2-secrets>
         {error ? (
           <Degraded
             title={t(error === "INVENTORY_MISSING" ? "secrets.emptyMissing" : "secrets.emptyUnreadable")}

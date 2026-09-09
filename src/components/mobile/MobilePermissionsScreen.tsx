@@ -55,9 +55,9 @@ function RuleRow({
   return (
     <div data-perm-rule={rule} className="flex min-h-11 items-center gap-2 px-4 py-1.5">
       <span className="flex min-w-0 flex-1 flex-col">
-        <span className={`truncate font-mono text-label ${shadowed ? "text-muted line-through" : "text-primary"}`}>{rule}</span>
-        {from ? <span className="truncate text-caption text-muted">{from}</span> : null}
-        {shadowed ? <span className="truncate text-caption text-muted">{t("perms.shadowed")}</span> : null}
+        <span className={`break-all font-mono text-label ${shadowed ? "text-muted line-through" : "text-primary"}`}>{rule}</span>
+        {from ? <span className="break-words text-caption text-muted">{from}</span> : null}
+        {shadowed ? <span className="break-words text-caption text-muted">{t("perms.shadowed")}</span> : null}
       </span>
       {locked ? (
         <span className="shrink-0 text-caption text-muted">{t("perms.protected")}</span>
@@ -147,7 +147,7 @@ export function MobilePermissionsScreen({ host, renderSheet }: { host: MobileShe
 
   return (
     <MobileShell screen="permissions" title={<MobileBarTitle>{t("perms.title")}</MobileBarTitle>} host={host} renderSheet={renderSheet}>
-      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-y-contain px-3 py-3" data-mobile2-permissions>
+      <div className="settings-scroll flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-y-contain px-3 py-3" data-mobile2-permissions>
         {perms.error ? (
           <div role="status" className="flex flex-col gap-2 px-1 text-label text-danger">
             <p>{perms.error === "UNREACHABLE" ? t("list.failed") : perms.error}</p>

@@ -43,7 +43,7 @@ export function MobileFirmsScreen({ host, renderSheet }: { host: MobileShellHost
 
   return (
     <MobileShell screen="firms" title={<MobileBarTitle>{t("firms.title")}</MobileBarTitle>} back host={host} renderSheet={renderSheet}>
-      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-y-contain px-3 py-3" data-mobile2-firms>
+      <div className="settings-scroll flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-y-contain px-3 py-3" data-mobile2-firms>
         {org.error && !org.firms ? (
           <p className="px-6 pt-10 text-center text-body text-secondary" data-mobile2-firms-error>{t("firms.unreachable")}</p>
         ) : org.firms === null ? (

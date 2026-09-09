@@ -130,3 +130,18 @@ test("the feed renders the Bash call as a shell card and the viewer call as an M
   expect(viewerHtml).toContain("mcp-call-card");
   expect(viewerHtml).toContain("Updating pipeline");
 });
+
+test("agent message disclosure retains multiline text beyond the old 4000-character field cap", () => {
+  const text = "Line one\n".repeat(700);
+  const feed = buildFeed(claudeFile, [attributed({ type: "tool_use", id: "message-long", name: "mcp__viewer__send_message", input: { conversationId: "conversation_worker", text } }, "2026-01-01T10:00:00Z")], false, "");
+  const call = feed.items.find((item) => item.kind === "tool");
+  expect(call?.kind === "tool" && call.mcp?.args.text).toBe(text);
+  expect(call?.kind === "tool" && call.mcp?.textTruncated).toBe(false);
+});
+
+test("a message beyond the bounded preview explicitly marks its shortening", () => {
+  const feed = buildFeed(claudeFile, [attributed({ type: "tool_use", id: "message-bounded", name: "mcp__viewer__send_message", input: { text: "word ".repeat(5000) } }, "2026-01-01T10:00:00Z")], false, "");
+  const call = feed.items.find((item) => item.kind === "tool");
+  expect(call?.kind === "tool" && call.mcp?.textTruncated).toBe(true);
+  expect(call?.kind === "tool" && (call.mcp?.args.text as string).length).toBe(20_001);
+});

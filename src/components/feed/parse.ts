@@ -68,6 +68,7 @@ export type Orchestration = { source: string; sourceTruncated: boolean; calls: N
 export type WakeupEventInfo = WakeupInfo & { superseded: boolean; failed: boolean };
 
 export type ViewerMcpCall = {
+  textTruncated?: boolean;
   serverName: string;
   toolName: string;
   args: Record<string, unknown>;
@@ -715,7 +716,7 @@ function boundedMcpRecord(value: unknown): Record<string, unknown> {
     if (typeof item === "string") {
       if (/^data:image\//i.test(item)) return `[image data · ${item.length} chars]`;
       const safe = redactTranscriptText(item);
-      const limit = Math.max(0, Math.min(RECORD_FIELD_MAX, remaining));
+      const limit = Math.max(0, Math.min(depth === 1 && (key === "text" || key === "prompt") ? 20_000 : RECORD_FIELD_MAX, remaining));
       remaining -= Math.min(safe.length, limit);
       return safe.length > limit ? safe.slice(0, limit) + "…" : safe;
     }
@@ -732,6 +733,17 @@ function boundedMcpRecord(value: unknown): Record<string, unknown> {
     return output;
   };
   return rec(visit(value, "", 0));
+}
+
+function boundedViewerMcpCall(call: ViewerMcpCall): ViewerMcpCall {
+  const args = boundedMcpRecord(call.args);
+  return {
+    ...call,
+    args,
+    textTruncated: ["text", "prompt"].some((key) => typeof call.args[key] === "string"
+      && args[key] !== redactTranscriptText(call.args[key] as string)),
+    result: call.result ? boundedMcpRecord(call.result) : null,
+  };
 }
 
 function parseMemCitation(matchText: string, entriesText: string, idsText: string): MemCitationItem {
@@ -1666,11 +1678,7 @@ export function createFeedSession(cfg: FeedSessionConfig): FeedSession {
          change is visible without a click (issue #90). */
       open: Boolean(body),
       ...(opts.wakeup ? { wakeup: opts.wakeup } : {}),
-      ...(opts.mcp ? { mcp: {
-        ...opts.mcp,
-        args: boundedMcpRecord(opts.mcp.args),
-        result: opts.mcp.result ? boundedMcpRecord(opts.mcp.result) : null,
-      } } : {}),
+      ...(opts.mcp ? { mcp: boundedViewerMcpCall(opts.mcp) } : {}),
     };
     return retainSessionOwner(event, session?.owner);
   };

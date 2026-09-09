@@ -23,6 +23,8 @@ import { getLocale, useLocale } from "@/lib/i18n";
 import type { FileEntry } from "@/lib/types";
 import type { RuntimeReceipt } from "@/components/runtime/runtimeModel";
 
+import { useMentionBindings } from "./composer/useMentionBindings";
+import { liveAgentMentions } from "./composer/agentMentions";
 import { ComposerBar, composerSlotKind, type ComposerSlotKind } from "./ComposerBar";
 import { chatState } from "./mobile/mobileChatState";
 import { SelectedContextBadge } from "./SelectedContextBadge";
@@ -1357,6 +1359,7 @@ export function structuredComposerSession(runtimeSession: RuntimeSessionView | n
 }
 
 export interface TmuxComposerProps {
+  mentionFiles?: readonly FileEntry[];
   file: FileEntry;
   pollPaused?: boolean;
   deadHost?: boolean;
@@ -1425,9 +1428,10 @@ function VoiceComposerCardSlot({ cardId, composerProps, primary }: { cardId: str
       deadHost: composerProps.deadHost ?? false,
       sendBlockedReason: composerProps.sendBlockedReason ?? null,
       placeholder: composerProps.placeholder,
+      mentionFiles: composerProps.mentionFiles,
       hideRuntimeControl: composerProps.hideRuntimeControl ?? false,
     });
-  }, [cardId, composerProps.deadHost, composerProps.file, composerProps.hideRuntimeControl, composerProps.placeholder, composerProps.pollPaused, composerProps.sendBlockedReason, placeId]);
+  }, [cardId, composerProps.mentionFiles, composerProps.deadHost, composerProps.file, composerProps.hideRuntimeControl, composerProps.placeholder, composerProps.pollPaused, composerProps.sendBlockedReason, placeId]);
   return <div ref={publishNode} data-testid="voice-composer-card-slot" className="contents" />;
 }
 
@@ -1445,6 +1449,7 @@ export function TmuxComposerCore({
   sendBlockedReason = null,
   placeholder,
   hideRuntimeControl = false,
+  mentionFiles,
   dockNode,
 }: TmuxComposerProps & {
   /** Absent: render the form inline (the card owns the composer, as ever).
@@ -1459,6 +1464,7 @@ export function TmuxComposerCore({
      path under the target account, and the draft/held receipts must ride along
      (falls back to path pre-migration). */
   const cardId = conversationIdentity(file);
+  const mentionBindings = useMentionBindings(cardId);
   // The structured session Stop/Send route through — the conversation's own
   // structured host, or the ROOT's for a structured-root subagent (finding 1),
   // so a claude-broker root's child sends via /api/runtime/send, never /api/tmux.
@@ -2022,7 +2028,7 @@ export function TmuxComposerCore({
       requestAnimationFrame(() => {
         const el = inputRef.current;
         if (!el) return;
-        el.focus();
+        el.focus({ preventScroll: true });
         el.setSelectionRange(el.value.length, el.value.length);
       });
     };
@@ -2102,7 +2108,10 @@ export function TmuxComposerCore({
      leaves the composer's typed text and staged tiles exactly where they were. */
   const queueSubmit = (overrideText?: string, options?: { preserveDraft?: boolean }) => {
     const preserveDraft = options?.preserveDraft ?? false;
-    const requestedText = overrideText ?? textRef.current;
+    const draftText = overrideText ?? textRef.current;
+    // The catalog controls suggestions only. A saved recipient survives HQ →
+    // card navigation and draft remounts even when no picker is available.
+    const requestedText = mentionBindings.resolve(draftText);
     const requestedImages: PendingImage[] = preserveDraft ? [] : attachments.imagesRef.current.map((image) => ({ ...image }));
     const requestedFiles: PendingFile[] = preserveDraft ? [] : attachments.filesRef.current.map((file) => ({ ...file }));
     if (voiceSending || reconcilingSend) return;
@@ -2161,11 +2170,12 @@ export function TmuxComposerCore({
       return;
     }
     if (!preserveDraft) {
+      mentionBindings.clear();
       setText("");
       attachments.clearAll();
     }
     setStatus(null);
-    inputRef.current?.focus();
+    inputRef.current?.focus({ preventScroll: true });
   };
 
   const send = async (overrideText?: string, retry?: { receiptId?: number; clientMessageId?: string }, outboxId?: string) => {
@@ -2447,7 +2457,7 @@ export function TmuxComposerCore({
       }
       /* A queued delivery must never steal focus back: the operator may
          already be typing the next message. */
-      if (!outboxId) inputRef.current?.focus();
+      if (!outboxId) inputRef.current?.focus({ preventScroll: true });
     };
     const responseEpoch = legacyResponseEpoch.current;
     let admissionRequest: Promise<ComposerSendResult> | null = null;
@@ -2561,7 +2571,7 @@ export function TmuxComposerCore({
             settleOutboxFromReceipt(receipt);
             if (idempotencyKey.current === clientMessageId) idempotencyKey.current = mintIdempotencyKey();
             if (receipt.status === "delivered") setStatus({ kind: "ok", text: t("common.sent") });
-            if (!outboxId) inputRef.current?.focus();
+            if (!outboxId) inputRef.current?.focus({ preventScroll: true });
             return;
           }
           /* A definitive rejection consumed the key — the next submit is a new
@@ -2611,7 +2621,7 @@ export function TmuxComposerCore({
         if (idempotencyKey.current === clientMessageId) idempotencyKey.current = mintIdempotencyKey();
         settleGeneration(payloadText, attempt?.images ?? sentImages, attempt?.files ?? sentFiles);
         settleOutboxFromReceipt(json.receipt);
-        if (!outboxId) inputRef.current?.focus();
+        if (!outboxId) inputRef.current?.focus({ preventScroll: true });
         return;
       }
       if (json.structured) {
@@ -2758,7 +2768,7 @@ export function TmuxComposerCore({
     setText(receipt.text);
     setStatus(null);
     requestAnimationFrame(() => {
-      inputRef.current?.focus();
+      inputRef.current?.focus({ preventScroll: true });
       inputRef.current?.setSelectionRange(receipt.text!.length, receipt.text!.length);
     });
   };
@@ -2890,6 +2900,8 @@ export function TmuxComposerCore({
 
   const composerBar = (
     <ComposerBar
+      onMentionChoose={mentionBindings.choose}
+      mentionAgents={mentionFiles ? liveAgentMentions(mentionFiles, file.conversationId) : undefined}
       composer={composer}
       placeholder={placeholder ?? (isMobile && phonePlaceholder
         ? phonePlaceholder
