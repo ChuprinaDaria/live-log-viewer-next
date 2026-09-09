@@ -20,6 +20,9 @@ export function MobileRolesScreen({ host, renderSheet }: { host: MobileShellHost
   const [open, setOpen] = useState<string | null>(null);
   const fromConsole = roles.source === "fleetctl";
   const degraded = degradationKey(roles.degraded);
+  /* Rows kept from the last good read stay readable, and stay put — but the
+     console cannot take a write right now, so nothing offers one. */
+  const writable = fromConsole && !roles.degraded;
 
   return (
     <MobileShell screen="roles" title={<MobileBarTitle>{t("roles.title")}</MobileBarTitle>} back host={host} renderSheet={renderSheet}>
@@ -36,8 +39,8 @@ export function MobileRolesScreen({ host, renderSheet }: { host: MobileShellHost
         {roles.error || degraded ? (
           <div role="alert" className="mb-3 flex flex-col gap-2 rounded-surface border border-danger/40 bg-card px-3 py-2" data-mobile2-roles-error>
             <p className="text-body leading-snug text-danger">
-              {roles.error ? t(roles.roles ? "roles.stale" : "roles.unreachable", { at: roleClock(roles.readAt) }) : null}
-              {roles.error && degraded ? " " : null}
+              {roles.error || roles.stale ? t(roles.roles ? "roles.stale" : "roles.unreachable", { at: roleClock(roles.readAt) }) : null}
+              {(roles.error || roles.stale) && degraded ? " " : null}
               {degraded ? t(degraded, { detail: roles.degraded?.detail ?? "" }) : null}
             </p>
             <button
@@ -59,7 +62,7 @@ export function MobileRolesScreen({ host, renderSheet }: { host: MobileShellHost
               <RoleRowView
                 key={role.id}
                 role={role}
-                editable={fromConsole && role.editable === true}
+                editable={writable && role.editable === true}
                 open={open === role.id}
                 onToggle={() => setOpen((was) => (was === role.id ? null : role.id))}
                 save={roles.save}
@@ -84,12 +87,21 @@ function RoleRowView({ role, editable, open, onToggle, save }: {
   const [busy, setBusy] = useState<"save" | "reset" | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const [unconfirmed, setUnconfirmed] = useState<string | null>(null);
+  /* What the unconfirmed write sent. A later read that shows exactly this is
+     the confirmation the write never got, so the warning retires itself —
+     otherwise «not confirmed» would sit above a textarea and a disabled Save
+     that both already agree with the console. */
+  const [unconfirmedText, setUnconfirmedText] = useState<string | null>(null);
   // Refresh follows the server only while clean. A local edit survives an
   // external change; our own successful Save/Reset adopts its read-back text.
   const [pinned, setPinned] = useState(role.promptScaffold);
   if (pinned !== role.promptScaffold) {
     if (draft === pinned) setDraft(role.promptScaffold);
     setPinned(role.promptScaffold);
+  }
+  if (unconfirmed !== null && unconfirmedText !== null && role.promptScaffold === unconfirmedText) {
+    setUnconfirmed(null);
+    setUnconfirmedText(null);
   }
   const dirty = draft !== role.promptScaffold;
   const blocked = role.launchable === false;
@@ -103,6 +115,9 @@ function RoleRowView({ role, editable, open, onToggle, save }: {
        the text on screen is what we sent, not what the console holds, and the
        operator is told to re-read rather than to write again. */
     setUnconfirmed(result.unconfirmed ?? null);
+    setUnconfirmedText(result.unconfirmed === undefined
+      ? null
+      : ("reset" in change ? role.seedPromptScaffold ?? null : change.prompt ?? null));
     if (result.role && !result.error) {
       setDraft(result.role.promptScaffold);
       setPinned(result.role.promptScaffold);
@@ -135,6 +150,10 @@ function RoleRowView({ role, editable, open, onToggle, save }: {
             ? <p className="text-caption leading-snug text-danger" data-mobile2-role-reason>{t("roles.blocked", { reason: role.blockedReason ?? "" })}</p>
             : <p className="text-caption leading-snug text-secondary">{t("roles.launchable")}</p>}
           {unsupported ? <p className="text-caption leading-snug text-secondary" data-mobile2-role-unsupported>{t("roles.unsupportedConsumers")}</p> : null}
+          {/* Delegation is a policy, not a preference: a role the board cannot
+              classify launches, but creates no child agents. Said here, not
+              discovered when a child spawn is refused mid-run. */}
+          {role.canDelegate === false ? <p className="text-caption leading-snug text-secondary" data-mobile2-role-nodelegation>{t("roles.noDelegation")}</p> : null}
           {role.origin === "local" ? <p className="text-caption leading-snug text-secondary" data-mobile2-role-own>{t("roles.own")}</p> : null}
           <p className="text-caption leading-snug text-muted">{t("roles.runtimeConsoleOnly")}</p>
           {!editable ? <p className="text-caption text-secondary">{t("roles.readOnly")}</p> : null}

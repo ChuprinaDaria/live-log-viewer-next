@@ -34,6 +34,8 @@ export interface RoleRow {
   blockedReason?: string | null;
   /** Consumers that refuse this role BEFORE a launch. */
   unsupported?: readonly ("pipeline" | "mcp")[];
+  /** A session in this role may create child agents. */
+  canDelegate?: boolean;
   grants?: { mcp: string[]; skills: string[] };
 }
 
@@ -51,6 +53,9 @@ export interface RolesRead {
   source: string | null;
   /** When the shown catalog was read, so a stale list can date itself. */
   readAt: string | null;
+  /** The shown rows are the last good console read, kept through a degraded
+      refresh rather than replaced by the built-in list. */
+  stale: boolean;
   error: string | null;
   degraded: RolesDegradation | null;
   loading: boolean;
@@ -77,7 +82,11 @@ export function useRoles(): RolesRead {
   const [roles, setRoles] = useState<RoleRow[] | null>(null);
   const [source, setSource] = useState<string | null>(null);
   const [readAt, setReadAt] = useState<string | null>(null);
+  const [stale, setStale] = useState(false);
   const [degraded, setDegraded] = useState<RolesDegradation | null>(null);
+  /** The last read that actually came from the console. A degraded refresh is
+      compared against it rather than replacing it. */
+  const fromConsole = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -99,11 +108,24 @@ export function useRoles(): RolesRead {
       if (!current()) return;
       if (!response.ok || !body.roles) setError(body.error ?? `HTTP ${response.status}`);
       else {
+        const degradedNow = body.degraded ?? null;
+        setDegraded(degradedNow);
+        setError(null);
+        /* A degraded refresh does NOT swap the console's catalog for the
+           built-in one. The built-in list is not fresher, it is a different
+           list: the operator's additional roles are simply absent from it, so
+           adopting it retires those rows — and an open editor loses the draft
+           inside one. The last good read stays on screen, dated and marked
+           stale, which is also what the audit's own table asks for. */
+        if (degradedNow && fromConsole.current) {
+          setStale(true);
+          return;
+        }
+        fromConsole.current = !degradedNow;
+        setStale(false);
         setRoles(body.roles);
         setSource(body.source ?? null);
         setReadAt(body.readAt ?? null);
-        setDegraded(body.degraded ?? null);
-        setError(null);
       }
     } catch (cause) {
       if (current() && (cause as { name?: string }).name !== "AbortError") setError("UNREACHABLE");
@@ -147,7 +169,7 @@ export function useRoles(): RolesRead {
     }
   }, []);
 
-  return { roles, source, readAt, error, degraded, loading, refresh: () => load(), save };
+  return { roles, source, readAt, stale, error, degraded, loading, refresh: () => load(), save };
 }
 
 /** The one-line summary under a role's name: engine, model, effort. */

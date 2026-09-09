@@ -2851,6 +2851,7 @@ export const en = {
   "roles.launchable": "Available for a new launch.",
   "roles.blockedBadge": "won’t launch",
   "roles.blocked": "Cannot launch: {reason}",
+  "roles.noDelegation": "Creates no sub-agents: the board has no delegation policy for this role. It launches; its children do not.",
   "roles.unsupportedConsumers": "Pipelines and MCP launches do not accept this role — those inputs take the built-in eight only. They refuse before a launch, not after.",
   "roles.runtimeConsoleOnly": "Engine, model and effort are edited in the console only; the prompt is edited here.",
   "roles.nextRunOnly": "Applies to future launches — agents already running are not reconfigured.",

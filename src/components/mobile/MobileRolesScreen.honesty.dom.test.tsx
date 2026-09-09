@@ -166,8 +166,12 @@ test("a degraded read names its reason above the list it is still showing, with 
   expect(q(host, "[data-mobile2-roles-retry]")).not.toBeNull();
   /* The list itself is still there: a failed read must not blank the catalog. */
   expect(q(host, "[data-mobile2-role='builder']")).not.toBeNull();
-  /* And nothing is editable while the console is unreachable. */
-  expect(q(host, "[data-mobile2-roles-source]")?.textContent).toContain(uk("roles.sourceFallback", { count: 1, at: "" }).split("·")[0].trim());
+  /* The header keeps naming the read that produced these rows — they ARE the
+     console's, read at 7:00 — while the alert carries the failure. Claiming
+     «built-in roles» here would rename a list that never changed. */
+  expect(q(host, "[data-mobile2-roles-source]")?.textContent).toContain(new Date("2026-09-09T07:00:00.000Z").toLocaleTimeString());
+  /* And nothing offers a write the console cannot take. */
+  expect(q(host, "[data-mobile2-role-save='builder']")).toBeNull();
 });
 
 test("a role the launch path refuses says why, and its neighbour stays launchable", async () => {
@@ -230,4 +234,87 @@ test("an external refresh keeps an unsaved draft and does not pass it off as sav
   /* Save is still offered: the draft is still unsaved, and the row now differs
      from the console's newer text. */
   expect((q(host, "[data-mobile2-role-save='builder']") as unknown as { disabled: boolean }).disabled).toBe(false);
+});
+
+/*
+ * The two ways the previous round still lied on this screen.
+ *
+ * The degradation case must use a role the BUILT-IN catalog does not contain —
+ * an additional console role. A test that degrades from a seed role to the same
+ * seed role never unmounts a row, and so never notices that a degraded refresh
+ * retired the operator's open editor along with their draft.
+ */
+
+test("a degraded refresh keeps the console's rows, and the draft inside an open one", async () => {
+  const host = await mount();
+  await flush(() => pending[0].answer({
+    source: "fleetctl", readAt: "2026-09-09T07:00:00.000Z", degraded: null, roles: [seedRole, ownRole],
+  }));
+  await click(host.querySelector("[data-mobile2-role='custom-reviewer'] button"));
+  await typeInto(q(host, "textarea"), "My unsaved draft");
+
+  /* The console goes away, and its answer is the built-in eight — a list this
+     role is simply not in. */
+  await click(host.querySelector("[data-mobile2-roles] button"));
+  await flush(() => pending[1].answer({
+    source: "fallback", readAt: "2026-09-09T07:05:00.000Z",
+    degraded: { reason: "console-unavailable", detail: "console unavailable" },
+    roles: [seedRole],
+  }));
+
+  /* The row is still there, still open, still holding what was typed. */
+  expect(q(host, "[data-mobile2-role='custom-reviewer']")).not.toBeNull();
+  expect((q(host, "textarea") as unknown as { value: string }).value).toBe("My unsaved draft");
+  /* Dated by the read that actually produced these rows, not by the failure. */
+  expect(q(host, "[data-mobile2-roles-source]")?.textContent).toContain(new Date("2026-09-09T07:00:00.000Z").toLocaleTimeString());
+  expect(q(host, "[data-mobile2-roles-error]")?.textContent).toContain(uk("roles.degradedUnavailable", { detail: "console unavailable" }));
+  /* And nothing offers a write the console cannot take. */
+  expect(q(host, "[data-mobile2-role-save='custom-reviewer']")).toBeNull();
+
+  /* When the console comes back, the fresh catalog takes over again. */
+  await click(host.querySelector("[data-mobile2-roles-retry]"));
+  await flush(() => pending[2].answer({
+    source: "fleetctl", readAt: "2026-09-09T07:09:00.000Z", degraded: null,
+    roles: [seedRole, { ...ownRole, promptScaffold: "Console changed it" }],
+  }));
+  expect(q(host, "[data-mobile2-roles-error]")).toBeNull();
+  expect((q(host, "textarea") as unknown as { value: string }).value).toBe("My unsaved draft");
+  expect(q(host, "[data-mobile2-role-save='custom-reviewer']")).not.toBeNull();
+});
+
+test("a re-read that shows the written prompt retires the unconfirmed notice", async () => {
+  const host = await mount();
+  await flush(() => pending[0].answer({ source: "fleetctl", readAt: null, degraded: null, roles: [seedRole] }));
+  await click(host.querySelector("[data-mobile2-role='builder'] button"));
+  await typeInto(q(host, "textarea"), "Edited prompt");
+  await click(q(host, "[data-mobile2-role-save='builder']"));
+  await flush(() => pending[1].answer({ written: true, role: null, unconfirmed: "store busy" }));
+  expect(q(host, "[data-mobile2-role-unconfirmed]")).not.toBeNull();
+
+  /* The re-read is the confirmation the write never got. */
+  await click(host.querySelector("[data-mobile2-roles] button"));
+  await flush(() => pending[2].answer({
+    source: "fleetctl", readAt: null, degraded: null,
+    roles: [{ ...seedRole, promptScaffold: "Edited prompt" }],
+  }));
+  expect(q(host, "[data-mobile2-role-unconfirmed]")).toBeNull();
+  expect((q(host, "[data-mobile2-role-save='builder']") as unknown as { disabled: boolean }).disabled).toBe(true);
+});
+
+test("a re-read that shows something else leaves the unconfirmed notice standing", async () => {
+  const host = await mount();
+  await flush(() => pending[0].answer({ source: "fleetctl", readAt: null, degraded: null, roles: [seedRole] }));
+  await click(host.querySelector("[data-mobile2-role='builder'] button"));
+  await typeInto(q(host, "textarea"), "Edited prompt");
+  await click(q(host, "[data-mobile2-role-save='builder']"));
+  await flush(() => pending[1].answer({ written: true, role: null, unconfirmed: "store busy" }));
+
+  await click(host.querySelector("[data-mobile2-roles] button"));
+  await flush(() => pending[2].answer({
+    source: "fleetctl", readAt: null, degraded: null,
+    roles: [{ ...seedRole, promptScaffold: "Something else entirely" }],
+  }));
+  /* The write is still unaccounted for: the console holds neither the old text
+     nor the new one, and saying «confirmed» here would be a guess. */
+  expect(q(host, "[data-mobile2-role-unconfirmed]")).not.toBeNull();
 });
