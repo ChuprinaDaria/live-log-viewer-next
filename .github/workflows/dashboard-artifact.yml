@@ -61,11 +61,20 @@ jobs:
 
       # Один архів замість дерева: rsync через тайлнет на слабку машину
       # переживає значно менше файлів, ніж дерево .next.
+      #
+      # Пакується ВЕСЬ .next, крім кешу, а не лише standalone: юніт на walter
+      # запускає `next start`, а тому читає `routes-manifest.json` і решту
+      # маніфестів, яких у standalone немає. Перша викотка самим лише
+      # standalone дала саме це — сервіс піднімався й одразу падав з ENOENT на
+      # routes-manifest.json, по колу. `.next/cache` — інкрементальний кеш
+      # збірки, він нікому на боці прода не потрібен і важить уп'ятеро більше
+      # за все інше разом.
       - name: Pack
         run: |
           set -euo pipefail
           tar -czf dashboard-${{ github.sha }}.tar.gz \
-            .next/standalone .next/static dist/mcp-server.mjs public
+            --exclude=.next/cache \
+            .next dist/mcp-server.mjs public
           sha256sum dashboard-${{ github.sha }}.tar.gz > dashboard-${{ github.sha }}.tar.gz.sha256
           ls -la dashboard-${{ github.sha }}.tar.gz*
 
