@@ -1913,7 +1913,7 @@ export const en = {
   "status.awaitingDecision": "the orchestrator is waiting on your decision",
   "status.working": "working…",
   "status.returnedResult": "returned with a result",
-  "status.stalled": "interrupted or awaiting permission",
+  "status.stalled": "no new data",
   "status.finishedTurn": "finished the turn — waiting for a reply",
   "status.rateLimited": "rate-limited",
   "status.providerThrottled": "provider is throttling — resumes at {time}",
@@ -2155,7 +2155,9 @@ export const en = {
   "task.working": ", working",
   "task.interrupted": ", interrupted",
   "task.finished": ", finished",
-  "task.interruptedBadge": "interrupted",
+  "task.lostBadge": "lost mid-turn",
+  "task.sessionEndedBadge": "session ended",
+  "task.noNewDataBadge": "no new data",
   "task.finishedBadge": "finished",
   "task.stopFailed": "couldn't stop",
   "task.signalSent": "sent {signal} to PID {pid}",
@@ -2550,7 +2552,7 @@ export const en = {
   "mobile2.board.pipelineStageFailed": "stage {stage}/{total} · {name} failed",
   "mobile2.board.pipelineFindings": { one: "{count} finding", other: "{count} findings" },
   "mobile2.board.killed": "killed · messages queue",
-  "mobile2.board.stalled": "stalled · {age}",
+  "mobile2.board.stalled": "no new data · {age}",
   "mobile2.board.limit": "at the account limit",
   "mobile2.board.limitResets": "resets {time}",
   "mobile2.board.limitAccount": "{account} at the limit",
@@ -2761,7 +2763,7 @@ export const en = {
      claimed a message queue nobody measured and carried no age, and the held
      plurals were swapped; the dictionary is append-only per lane, so the
      corrected phrases are new keys and the old ones are no longer read. */
-  "mobile2.board.killedAge": "killed · {age}",
+  "mobile2.board.killedAge": "lost mid-turn · {age}",
   "mobile2.board.heldQueued": { one: "held · {count} message queued", other: "held · {count} messages queued" },
   "mobile2.board.started": "started {age} ago",
   "mobile2.chat.stateKilledAge": "killed · {age}",

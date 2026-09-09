@@ -8,6 +8,7 @@ import { Hint } from "@/components/Hint";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useLocale } from "@/lib/i18n";
 import { cleanTitle } from "@/lib/title";
+import { turnLeftOpen } from "./turnDuration";
 import type { Capability } from "./agentCapabilities";
 import { useAgentCapabilities } from "./useAgentCapabilities";
 import type { FileEntry } from "@/lib/types";
@@ -21,11 +22,27 @@ export function ProcessStatusChip({ file }: { file: FileEntry }) {
       </Badge>
     );
   }
-  if (file.proc === "killed" || file.activity === "stalled") {
-    return <Badge tone="danger">{t("task.interruptedBadge")}</Badge>;
+  /* `proc === "killed"` is two outcomes, not one (#1487), and silence is a
+     third. The phone's board already draws these lines — a host that died
+     while its turn was open is the zombie worth the danger tone, a host stopped
+     AFTER its turn settled is how every finished stage ends, and a transcript
+     that simply stopped growing proves neither death nor a waiting permission
+     prompt. The desktop said «перервано» to all three, which is how the
+     alarming word stopped meaning anything. Same evidence, same order, same
+     words as `mobileRowState`. */
+  if (file.proc === "killed") {
+    return turnLeftOpen(file)
+      ? <Badge tone="danger">{t("task.lostBadge")}</Badge>
+      : <Badge tone="neutral">{t("task.sessionEndedBadge")}</Badge>;
   }
   if (file.proc === "done") {
     return <Badge tone="neutral">{t("task.finishedBadge")}</Badge>;
+  }
+  /* No confirmed process either way: the transcript is quiet and that is all
+     that is known. Never named as a permission prompt — a confirmed question
+     arrives as `pendingQuestion` and is its own, separate call for attention. */
+  if (file.activity === "stalled") {
+    return <Badge tone="warning">{t("task.noNewDataBadge")}</Badge>;
   }
   return null;
 }
