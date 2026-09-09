@@ -271,8 +271,10 @@ function expectJumpBesideTheDrafts(host: HTMLElement, jump: HTMLButtonElement): 
   for (let el: Element | null = jump; el && el !== band.parentElement; el = el.parentElement) {
     expect(el.getAttribute("class") ?? "").not.toMatch(/(^|\s)(absolute|fixed)(\s|$)/);
   }
-  /* And nothing DRAWN from it hangs over its edge: no positioned child, no
-     negative offset (round 2 review: a `-top-1` badge over the transcript). */
+  /* And no LAID-OUT child of it hangs over its edge: no positioned child, no
+     negative offset (round 2 review: a `-top-1` badge over the transcript).
+     What the control PAINTS past its box — shadow, ring, outline — no class
+     list can rule out; the capture's pixel check above the band does. */
   for (const child of jump.querySelectorAll("*")) {
     expect(child.getAttribute("class") ?? "").not.toMatch(/(^|\s)(absolute|fixed|-top-\S+|-right-\S+|-bottom-\S+|-left-\S+|-m[trbl]?-\S+)(\s|$)/);
   }
@@ -287,7 +289,10 @@ test("phone: the way back is a round 44px control in the band beside the drafts,
   await settle(host, "[data-feed-drafts-band] [data-reply-suggestion]");
   const jump = await releaseMagnet(host);
   const classes = jump.getAttribute("class") ?? "";
-  for (const token of ["h-11", "min-w-11", "rounded-full", "bg-raised", "shrink-0"]) expect(classes).toContain(token);
+  for (const token of ["h-11", "min-w-11", "rounded-full", "bg-raised", "shrink-0", "focus-visible:ring-inset"]) expect(classes).toContain(token);
+  /* Nothing painted past the box: no outer shadow, and the focus ring is inset. */
+  expect(classes).not.toMatch(/(^|\s)shadow-\d/);
+  expect(classes).toMatch(/focus-visible:ring-\d/);
   expect(jump.getAttribute("aria-label")).toBe("Back to the live tail");
   /* No count yet: nothing arrived since the release. */
   expect(jump.querySelector("[data-feed-new-count]")).toBeNull();

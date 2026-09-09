@@ -44,7 +44,10 @@
  * top of the band, and — the review's finding — every rectangle of visible
  * transcript TEXT against the «back to live» control joined with everything
  * drawn from it (its count included), which must cover none and must lie
- * whole inside the band.
+ * whole inside the band — and, since layout boxes see no shadow, ring,
+ * outline or pseudo-element, a PIXEL comparison of the strip just above the
+ * band with the control hidden, at rest and under keyboard focus, which
+ * must not change by one pixel.
  * Two draft-set variants render on top of the base set at 390×844 standalone:
  * one valid 64-character label, and six mixed labels with RTL among them —
  * every label whole, none clipped inside its chip. A frame that fails a gate
@@ -65,6 +68,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { inflateSync } from "node:zlib";
 
 import { chromium, type Browser, type Page } from "playwright-core";
 
@@ -186,46 +190,21 @@ function transcriptLines(): string[] {
     ({ type: "user", uuid: `${SESSION_UUID}-${id}`, timestamp: at(minutesAgo), cwd: REPO_DIR, message: { role: "user", content: text } });
   const assistant = (id: string, minutesAgo: number, text: string) =>
     ({ type: "assistant", uuid: `${SESSION_UUID}-${id}`, timestamp: at(minutesAgo), cwd: REPO_DIR, message: { role: "assistant", model: "claude-opus-4-6", content: [{ type: "text", text }] } });
+  /* Neutral filler with the paragraph shapes the operator's photo had — prose,
+     a list, inline code with a path — and enough of it to scroll on a phone.
+     It says nothing about the design; the frames and the report do. */
+  const paragraph = (n: number) => `Абзац ${n}. Цей текст існує лише для того, щоб стрічка мала що гортати на телефоні: кілька речень звичайної довжини, без жодного змісту, який треба було б читати.`;
   const lines = [
-    user("u1", 48, "Подивись, що з дошкою на телефоні. Чіпи лежать поверх тексту."),
-    assistant("a1", 47, [
-      "Подивився. Раунд 1 полагодив контракти й форми, але не те, як кімната виглядає на телефоні.",
-      "",
-      "Три речі зламано:",
-      "- драфти рендеряться поверх транскрипту, коли стрічка не примагнічена до низу;",
-      "- пігулка «N нових» стоїть посеред абзацу без підкладки;",
-      "- третій чіп обрізаний по літері, і нічого не каже, що ряд гортається.",
-      "",
-      "Точки в коді: `src/components/LogFeed.tsx`, `src/components/feed/SuggestedReplies.tsx`, `src/components/mobile/chatBudget.ts`.",
-    ].join("\n")),
-    user("u2", 40, "Скільки це коштує по хрому? Бюджет каже 32 px на чіпи."),
-    assistant("a2", 39, [
-      "Бюджет декларує 32 px у потоці над композером, а DOM рендерить overlay. Дві різні поведінки на одній поверхні, і телефонна — неправильна.",
-      "",
-      "Чесна цифра — висота hit-зони чіпа, бо правило «всі контроли ≥ 44 px» діє і тут. Тобто смуга драфтів у потоці коштує 44 px, а не 32, і бюджет має казати саме це.",
-      "",
-      "З клавіатурою рахунок такий: бар, композер без home-inset, смуга чіпів. Решта — транскрипт. Число виміряю на живому рендері, не на папері.",
-    ].join("\n")),
-    user("u3", 31, "А пігулка «N нових»? Її теж у смугу?"),
-    assistant("a3", 30, [
-      "Так, у ту саму смугу. Будь-що, намальоване над стрічкою, ховає текст — непрозоре ховає ще краще.",
-      "",
-      "Кнопка стоїть у кінці ряду драфтів, у потоці, 44 px, а лічильник — її власна клітинка, не бейдж над обідком. Смуга і так зарезервована, тож ні кнопка, ні лічильник не ділять рядок із текстом у жодному стані.",
-    ].join("\n")),
-    user("u4", 22, "Добре. Що з обрізаним чіпом?"),
-    assistant("a4", 21, [
-      "Ряд лишається одним рядком — перенос у два рядки подвоїв би хром і зробив бюджет плаваючим.",
-      "",
-      "Замість цього край ряду каже, що є ще: градієнт на тому боці, де ряд продовжується, і тільки поки він продовжується. Після свайпу ряд стає на межу чіпа (`scroll-snap`), тож лівий край завжди чистий, а останній чіп має запас, щоб вийти з-під градієнта повністю.",
-      "",
-      "Це рівно те, що спека називає «видно, що ряд гортається, і жоден чіп не обрізаний по літері».",
-    ].join("\n")),
-    user("u5", 12, "Знімки з телефону будуть?"),
-    assistant("a5", 11, [
-      "Будуть, і не лише знімки: кожен кадр міряється. У `report.json` — висота смуги, композер у спокої і з клавіатурою, частка транскрипту на обох рамках, і для кожного стану нижній рядок тексту проти верхньої межі смуги.",
-      "",
-      "Саме ця пара чисел і є доказом, що під чіпами немає тексту. PNG — щоб подивитись очима; числа — щоб перевірити в дифі.",
-    ].join("\n")),
+    user("u1", 48, "Перше запитання, коротке."),
+    assistant("a1", 47, [paragraph(1), "", "Список:", "- перший пункт списку;", "- другий пункт списку;", "- третій пункт списку.", "", "Шлях у коді: `src/components/feed/SuggestedReplies.tsx`."].join("\n")),
+    user("u2", 40, "Друге запитання, трохи довше за перше."),
+    assistant("a2", 39, [paragraph(2), "", paragraph(3)].join("\n")),
+    user("u3", 31, "Третє запитання."),
+    assistant("a3", 30, [paragraph(4), "", "Ще один шлях: `src/components/LogFeed.tsx`, і ще один: `src/components/mobile/chatBudget.ts`."].join("\n")),
+    user("u4", 22, "Четверте запитання."),
+    assistant("a4", 21, [paragraph(5), "", paragraph(6)].join("\n")),
+    user("u5", 12, "П'яте запитання, останнє."),
+    assistant("a5", 11, [paragraph(7), "", paragraph(8)].join("\n")),
   ];
   return lines.map((line) => JSON.stringify(line));
 }
@@ -235,8 +214,8 @@ function transcriptLines(): string[] {
 function arrivalLines(): string[] {
   const at = (secondsAgo: number) => new Date(CAPTURE_MS - secondsAgo * 1000).toISOString();
   return [
-    { type: "assistant", uuid: `${SESSION_UUID}-a6`, timestamp: at(20), cwd: REPO_DIR, message: { role: "assistant", model: "claude-opus-4-6", content: [{ type: "text", text: "Збірка на ryzen пройшла, тести зелені. Запускаю знімки." }] } },
-    { type: "assistant", uuid: `${SESSION_UUID}-a7`, timestamp: at(5), cwd: REPO_DIR, message: { role: "assistant", model: "claude-opus-4-6", content: [{ type: "text", text: "Перший кадр є. Смуга під транскриптом, текст цілий." }] } },
+    { type: "assistant", uuid: `${SESSION_UUID}-a6`, timestamp: at(20), cwd: REPO_DIR, message: { role: "assistant", model: "claude-opus-4-6", content: [{ type: "text", text: "Перша відповідь, що прийшла пізніше." }] } },
+    { type: "assistant", uuid: `${SESSION_UUID}-a7`, timestamp: at(5), cwd: REPO_DIR, message: { role: "assistant", model: "claude-opus-4-6", content: [{ type: "text", text: "Друга відповідь, що прийшла пізніше." }] } },
   ].map((line) => JSON.stringify(line));
 }
 
@@ -376,6 +355,8 @@ export interface Geometry {
       whatever the column pays for a home indicator (today nothing does). */
   gapUnderComposer: number | null;
   standaloneMedia: boolean;
+  /** Read off pixels after the frame; null while the magnet holds. */
+  ink: InkSpill | null;
   send: Rect | null;
   fieldFocused: boolean;
   documentScrollWidth: number;
@@ -512,11 +493,166 @@ async function readGeometry(page: Page): Promise<Geometry> {
       composerUnit: bandOrScrollerBottom === null ? null : visibleBottom - bandOrScrollerBottom,
       gapUnderComposer: composerBox ? visibleBottom - composerBox.bottom : null,
       standaloneMedia: window.matchMedia("(display-mode: standalone)").matches,
+      ink: null,
       send: rect(document.querySelector(sel.send)),
       fieldFocused: Boolean(field) && document.activeElement === field,
       documentScrollWidth: document.documentElement.scrollWidth,
     };
   }, SEL);
+}
+
+/* ────────────────────────────────────────────────────────────────────────── *
+ * Ink, not boxes                                                              *
+ * ────────────────────────────────────────────────────────────────────────── */
+
+/** A PNG as Chromium writes a screenshot: 8-bit RGB or RGBA, no interlace. */
+export function decodePng(bytes: Uint8Array): { width: number; height: number; channels: number; pixels: Uint8Array } {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (view.getUint32(0) !== 0x89504e47) throw new Error("not a PNG");
+  let offset = 8;
+  let width = 0, height = 0, channels = 0;
+  const idat: Uint8Array[] = [];
+  while (offset < bytes.length) {
+    const length = view.getUint32(offset);
+    const type = String.fromCharCode(...bytes.subarray(offset + 4, offset + 8));
+    const data = bytes.subarray(offset + 8, offset + 8 + length);
+    if (type === "IHDR") {
+      width = view.getUint32(offset + 8);
+      height = view.getUint32(offset + 12);
+      const depth = bytes[offset + 16];
+      const colour = bytes[offset + 17];
+      if (depth !== 8 || bytes[offset + 20] !== 0) throw new Error(`unsupported PNG: depth ${depth}, interlace ${bytes[offset + 20]}`);
+      channels = colour === 6 ? 4 : colour === 2 ? 3 : 0;
+      if (!channels) throw new Error(`unsupported PNG colour type ${colour}`);
+    } else if (type === "IDAT") idat.push(data);
+    offset += 12 + length;
+  }
+  const raw = inflateSync(Buffer.concat(idat.map((part) => Buffer.from(part))));
+  const stride = width * channels;
+  const pixels = new Uint8Array(width * height * channels);
+  for (let y = 0; y < height; y += 1) {
+    const filter = raw[y * (stride + 1)]!;
+    const src = y * (stride + 1) + 1;
+    const dst = y * stride;
+    for (let x = 0; x < stride; x += 1) {
+      const a = x >= channels ? pixels[dst + x - channels]! : 0;
+      const b = y > 0 ? pixels[dst - stride + x]! : 0;
+      const c = y > 0 && x >= channels ? pixels[dst - stride + x - channels]! : 0;
+      let value = raw[src + x]!;
+      if (filter === 1) value += a;
+      else if (filter === 2) value += b;
+      else if (filter === 3) value += (a + b) >> 1;
+      else if (filter === 4) {
+        const p = a + b - c;
+        const pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c);
+        value += pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+      }
+      pixels[dst + x] = value & 0xff;
+    }
+  }
+  return { width, height, channels, pixels };
+}
+
+/** Pixels whose colour differs between two decodes of the same clip. */
+export function differingPixels(a: ReturnType<typeof decodePng>, b: ReturnType<typeof decodePng>, tolerance = 8): number {
+  if (a.width !== b.width || a.height !== b.height || a.channels !== b.channels) throw new Error("clips differ in shape");
+  let count = 0;
+  for (let i = 0; i < a.width * a.height; i += 1) {
+    const o = i * a.channels;
+    for (let ch = 0; ch < 3; ch += 1) {
+      if (Math.abs(a.pixels[o + ch]! - b.pixels[o + ch]!) > tolerance) { count += 1; break; }
+    }
+  }
+  return count;
+}
+
+/** What the control PAINTS over the transcript, read off pixels: the strip
+    just above the band, rendered with the control hidden, shown at rest, and
+    shown with keyboard focus. Layout boxes do not see shadows, rings,
+    outlines or pseudo-elements (round 3 of the review); pixels do. */
+export interface InkSpill {
+  /** Pixels in the strip that change when the control at rest is painted. */
+  decorativeAboveBand: number;
+  /** Pixels in the strip that change when the control is focused from the keyboard. */
+  focusAboveBand: number;
+  /** The focus was a real `:focus-visible` when the focused shot was taken,
+      and still was right after it. */
+  focusVisible: boolean;
+  /** The control was really hidden when the hidden shot was taken. */
+  hiddenApplied: boolean;
+  /** The probe's own red path: an OUTER 2 px ring injected on the control
+      must change pixels in the strip, or the probe is blind in this frame. */
+  injectedRingSeen: number;
+  /** The strip measured: `height` CSS px above the band, full width. */
+  strip: { top: number; height: number; width: number };
+  /** How the probe knows it is looking at the right pixels: the band's own
+      clip changes when the control is hidden, the strip's clip changes when
+      the transcript is scrolled by a few pixels, and what stands at the
+      strip's bottom edge over the control's x. */
+  probe: { bandSeen: number; stripFollowsScroll: number; aboveControl: string; wrapperBackground: string };
+}
+
+async function readInkSpill(page: Page, bandTop: number, width: number): Promise<InkSpill | null> {
+  if (!(await page.locator(SEL.jump).count())) return null;
+  const strip = { top: Math.max(0, bandTop - 6), height: 6, width };
+  const clip = { x: 0, y: strip.top, width: strip.width, height: strip.height };
+  const shot = async () => decodePng(new Uint8Array(await page.screenshot({ clip, animations: "disabled", caret: "hide" })));
+  const setVisibility = (value: string) => page.evaluate(({ sel, v }) => { document.querySelector<HTMLElement>(sel)!.style.visibility = v; }, { sel: SEL.jump, v: value });
+  const isFocusVisible = () => page.evaluate((sel) => document.activeElement?.matches(`${sel}:focus-visible`) ?? false, SEL.jump);
+  const bandClip = { x: 0, y: bandTop, width, height: 44 };
+  const bandShot = async () => decodePng(new Uint8Array(await page.screenshot({ clip: bandClip, animations: "disabled", caret: "hide" })));
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await page.waitForTimeout(80);
+  const shown = await shot();
+  const bandShown = await bandShot();
+  await setVisibility("hidden");
+  await page.waitForTimeout(80);
+  const hiddenApplied = await page.evaluate((sel) => getComputedStyle(document.querySelector(sel)!).visibility === "hidden", SEL.jump);
+  const hidden = await shot();
+  const bandHidden = await bandShot();
+  await setVisibility("");
+  /* Does the strip's clip follow the DOM at all? Nudge the transcript. */
+  await page.evaluate((sel) => { document.querySelector<HTMLElement>(sel)!.scrollTop -= 3; }, SEL.scroller);
+  await page.waitForTimeout(80);
+  const nudged = await shot();
+  await page.evaluate((sel) => { document.querySelector<HTMLElement>(sel)!.scrollTop += 3; }, SEL.scroller);
+  await page.waitForTimeout(80);
+  const probe = await page.evaluate(({ sel, top }) => {
+    const jump = document.querySelector<HTMLElement>(sel)!;
+    const r = jump.getBoundingClientRect();
+    const above = document.elementFromPoint(r.left + r.width / 2, top - 1);
+    const name = (el: Element | null) => el ? `${el.tagName.toLowerCase()}${[...el.attributes].filter((a) => a.name.startsWith("data-")).map((a) => `[${a.name}]`).join("")}` : "none";
+    const wrapper = document.querySelector<HTMLElement>("[data-log-feed-scroller]")!.parentElement!;
+    return { aboveControl: name(above), wrapperBackground: `${getComputedStyle(wrapper).backgroundColor} pos=${getComputedStyle(wrapper).position} z=${getComputedStyle(wrapper).zIndex}` };
+  }, { sel: SEL.jump, top: bandTop });
+  /* Keyboard focus, so `:focus-visible` is the real one: a Tab first for the
+     keyboard modality, then focus, then Tab onward until the control has it. */
+  await page.keyboard.press("Tab");
+  await page.focus(SEL.jump);
+  let focusVisible = await isFocusVisible();
+  for (let i = 0; i < 40 && !focusVisible; i += 1) {
+    await page.keyboard.press("Tab");
+    focusVisible = await isFocusVisible();
+  }
+  await page.waitForTimeout(80);
+  const focused = await shot();
+  focusVisible = focusVisible && await isFocusVisible();
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  /* The probe's red path, in this very frame: paint an outer 2 px ring on the
+     control and look again. A probe that cannot see it cannot clear it. */
+  await page.evaluate((sel) => { document.querySelector<HTMLElement>(sel)!.style.boxShadow = "0 0 0 2px rgb(90 81 224)"; }, SEL.jump);
+  await page.waitForTimeout(80);
+  const injected = await shot();
+  await page.evaluate((sel) => { document.querySelector<HTMLElement>(sel)!.style.boxShadow = ""; }, SEL.jump);
+  return {
+    decorativeAboveBand: differingPixels(hidden, shown),
+    focusAboveBand: differingPixels(hidden, focused),
+    focusVisible,
+    hiddenApplied,
+    injectedRingSeen: differingPixels(hidden, injected),
+    strip,
+    probe: { bandSeen: differingPixels(bandHidden, bandShown), stripFollowsScroll: differingPixels(hidden, nudged), ...probe },
+  };
 }
 
 /** Swipe the row to its end, read the edge, and put it back. */
@@ -607,6 +743,16 @@ export function judge(frame: Frame, column: Column, state: State, g: Geometry, e
       if (g.scroller && g.jump.union.top < g.scroller.bottom) failures.push(`the «back to live» control (with everything drawn from it) starts at ${g.jump.union.top}px, inside the scroller that ends at ${g.scroller.bottom}px`);
       if (g.band && (g.jump.union.top < g.band.top || g.jump.union.bottom > g.band.bottom)) failures.push(`the «back to live» control spans ${g.jump.union.top}..${g.jump.union.bottom}px, outside the band's ${g.band.top}..${g.band.bottom}px`);
       if (g.visibleTextRects === 0) failures.push("no visible transcript text was measured, so the control's cover proves nothing");
+      /* Ink, not boxes: nothing the control PAINTS — shadow, ring, outline,
+         pseudo-element — reaches the strip above the band. */
+      if (!g.ink) failures.push("the control's ink above the band was not measured");
+      else {
+        if (!g.ink.focusVisible) failures.push("the control never took a visible keyboard focus, so its focus ring was not measured");
+        if (!g.ink.hiddenApplied) failures.push("the control was not hidden for the baseline shot, so the ink probe measured nothing");
+        if (g.ink.injectedRingSeen === 0) failures.push("the ink probe is blind in this frame: an injected outer ring changed no pixel above the band");
+        if (g.ink.decorativeAboveBand > 0) failures.push(`the control at rest paints ${g.ink.decorativeAboveBand} pixel(s) above the band, over the transcript`);
+        if (g.ink.focusAboveBand > 0) failures.push(`the control with keyboard focus paints ${g.ink.focusAboveBand} pixel(s) above the band, over the transcript`);
+      }
       if (g.jumpCoversText.count > 0) {
         const first = g.jumpCoversText.first!;
         failures.push(`the «back to live» control (with everything drawn from it) covers ${g.jumpCoversText.count} rectangle(s) of transcript text, the first at ${first.left}..${first.right}×${first.top}..${first.bottom}px`);
@@ -671,6 +817,22 @@ async function scrollUp(page: Page): Promise<void> {
   }, SEL.scroller);
   await page.waitForSelector(SEL.jump, { timeout: 5_000 });
   await settle(page, 300);
+  /* Land the boundary on the assistant's prose above the control, the way
+     the review's frame had it (round 3): an opaque bubble there would hide
+     any ink the control paints upward, and prove nothing either way. */
+  for (let i = 0; i < 16; i += 1) {
+    const onProse = await page.evaluate((sel) => {
+      const scroller = document.querySelector<HTMLElement>(sel.scroller)!;
+      const jump = document.querySelector<HTMLElement>(sel.jump)!;
+      const r = jump.getBoundingClientRect();
+      const above = document.elementFromPoint(r.left + r.width / 2, scroller.getBoundingClientRect().bottom - 2);
+      if (above?.closest("[data-tts-message]")) return true;
+      scroller.scrollTop = Math.max(0, scroller.scrollTop - 37);
+      return false;
+    }, SEL);
+    if (onProse) break;
+    await settle(page, 120);
+  }
 }
 
 /** Two answers arrive while the operator is scrolled up; the tail re-reads on
@@ -760,6 +922,7 @@ async function captureFrame(browser: Browser, baseUrl: string, transcript: strin
       await page.screenshot({ path: file, fullPage: false });
       const geometry = await readGeometry(page);
       geometry.rowEnd = await readRowEnd(page);
+      if (geometry.band && state !== "bottom") geometry.ink = await readInkSpill(page, geometry.band.top, viewport.width);
       const verdict = judge(frame, column, state, geometry, drafts.length);
       if (errors.length) verdict.failures.push(...errors.splice(0).map((error) => `page error: ${error}`));
       reports.push({ frame: frame.name, column, state, file, viewport, safeArea: { requested: frame.safeArea, applied: safeAreaApplied }, ...verdict });
@@ -824,6 +987,7 @@ async function main(): Promise<void> {
       transcriptShare: entry.measured.transcriptShare,
       budget: entry.budget,
       budgetHolds: entry.measured.transcriptShare !== null && entry.measured.transcriptShare >= entry.budget.floor,
+      ink: entry.geometry.ink,
       backToLive: entry.geometry.jump ? { size: `${entry.geometry.jump.width}×${entry.geometry.jump.height}`, opaque: entry.geometry.jump.opaque, count: entry.geometry.jump.count, topPx: entry.geometry.jump.top, bottomPx: entry.geometry.jump.bottom, unionPx: `${entry.geometry.jump.union.left}..${entry.geometry.jump.union.right}×${entry.geometry.jump.union.top}..${entry.geometry.jump.union.bottom}`, inBand: entry.geometry.jump.inBand, textRectsCovered: entry.geometry.jumpCoversText.count, visibleTextRects: entry.geometry.visibleTextRects } : null,
       chips: { rendered: entry.geometry.chips.length, cutByRowEdge: entry.geometry.chipsCutRight, clippedInside: entry.geometry.chipsClippedInside, fadeEnd: entry.geometry.fadeEnd, fadeStart: entry.geometry.fadeStart, atRowEnd: entry.geometry.rowEnd },
       floatingRows: entry.geometry.floating,

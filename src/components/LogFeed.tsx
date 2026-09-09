@@ -1235,10 +1235,13 @@ export function LogFeed({ file, showSvc, lineFilter, onStatus, paused, follow, s
         {feed.items.length > 0 && !magnet ? (
           <button
             data-feed-jump-tail
-            /* Everything of it is inside the band's 44 px: the count is a
-               cell of the pill, not a badge hung over its rim (round 2 review:
-               a badge at `-top-1` stood three pixels over the transcript). */
-            className={`inline-flex h-11 min-w-11 shrink-0 items-center justify-center gap-1 rounded-full border border-border bg-raised text-primary shadow-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 ${newCount ? "px-3" : "px-0"}`}
+            /* Everything of it — laid out AND painted — is inside the band's
+               44 px: the count is a cell of the pill, not a badge hung over
+               its rim (round 2 review: a badge at `-top-1` stood three pixels
+               over the transcript), and the focus indicator is an INSET ring
+               with no outer shadow (round 3: a 2 px outer ring painted over
+               the letters above the band). Keyboard focus stays visible. */
+            className={`inline-flex h-11 min-w-11 shrink-0 items-center justify-center gap-1 rounded-full border border-border bg-raised text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/70 ${newCount ? "px-3" : "px-0"}`}
             aria-label={newCount ? `${t("feed.backToLive")} · ${t("feed.newCount", { count: newCount })}` : t("feed.backToLive")}
             onClick={jumpToTail}
           >

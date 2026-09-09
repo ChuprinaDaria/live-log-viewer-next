@@ -38,6 +38,7 @@ function green(): Geometry {
     composerUnit: 156,
     gapUnderComposer: 7,
     standaloneMedia: true,
+    ink: { decorativeAboveBand: 0, focusAboveBand: 0, focusVisible: true, hiddenApplied: true, injectedRingSeen: 180, strip: { top: 302, height: 6, width: 390 }, probe: { bandSeen: 900, stripFollowsScroll: 400, aboveControl: "span", wrapperBackground: "rgba(0, 0, 0, 0) pos=relative z=auto" } },
     send: rect(329, 453, 373, 497),
     fieldFocused: true,
     documentScrollWidth: 390,
@@ -83,6 +84,51 @@ test("round 2 of the review: the button in the band, its count badge three pixel
   const fixed = green();
   fixed.jump = { ...rect(303, 308, 377, 352), opaque: true, count: "2", inBand: true, inScroller: false, union: rect(303, 308, 377, 352) };
   expect(judge(frame, "standalone", "keyboard", fixed).failures).toEqual([]);
+});
+
+test("round 3 of the review: ink the boxes never saw — a focus ring two pixels over the letters", () => {
+  /* The reviewer's numbers: the control's box and union at 644..688, the
+     ring painting at 642..644 over «л» (636..653): 63 text pixels touched. */
+  const g = green();
+  g.ink = { decorativeAboveBand: 0, focusAboveBand: 63, focusVisible: true, hiddenApplied: true, injectedRingSeen: 180, strip: { top: 638, height: 6, width: 390 }, probe: { bandSeen: 900, stripFollowsScroll: 400, aboveControl: "span", wrapperBackground: "rgba(0, 0, 0, 0) pos=relative z=auto" } };
+  expect(judge(frame, "standalone", "scrolled-up", g).failures).toContain("the control with keyboard focus paints 63 pixel(s) above the band, over the transcript");
+  const shadow = green();
+  shadow.ink = { decorativeAboveBand: 12, focusAboveBand: 12, focusVisible: true, hiddenApplied: true, injectedRingSeen: 180, strip: { top: 302, height: 6, width: 390 }, probe: { bandSeen: 900, stripFollowsScroll: 400, aboveControl: "span", wrapperBackground: "rgba(0, 0, 0, 0) pos=relative z=auto" } };
+  expect(judge(frame, "standalone", "keyboard", shadow).failures).toContain("the control at rest paints 12 pixel(s) above the band, over the transcript");
+  const unfocused = green();
+  unfocused.ink = { decorativeAboveBand: 0, focusAboveBand: 0, focusVisible: false, hiddenApplied: true, injectedRingSeen: 180, strip: { top: 302, height: 6, width: 390 }, probe: { bandSeen: 900, stripFollowsScroll: 400, aboveControl: "span", wrapperBackground: "rgba(0, 0, 0, 0) pos=relative z=auto" } };
+  expect(judge(frame, "standalone", "keyboard", unfocused).failures.some((f) => f.includes("never took a visible keyboard focus"))).toBe(true);
+  /* A probe that cannot see an injected outer ring clears nothing. */
+  const blind = green();
+  blind.ink = { decorativeAboveBand: 0, focusAboveBand: 0, focusVisible: true, hiddenApplied: true, injectedRingSeen: 0, strip: { top: 302, height: 6, width: 390 }, probe: { bandSeen: 900, stripFollowsScroll: 400, aboveControl: "span", wrapperBackground: "rgba(0, 0, 0, 0) pos=relative z=auto" } };
+  expect(judge(frame, "standalone", "keyboard", blind).failures.some((f) => f.includes("the ink probe is blind in this frame"))).toBe(true);
+  const notHidden = green();
+  notHidden.ink = { decorativeAboveBand: 0, focusAboveBand: 0, focusVisible: true, hiddenApplied: false, injectedRingSeen: 180, strip: { top: 302, height: 6, width: 390 }, probe: { bandSeen: 900, stripFollowsScroll: 400, aboveControl: "span", wrapperBackground: "rgba(0, 0, 0, 0) pos=relative z=auto" } };
+  expect(judge(frame, "standalone", "keyboard", notHidden).failures.some((f) => f.includes("was not hidden for the baseline shot"))).toBe(true);
+  const unmeasured = green();
+  unmeasured.ink = null;
+  expect(judge(frame, "standalone", "keyboard", unmeasured).failures).toContain("the control's ink above the band was not measured");
+});
+
+test("the PNG decoder and the pixel diff read what a screenshot holds", async () => {
+  const { decodePng, differingPixels } = await import("./capture-round2-lane-a");
+  /* A 2×1 RGBA PNG: one red pixel, one blue, filter 0 — and the same with the
+     second pixel turned green. Written by hand with node's own deflate so the
+     decoder is checked against something it did not produce. */
+  const { deflateSync } = await import("node:zlib");
+  const crc = (buf: Buffer) => { let c = ~0; for (const b of buf) { c ^= b; for (let k = 0; k < 8; k += 1) c = (c >>> 1) ^ (0xedb88320 & -(c & 1)); } return (~c) >>> 0; };
+  const chunk = (type: string, data: Buffer) => { const len = Buffer.alloc(4); len.writeUInt32BE(data.length); const body = Buffer.concat([Buffer.from(type), data]); const sum = Buffer.alloc(4); sum.writeUInt32BE(crc(body)); return Buffer.concat([len, body, sum]); };
+  const png = (second: number[]) => {
+    const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(2, 0); ihdr.writeUInt32BE(1, 4); ihdr[8] = 8; ihdr[9] = 6; ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = 0;
+    const raw = Buffer.from([0, 255, 0, 0, 255, ...second]);
+    return new Uint8Array(Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", ihdr), chunk("IDAT", deflateSync(raw)), chunk("IEND", Buffer.alloc(0))]));
+  };
+  const a = decodePng(png([0, 0, 255, 255]));
+  const b = decodePng(png([0, 255, 0, 255]));
+  expect([a.width, a.height, a.channels]).toEqual([2, 1, 4]);
+  expect([...a.pixels]).toEqual([255, 0, 0, 255, 0, 0, 255, 255]);
+  expect(differingPixels(a, a)).toBe(0);
+  expect(differingPixels(a, b)).toBe(1);
 });
 
 test("a frame with no measured text cannot prove the control covers none", () => {
