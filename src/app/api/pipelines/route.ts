@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { authenticatedAgentSpawnCaller, isAgentInitiatedSpawn } from "@/app/api/spawn/admission";
 import { agentRegistry } from "@/lib/agent/registry";
-import { conversationAgentRole, isSpawnDeniedRole, reviewerOriginSpawnGuidance, type SpawnRejectionCode } from "@/lib/agent/spawnAdmission";
+import { conversationAgentRole, delegationDeniedGuidance, delegationRejectionCode, isDelegationDeniedRole, type SpawnRejectionCode } from "@/lib/agent/spawnAdmission";
 import { VIEWER_SPAWN_CAPABILITY_HEADER } from "@/lib/agent/spawnPolicy";
 import { createPipelineFromRequest, getPipelines } from "@/lib/pipelines/engine";
 import type { CreatePipelineRequest, Pipeline, PipelineRepoPreflightErrorCode, PipelinesResponse } from "@/lib/pipelines/types";
@@ -46,8 +46,8 @@ function pipelineOriginRejection(req: NextRequest, body: CreatePipelineRequest):
     if ("error" in caller) return NextResponse.json({ error: caller.error }, { status: caller.status ?? 403 });
     if (caller.kind === "agent") {
       const role = conversationAgentRole(registry.readOnlySnapshot(), caller.conversationId);
-      if (isSpawnDeniedRole(role)) {
-        return NextResponse.json({ error: reviewerOriginSpawnGuidance(role), code: "reviewer_origin_spawn" }, { status: 403 });
+      if (isDelegationDeniedRole(role)) {
+        return NextResponse.json({ error: delegationDeniedGuidance(role), code: delegationRejectionCode(role) }, { status: 403 });
       }
       if (typeof body.src !== "string" || !body.src.trim()) {
         const derivedPath = registry.conversation(caller.conversationId)?.generations.at(-1)?.path ?? null;
@@ -63,8 +63,8 @@ function pipelineOriginRejection(req: NextRequest, body: CreatePipelineRequest):
   const srcConversation = srcPath ? registry.conversationForPath(srcPath) : null;
   if (srcConversation) {
     const role = conversationAgentRole(registry.readOnlySnapshot(), srcConversation.id);
-    if (isSpawnDeniedRole(role)) {
-      return NextResponse.json({ error: reviewerOriginSpawnGuidance(role), code: "reviewer_origin_spawn" }, { status: 403 });
+    if (isDelegationDeniedRole(role)) {
+      return NextResponse.json({ error: delegationDeniedGuidance(role), code: delegationRejectionCode(role) }, { status: 403 });
     }
   }
   return null;

@@ -2,11 +2,18 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import type { MessageKey } from "@/lib/i18n";
+
 /*
  * The role catalog as the phone reads it: the console's own answer, and the
  * two writes the page can make. Every write goes through `/api/roles`, which
  * shells out to the console — the page never touches the store itself, so the
  * CLI, the MCP server and this screen cannot drift apart.
+ *
+ * Everything the screen says about a role comes from the server's verdicts —
+ * `editable`, `launchable`, `blockedReason`, `unsupported` — and never from a
+ * guess made here. `launchable` is the LAUNCH path's own answer (§1.1 of the
+ * audit): «доступна для запуску» cannot disagree with what the launch does.
  */
 
 export interface RoleRow {
@@ -19,7 +26,24 @@ export interface RoleRow {
   edited: boolean;
   updatedAt: string | null;
   seedPromptScaffold?: string;
+  /** `local` for a role the operator created in the console: it has no seed. */
+  origin?: "seed" | "local";
+  /** The launch path resolves this role's runtime config. */
+  launchable?: boolean;
+  /** Why a launch would refuse it, in the launch validator's words. */
+  blockedReason?: string | null;
+  /** Consumers that refuse this role BEFORE a launch. */
+  unsupported?: readonly ("pipeline" | "mcp")[];
+  /** A session in this role may create child agents. */
+  canDelegate?: boolean;
   grants?: { mcp: string[]; skills: string[] };
+}
+
+/** Why the catalog is not the console's live answer, with the console's own
+    message when it had one. */
+export interface RolesDegradation {
+  reason: string;
+  detail: string | null;
 }
 
 export interface RolesRead {
@@ -27,12 +51,32 @@ export interface RolesRead {
   /** "fleetctl" when the console answered, "fallback" when the built-in
       catalog did — the page says which, because only one of them is editable. */
   source: string | null;
+  /** When the shown catalog was read, so a stale list can date itself. */
+  readAt: string | null;
+  /** The shown rows are the last good console read, kept through a degraded
+      refresh rather than replaced by the built-in list. */
+  stale: boolean;
+  /** Counts AUTHORITATIVE reads: one per catalog answer that came from the
+      console undegraded. An editor waiting on confirmation compares this
+      against the count it recorded at write time — a later number means a real
+      read happened after the write, which text equality alone never proves. */
+  readSeq: number;
   error: string | null;
-  warning: string | null;
+  degraded: RolesDegradation | null;
   loading: boolean;
   refresh: () => Promise<void>;
   /** Writes one role and returns the server read-back, or its error. */
-  save: (role: string, change: RoleChange) => Promise<{ role?: RoleRow; error: string | null }>;
+  save: (role: string, change: RoleChange) => Promise<RoleWrite>;
+}
+
+/** The three outcomes of a write, kept apart: confirmed, landed-but-unconfirmed,
+    and refused. A landed write reported as a failure invites a second blind
+    write of the same text. */
+export interface RoleWrite {
+  role?: RoleRow;
+  /** The write landed; the read-back that would confirm it did not. */
+  unconfirmed?: string;
+  error: string | null;
 }
 
 export type RoleChange =
@@ -42,7 +86,13 @@ export type RoleChange =
 export function useRoles(): RolesRead {
   const [roles, setRoles] = useState<RoleRow[] | null>(null);
   const [source, setSource] = useState<string | null>(null);
-  const [warning, setWarning] = useState<string | null>(null);
+  const [readAt, setReadAt] = useState<string | null>(null);
+  const [stale, setStale] = useState(false);
+  const [readSeq, setReadSeq] = useState(0);
+  const [degraded, setDegraded] = useState<RolesDegradation | null>(null);
+  /** The last read that actually came from the console. A degraded refresh is
+      compared against it rather than replacing it. */
+  const fromConsole = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -58,10 +108,32 @@ export function useRoles(): RolesRead {
     setLoading(true);
     try {
       const response = await fetch("/api/roles", { cache: "no-store", ...(signal ? { signal } : {}) });
-      const body = await response.json() as { roles?: RoleRow[]; source?: string; warning?: string | null; error?: string };
+      const body = await response.json() as {
+        roles?: RoleRow[]; source?: string; readAt?: string; degraded?: RolesDegradation | null; error?: string;
+      };
       if (!current()) return;
       if (!response.ok || !body.roles) setError(body.error ?? `HTTP ${response.status}`);
-      else { setRoles(body.roles); setSource(body.source ?? null); setWarning(body.warning ?? null); setError(null); }
+      else {
+        const degradedNow = body.degraded ?? null;
+        setDegraded(degradedNow);
+        setError(null);
+        /* A degraded refresh does NOT swap the console's catalog for the
+           built-in one. The built-in list is not fresher, it is a different
+           list: the operator's additional roles are simply absent from it, so
+           adopting it retires those rows — and an open editor loses the draft
+           inside one. The last good read stays on screen, dated and marked
+           stale, which is also what the audit's own table asks for. */
+        if (degradedNow && fromConsole.current) {
+          setStale(true);
+          return;
+        }
+        fromConsole.current = !degradedNow;
+        if (!degradedNow) setReadSeq((was) => was + 1);
+        setStale(false);
+        setRoles(body.roles);
+        setSource(body.source ?? null);
+        setReadAt(body.readAt ?? null);
+      }
     } catch (cause) {
       if (current() && (cause as { name?: string }).name !== "AbortError") setError("UNREACHABLE");
     } finally {
@@ -75,7 +147,7 @@ export function useRoles(): RolesRead {
     return () => controller.abort();
   }, [load]);
 
-  const save = useCallback(async (role: string, change: RoleChange): Promise<{ role?: RoleRow; error: string | null }> => {
+  const save = useCallback(async (role: string, change: RoleChange): Promise<RoleWrite> => {
     // Invalidate earlier reads when the write starts, not just when it ends:
     // stale fallback/error/source responses must not change an active editor.
     readGeneration.current += 1;
@@ -87,8 +159,12 @@ export function useRoles(): RolesRead {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ role, ...change }),
       });
-      const body = await response.json() as { role?: RoleRow; error?: string };
-      if (!response.ok || !body.role) return { error: body.error ?? `HTTP ${response.status}` };
+      const body = await response.json() as { role?: RoleRow | null; written?: boolean; unconfirmed?: string; error?: string };
+      if (!response.ok) return { error: body.error ?? `HTTP ${response.status}` };
+      /* The console took the write but could not be re-read. The row keeps the
+         text it had — nothing here has been confirmed — and the screen offers a
+         re-read instead of another write. */
+      if (!body.role) return { error: null, unconfirmed: body.unconfirmed ?? `HTTP ${response.status}` };
       const updated = body.role;
       setRoles((was) => (was ?? []).map((row) => (row.id === updated.id ? updated : row)));
       return { role: updated, error: null };
@@ -100,7 +176,7 @@ export function useRoles(): RolesRead {
     }
   }, []);
 
-  return { roles, source, error, warning, loading, refresh: () => load(), save };
+  return { roles, source, readAt, stale, readSeq, error, degraded, loading, refresh: () => load(), save };
 }
 
 /** The one-line summary under a role's name: engine, model, effort. */
@@ -111,4 +187,27 @@ export function roleRuntimeLine(role: RoleRow): string {
 /** Whether the draft differs from what the console holds. */
 export function roleDirty(role: RoleRow, draft: string): boolean {
   return draft !== role.promptScaffold;
+}
+
+/** Reset exists only for a role with a known seed: `role_reset` refuses the
+    rest, and «повернути початковий» has no meaning for a role written by hand. */
+export function roleHasSeed(role: RoleRow): boolean {
+  return typeof role.seedPromptScaffold === "string";
+}
+
+/** The i18n key naming why the catalog is degraded, or null when it is not. */
+export function degradationKey(degraded: RolesDegradation | null): MessageKey | null {
+  if (!degraded) return null;
+  if (degraded.reason === "console-missing") return "roles.degradedMissing";
+  if (degraded.reason === "console-empty") return "roles.degradedEmpty";
+  if (degraded.reason === "invalid-overrides") return "roles.degradedOverrides";
+  return "roles.degradedUnavailable";
+}
+
+/** A read timestamp as the operator's clock shows it; the raw value when it is
+    not a time the browser can parse. */
+export function roleClock(at: string | null): string {
+  if (!at) return "—";
+  const parsed = new Date(at);
+  return Number.isNaN(parsed.getTime()) ? at : parsed.toLocaleTimeString();
 }

@@ -160,7 +160,7 @@ function resolveOrchestratorCwd(project: string, requested: unknown): string | n
 }
 
 async function postSpawnInProcess(body: Record<string, unknown>): Promise<{ status: number; body: Record<string, unknown> }> {
-  const { executeSpawnRequest } = await import("@/lib/agent/spawnCommand");
+  const { executeSpawnRequest, localRoleResolution, productionSpawnCommandDependencies } = await import("@/lib/agent/spawnCommand");
   /* An in-process call the VIEWER makes, on its own authority: the designation
      surfaces have already made their authority decision — the seat route by
      refusing an agent, the rotation route by naming one (#1402) — so this
@@ -176,7 +176,17 @@ async function postSpawnInProcess(body: Record<string, unknown>): Promise<{ stat
     }),
     json: async () => body,
   } as unknown as NextRequest;
-  const response = await executeSpawnRequest(request);
+  /* The seat resolves `orchestrator` from the BUILT-IN definitions, here and in
+     its own preflight above, so taking a seat and rotating one never wait on
+     `fleetctl`. A console that is down must not be able to stop the fleet from
+     launching the agent that would bring the console back — and «bounded wait»
+     is not the answer, because a 20-second-per-call timeout is still a stopped
+     rotation. Operator launches keep the shared catalog; this is a dependency,
+     so nothing in the request can select it. */
+  const response = await executeSpawnRequest(request, {
+    ...productionSpawnCommandDependencies,
+    resolveRole: localRoleResolution,
+  });
   return { status: response.status, body: await response.json() as Record<string, unknown> };
 }
 

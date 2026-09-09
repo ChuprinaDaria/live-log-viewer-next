@@ -16,12 +16,13 @@ import { grantedMcpServers, HQ_SESSION_CLASS, mcpServersForSession, normalizeSpa
 import { normalizeSpawnPlugins, pluginAllowlistForSession, SCHEDULED_REPORT_PLUGINS, sessionOriginFor } from "@/lib/agent/pluginAllowlist";
 import { codexModelSupportsImages, defaultModelFor, modelFromBody, validateLaunchModel } from "@/lib/agent/models";
 import { directOperatorActivityAuthority } from "@/lib/agent/operatorAuthority";
-import { resolveSpawnRole } from "@/lib/roles/registry";
+import { resolveSpawnRoleFromCatalog } from "@/lib/roles/catalog";
+import { resolveSpawnRole, type SpawnRoleResolution } from "@/lib/roles/registry";
 import { assertDarwinStructuredRuntime } from "@/lib/proc/darwinIdentity";
 import { spawnContentDigest, spawnParentSelector, spawnRequestDigests } from "@/lib/agent/spawnIdentity";
 import { sessionKeyFromTranscript, sessionKeyId } from "@/lib/agent/sessionKey";
 import { resolveSpawnLineage, SpawnParentError } from "@/lib/agent/spawnParent";
-import { SpawnAdmissionError, isSpawnDeniedRole } from "@/lib/agent/spawnAdmission";
+import { SpawnAdmissionError, isDelegationDeniedRole, isUnclassifiedRole, unclassifiedRoleSpawnGuidance } from "@/lib/agent/spawnAdmission";
 import { spawnRejectionResponse, spawnReplayStatus, spawnResponseForReceipt, type SpawnResponse } from "@/lib/agent/spawnResponse";
 import { applyClaudeSpawnPolicy, prepareManagedClaudeSpawnHome } from "@/lib/agent/spawnPolicy";
 import { resolveSpawnedTranscriptPath } from "@/lib/agent/spawnedTranscript";
@@ -73,6 +74,15 @@ function pinFallbackTitle(req: Pick<NextRequest, "headers">): string {
 
 export interface SpawnCommandDependencies {
   registry: typeof agentRegistry;
+  /**
+   * How a role-shaped launch is resolved. The default reads the operator's
+   * console catalog, so a role the roles page showed launches with the config
+   * and prompt it displayed. A trusted in-process caller that must never wait
+   * on the console — the orchestrator seat, its rotation — passes
+   * {@link localRoleResolution} instead. Only an in-process caller can: the
+   * HTTP route passes no dependencies at all.
+   */
+  resolveRole?: (body: Parameters<typeof resolveSpawnRole>[0]) => Promise<SpawnRoleResolution> | SpawnRoleResolution;
   resolveHealthySpawnAccount: typeof resolveHealthySpawnAccount;
   resolveSpawnAccount: typeof accountManager.resolveSpawn;
   resolvePinnedSpawnAdmission?: typeof resolvePinnedSpawnAdmission;
@@ -108,8 +118,26 @@ export interface SpawnCommandDependencies {
 
 class RuntimeImageStorageError extends Error {}
 
+/**
+ * The launch's own role resolution, read from the BUILT-IN definitions and
+ * nothing else — no console, no subprocess, no waiting.
+ *
+ * This is the path the orchestrator seat and its rotation take. A seat that
+ * cannot be taken because the console is unreachable is a worse failure than
+ * a stale preset: the fleet then has no one to launch the agent that would fix
+ * the console. The seat has ALREADY resolved this role locally before it
+ * begins its intent, so resolving the same way here also makes the preflight
+ * envelope measure exactly the scaffold the launch will send.
+ *
+ * It is a dependency, not a request field: `/api/spawn` calls
+ * {@link executeSpawnRequest} with no dependencies, so no body, header or query
+ * can reach this seam. Operator launches keep the shared catalog.
+ */
+export const localRoleResolution: SpawnCommandDependencies["resolveRole"] = (body) => resolveSpawnRole(body);
+
 export const productionSpawnCommandDependencies: SpawnCommandDependencies = {
   registry: agentRegistry,
+  resolveRole: resolveSpawnRoleFromCatalog,
   resolveHealthySpawnAccount,
   resolveSpawnAccount: (engine, accountId) => accountManager.resolveSpawn(engine, accountId),
   resolvePinnedSpawnAdmission,
@@ -213,7 +241,13 @@ export async function executeSpawnRequest(
   if (body.allowSubagents !== undefined && typeof body.allowSubagents !== "boolean") {
     return NextResponse.json({ error: "allowSubagents must be a boolean" }, { status: 400 });
   }
-  const role = resolveSpawnRole(body);
+  /* The operator-facing launch resolves against the SAME catalog the roles
+     page reads (§1.1): a role shown there launches with the config and prompt
+     it displayed, additional console roles included. A console that is down
+     degrades to the built-in definitions rather than refusing the launch — and
+     the seat and the handoff keep the synchronous resolver, so no orchestrator
+     rotation can wait on `fleetctl`. */
+  const role = await (dependencies.resolveRole ?? resolveSpawnRoleFromCatalog)(body);
   if (!role.ok) return NextResponse.json({ error: role.error }, { status: 400 });
   if (role.value?.role === "reviewer" && (typeof body.reviews !== "string" || !body.reviews.trim())) {
     return NextResponse.json({ error: "reviewer requires reviews" }, { status: 400 });
@@ -224,9 +258,22 @@ export async function executeSpawnRequest(
   /* Reviewer isolation (#393): reviewer/verifier launch profiles always carry
      allowSubagents:false, so every engine denies native multi-agent tools on
      fresh launch, resume, and restart adoption. Even the operator lane cannot
-     combine a denied role with subagent access. */
-  if (role.value && isSpawnDeniedRole(role.value.role) && body.allowSubagents === true) {
-    return NextResponse.json({ error: `${role.value.role} launches cannot enable subagents: reviewer and verifier sessions run every check in-session` }, { status: 400 });
+     combine a denied role with subagent access.
+
+     The same denial covers a role the board cannot classify. Console roles are
+     launchable now, and a copy of verifier under a fresh id would otherwise
+     read as "unknown" to a deny-list written in seed ids while carrying
+     verifier's whole prompt. Unclassified means no delegation, until the role
+     carries a policy of its own. */
+  if (role.value && isDelegationDeniedRole(role.value.role) && body.allowSubagents === true) {
+    /* Each denial answers in its own words: the review-isolation refusal is a
+       contract operators and agents already read, and an unclassified role is
+       a different problem with a different fix. */
+    return NextResponse.json({
+      error: isUnclassifiedRole(role.value.role)
+        ? unclassifiedRoleSpawnGuidance(role.value.role)
+        : `${role.value.role} launches cannot enable subagents: reviewer and verifier sessions run every check in-session`,
+    }, { status: 400 });
   }
   const engine = body.engine === "claude" || body.engine === "codex"
     ? (body.engine as AgentEngine)
